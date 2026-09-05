@@ -255,6 +255,18 @@ drifting.
   undecoded.
 * **Untested on hardware beyond the HTTPS path.** The `CONNECT` tunnel and
   both mail splices have not faced a real client yet.
+* **Asynchronous OT calls do not copy their arguments.** `OTInetStringToAddress`
+  reads the hostname when the resolver runs, not when the call is made, so the
+  buffer has to outlive the request. Certainly held the caller's pointer, which
+  worked only for string literals; anything coming from the prefs cache
+  resolved garbage. Fixed in the library and guarded at Gateway's call sites.
+  See `third_party/certainly/PATCHES.md` §6.
+* **email-oauth2-proxy stores its tokens encrypted** (Fernet, keyed from the
+  account password with PBKDF2-HMAC-SHA256 over `token_salt` /
+  `token_iterations`). A `refresh_token` beginning `gAAAAA` is ciphertext, and
+  Gateway has no way to use it. `tools/extract-refresh-token.py` decrypts it on
+  the host side; doing it on the Mac would mean 1.2 million PBKDF2 iterations
+  on a PowerPC, for a value that only has to be extracted once.
 * **Prefs line endings** were a real trap: the parser split on LF only, so a
   file typed on the Mac (CR endings) parsed as a single comment line and every
   setting silently fell back to its default — including `local_password`, which

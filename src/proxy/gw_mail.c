@@ -25,7 +25,7 @@
 #define GW_MAIL_LINE    2048
 #define GW_MAIL_IDLE    (600 * 60)          /* ticks: ten minutes */
 
-typedef enum { kMailNone = 0, kMailImap, kMailSmtp } GWMailKind;
+typedef enum { kMailNone = 0, kMailImap, kMailPop, kMailSmtp } GWMailKind;
 
 typedef enum {
     kMSFree = 0,
@@ -141,6 +141,28 @@ static long fill(GWStream *s, char *buf, size_t *len, size_t cap)
     return n;
 }
 
+/*
+ * Phrase a failure the way the client's protocol expects it: IMAP wants an
+ * untagged BYE, POP3 wants -ERR, SMTP wants a 4xx line.
+ */
+static const char *mail_error_text(GWMailSession *s, const char *what)
+{
+    static char sText[256];
+
+    switch (s->kind) {
+    case kMailImap:
+        snprintf(sText, sizeof(sText), "* BYE %s\r\n", what);
+        break;
+    case kMailPop:
+        snprintf(sText, sizeof(sText), "-ERR %s\r\n", what);
+        break;
+    default:
+        snprintf(sText, sizeof(sText), "421 4.4.1 %s\r\n", what);
+        break;
+    }
+    return sText;
+}
+
 static void mail_fail(GWMailSession *s, const char *clientText,
                       const char *reason)
 {
@@ -235,6 +257,60 @@ static void imap_command(GWMailSession *s, const char *line, size_t len)
 
     snprintf(reply, sizeof(reply), "%s BAD Log in first\r\n", cmd.tag);
     say_client(s, reply);
+}
+
+/* ------------------------------------------------------------------ */
+/* POP3                                                                */
+/* ------------------------------------------------------------------ */
+
+static void pop_command(GWMailSession *s, const char *line, size_t len)
+{
+    char verb[32], arg[512];
+
+    if (!gw_pop_parse(line, len, verb, sizeof(verb), arg, sizeof(arg))) {
+        say_client(s, "-ERR Gateway could not parse that\r\n");
+        return;
+    }
+
+    if (gw_stricmp(verb, "USER") == 0) {
+        strncpy(s->user, arg, sizeof(s->user) - 1);
+        say_client(s, "+OK\r\n");
+        return;
+    }
+
+    if (gw_stricmp(verb, "PASS") == 0) {
+        int verdict = local_password_check(arg);
+
+        if (verdict != 1) {
+            say_client(s, "-ERR Gateway rejected that password\r\n");
+            log_auth_failure(s->id, "POP", verdict);
+            return;
+        }
+        gw_log("mail #%ld POP login accepted for %s", s->id, s->user);
+        begin_upstream(s);
+        return;
+    }
+
+    if (gw_stricmp(verb, "CAPA") == 0) {
+        /* Deliberately minimal: Gateway does the real authentication with
+         * the upstream server, so the client only ever needs USER/PASS. */
+        say_client(s, "+OK Capability list follows\r\nUSER\r\n.\r\n");
+        return;
+    }
+    if (gw_stricmp(verb, "NOOP") == 0) { say_client(s, "+OK\r\n"); return; }
+    if (gw_stricmp(verb, "QUIT") == 0) {
+        say_client(s, "+OK Gateway signing off\r\n");
+        s->state = kMSFlushClose;
+        return;
+    }
+    if (gw_stricmp(verb, "APOP") == 0) {
+        /* APOP hashes a server-issued timestamp, which Gateway never
+         * issued, so there is nothing to verify against. */
+        say_client(s, "-ERR APOP is not supported; use USER and PASS\r\n");
+        return;
+    }
+
+    say_client(s, "-ERR Log in first\r\n");
 }
 
 /* ------------------------------------------------------------------ */
@@ -374,9 +450,7 @@ static void send_xoauth2(GWMailSession *s)
 
     if (token == NULL ||
         gw_sasl_xoauth2(user, token, blob, sizeof(blob)) == 0) {
-        mail_fail(s, s->kind == kMailImap
-                         ? "* BYE Gateway could not build an XOAUTH2 token\r\n"
-                         : "454 4.7.0 Gateway could not build an XOAUTH2 token\r\n",
+        mail_fail(s, mail_error_text(s, "Gateway could not build an XOAUTH2 token"),
                   "XOAUTH2 blob would not fit");
         return;
     }
@@ -384,7 +458,7 @@ static void send_xoauth2(GWMailSession *s)
     if (s->kind == kMailImap)
         snprintf(line, sizeof(line), "GW1 AUTHENTICATE XOAUTH2 %s\r\n", blob);
     else
-        snprintf(line, sizeof(line), "AUTH XOAUTH2 %s\r\n", blob);
+        snprintf(line, sizeof(line), "AUTH XOAUTH2 %s\r\n", blob);   /* POP and SMTP */
 
     say_up(s, line);
     s->state = kMSUpAuth;
@@ -400,6 +474,16 @@ static void step_up_greet(GWMailSession *s)
         if (gw_strnicmp(line, "* OK", 4) != 0) {
             mail_fail(s, "* BYE Upstream IMAP server refused the session\r\n",
                       "upstream IMAP greeting was not OK");
+            return;
+        }
+        send_xoauth2(s);
+        return;
+    }
+
+    if (s->kind == kMailPop) {
+        if (line[0] != '+') {
+            mail_fail(s, "-ERR Upstream POP server refused the session\r\n",
+                      "upstream POP greeting was not +OK");
             return;
         }
         send_xoauth2(s);
@@ -501,6 +585,23 @@ static void step_up_auth(GWMailSession *s)
             continue;                       /* untagged chatter: ignore */
         }
 
+        if (s->kind == kMailPop) {
+            if (line[0] == '+' && line[1] == ' ') {
+                /* Base64 error challenge: '*' cancels the exchange. */
+                say_up(s, "*\r\n");
+                continue;
+            }
+            if (gw_strnicmp(line, "+OK", 3) == 0) {
+                say_client(s, "+OK Logged in\r\n");
+                gw_log("mail #%ld POP splice established", s->id);
+                s->state = kMSSplice;
+                return;
+            }
+            mail_fail(s, "-ERR Upstream rejected XOAUTH2\r\n",
+                      "upstream rejected XOAUTH2");
+            return;
+        }
+
         if (line[0] == '3') { say_up(s, "\r\n"); continue; }
         if (gw_strnicmp(line, "235", 3) == 0) {
             say_client(s, "235 2.7.0 Authentication successful\r\n");
@@ -600,9 +701,17 @@ static void session_step(GWMailSession *s)
 
     switch (s->state) {
     case kMSGreet:
-        say_client(s, s->kind == kMailImap
-                          ? "* OK [CAPABILITY IMAP4rev1] Gateway ready\r\n"
-                          : "220 Gateway ESMTP ready\r\n");
+        switch (s->kind) {
+        case kMailImap:
+            say_client(s, "* OK [CAPABILITY IMAP4rev1] Gateway ready\r\n");
+            break;
+        case kMailPop:
+            say_client(s, "+OK Gateway ready\r\n");
+            break;
+        default:
+            say_client(s, "220 Gateway ESMTP ready\r\n");
+            break;
+        }
         s->state = kMSCommand;
         break;
 
@@ -619,8 +728,9 @@ static void session_step(GWMailSession *s)
 
         while (s->state == kMSCommand &&
                take_line(s->cbuf, &s->cLen, line, sizeof(line))) {
-            if (s->kind == kMailImap) imap_command(s, line, strlen(line));
-            else                      smtp_command(s, line, strlen(line));
+            if (s->kind == kMailImap)     imap_command(s, line, strlen(line));
+            else if (s->kind == kMailPop) pop_command(s, line, strlen(line));
+            else                          smtp_command(s, line, strlen(line));
         }
         if (n == -2 && s->cLen == 0 && s->state == kMSCommand)
             s->state = kMSFlushClose;
@@ -637,6 +747,10 @@ static void session_step(GWMailSession *s)
                 host = GWConfig_Str("imap_host", "outlook.office365.com");
                 port = GWConfig_Num("imap_upstream_port", 993);
                 s->wantStartTLS = 0;        /* 993 is implicit TLS */
+            } else if (s->kind == kMailPop) {
+                host = GWConfig_Str("pop_host", "outlook.office365.com");
+                port = GWConfig_Num("pop_upstream_port", 995);
+                s->wantStartTLS = 0;        /* 995 is implicit TLS */
             } else {
                 host = GWConfig_Str("smtp_host", "smtp-mail.outlook.com");
                 port = GWConfig_Num("smtp_upstream_port", 587);
@@ -645,16 +759,18 @@ static void session_step(GWMailSession *s)
                 s->wantStartTLS = (int)GWConfig_Num("smtp_starttls",
                                                     port == 465 ? 0 : 1);
             }
+            /* Copy before connecting: GWConfig_Str hands back a rotating
+             * buffer, and the resolver reads the name asynchronously. */
             strncpy(s->upHost, host, sizeof(s->upHost) - 1);
+            host = s->upHost;
             gw_log("mail #%ld connecting to %s:%ld%s", s->id, host, port,
                    s->wantStartTLS ? " (STARTTLS)" : " (TLS)");
 
             if (!(s->wantStartTLS
                       ? GWStream_ConnectPlain(&s->up, host, (UInt16)port)
                       : GWStream_ConnectTLS(&s->up, host, (UInt16)port))) {
-                mail_fail(s, s->kind == kMailImap
-                                 ? "* BYE Gateway could not reach the mail server\r\n"
-                                 : "421 4.4.1 Gateway could not reach the mail server\r\n",
+                mail_fail(s,
+                          mail_error_text(s, "Gateway could not reach the mail server"),
                           "upstream TLS connect failed to start");
                 break;
             }
@@ -662,9 +778,8 @@ static void session_step(GWMailSession *s)
             break;
         }
         case kGWTokenFailed:
-            mail_fail(s, s->kind == kMailImap
-                             ? "* BYE Gateway could not refresh its access token\r\n"
-                             : "454 4.7.0 Gateway could not refresh its access token\r\n",
+            mail_fail(s,
+                      mail_error_text(s, "Gateway could not refresh its access token"),
                       GWToken_Error());
             break;
         case kGWTokenIdle:
@@ -680,9 +795,8 @@ static void session_step(GWMailSession *s)
             s->state = kMSUpGreet;
         } else if (s->up.state == kGWStreamError ||
                    s->up.state == kGWStreamClosed) {
-            mail_fail(s, s->kind == kMailImap
-                             ? "* BYE Gateway could not reach the mail server\r\n"
-                             : "421 4.4.1 Gateway could not reach the mail server\r\n",
+            mail_fail(s,
+                      mail_error_text(s, "Gateway could not reach the mail server"),
                       GWStream_ErrorText(&s->up));
         }
         break;
@@ -710,9 +824,7 @@ static void session_step(GWMailSession *s)
         }
         n = fill(&s->up, s->ubuf, &s->uLen, (size_t)GW_MAIL_BUF);
         if (n == -1 || n == -2) {
-            mail_fail(s, s->kind == kMailImap
-                             ? "* BYE Upstream closed the connection\r\n"
-                             : "421 4.4.1 Upstream closed the connection\r\n",
+            mail_fail(s, mail_error_text(s, "Upstream closed the connection"),
                       "upstream closed during login");
             break;
         }
@@ -797,6 +909,7 @@ static int mail_accept(GWConn *c, GWMailKind kind)
 }
 
 int GWMail_AcceptImap(GWConn *c) { return mail_accept(c, kMailImap); }
+int GWMail_AcceptPop(GWConn *c)  { return mail_accept(c, kMailPop);  }
 int GWMail_AcceptSmtp(GWConn *c) { return mail_accept(c, kMailSmtp); }
 
 void GWMail_Poll(void)

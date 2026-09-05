@@ -45,6 +45,15 @@ typedef struct {
     InetHostInfo    hostInfo;
     uint16_t        port;
 
+    /*
+     * Our own copy of the hostname. OTInetStringToAddress() is issued
+     * asynchronously and Open Transport does not copy the name: the buffer has
+     * to stay put until T_DNRSTRINGTOADDRCOMPLETE arrives. Holding the
+     * caller's pointer worked only as long as callers passed string literals
+     * (Gateway patch - see PATCHES.md).
+     */
+    char            host[256];
+
     /* State tracking */
     OTTransportState state;
     volatile OSStatus lastError;

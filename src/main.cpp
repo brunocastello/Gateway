@@ -249,9 +249,9 @@ private:
         v = kLineHeight;
         MoveTo(kTextLeft, v);
         std::snprintf(line, sizeof(line),
-                      "proxy :%d    imap :%d    smtp :%d    splices %d",
-                      GW_HttpPort(), GW_ImapPort(), GW_SmtpPort(),
-                      GW_ActiveSessions());
+                      "proxy :%d  imap :%d  pop :%d  smtp :%d  splices %d",
+                      GW_HttpPort(), GW_ImapPort(), GW_PopPort(),
+                      GW_SmtpPort(), GW_ActiveSessions());
         DrawCString(line);
 
         v = static_cast<short>(v + kLineHeight);

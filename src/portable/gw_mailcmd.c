@@ -82,6 +82,28 @@ int gw_smtp_parse(const char *line, size_t len,
     return 1;
 }
 
+int gw_pop_parse(const char *line, size_t len,
+                 char *verb, size_t verb_cap,
+                 char *arg, size_t arg_cap)
+{
+    size_t i = 0, start;
+
+    if (verb_cap) verb[0] = '\0';
+    if (arg_cap) arg[0] = '\0';
+
+    while (len > 0 && (line[len - 1] == '\r' || line[len - 1] == '\n')) len--;
+
+    i = skip_space(line, len, 0);
+    start = i;
+    while (i < len && line[i] != ' ' && line[i] != '\t') i++;
+    if (i == start) return 0;
+    gw_copy_n(verb, verb_cap, line + start, i - start);
+
+    i = skip_space(line, len, i);
+    if (i < len) gw_copy_n(arg, arg_cap, line + i, len - i);
+    return 1;
+}
+
 int gw_sasl_plain_decode(const char *b64, size_t len,
                          char *user, size_t user_cap,
                          char *pass, size_t pass_cap)

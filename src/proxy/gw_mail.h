@@ -16,8 +16,9 @@
 void GWMail_Init(void);
 void GWMail_Shutdown(void);
 
-/* Both return 0 when no slot is free; the caller then disposes of the conn. */
+/* All return 0 when no slot is free; the caller then disposes of the conn. */
 int  GWMail_AcceptImap(GWConn *c);
+int  GWMail_AcceptPop(GWConn *c);
 int  GWMail_AcceptSmtp(GWConn *c);
 
 void GWMail_Poll(void);

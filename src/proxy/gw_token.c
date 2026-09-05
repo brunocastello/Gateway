@@ -29,6 +29,7 @@ typedef struct {
     size_t        reqLen, reqSent;
     char         *resp;
     size_t        respLen;
+    char          host[GW_NET_HOST_MAX];    /* must outlive the async lookup */
     char          token[GW_TOKEN_MAX];
     unsigned long expiresAt;                /* ticks */
     char          error[128];
@@ -121,7 +122,12 @@ void GWToken_Request(void)
     t->reqSent = 0;
     t->respLen = 0;
 
-    if (!GWStream_ConnectTLS(&t->up, host, 443)) {
+    /* GWConfig_Str returns a rotating buffer and the resolver reads the name
+     * later, asynchronously, so hold our own copy. */
+    strncpy(t->host, host, sizeof(t->host) - 1);
+    t->host[sizeof(t->host) - 1] = '\0';
+
+    if (!GWStream_ConnectTLS(&t->up, t->host, 443)) {
         token_fail(t, "could not open a TLS connection to the token endpoint");
         return;
     }

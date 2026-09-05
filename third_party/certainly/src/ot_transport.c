@@ -27,7 +27,7 @@
 static pascal void ot_notifier(void *context, OTEventCode event,
                                OTResult result, void *cookie);
 static OSStatus    ot_setup_endpoint(OTTransport *t);
-static void        ot_start_dns(OTTransport *t, const char *host);
+static void        ot_start_dns(OTTransport *t);
 
 /*
  * The notifier — runs at interrupt time when OT has something to tell us.
@@ -144,7 +144,7 @@ static OSStatus ot_setup_endpoint(OTTransport *t)
  * T_DNRSTRINGTOADDRCOMPLETE. This is OT's built-in DNS resolver —
  * it uses whatever DNS servers are configured in the TCP/IP control panel.
  */
-static void ot_start_dns(OTTransport *t, const char *host)
+static void ot_start_dns(OTTransport *t)
 {
     OSStatus   err;
 
@@ -161,7 +161,9 @@ static void ot_start_dns(OTTransport *t, const char *host)
     OTInstallNotifier(t->inetSvc, ot_notifier, t);
     OTSetAsynchronous(t->inetSvc);
 
-    err = OTInetStringToAddress(t->inetSvc, (char *)host, &t->hostInfo);
+    /* t->host, never the caller's buffer: this call is asynchronous and OT
+     * reads the name later, when the resolver runs. */
+    err = OTInetStringToAddress(t->inetSvc, t->host, &t->hostInfo);
     if (err != noErr && err != kOTNoError) {
         t->lastError = err;
         t->state = kOTTransport_Error;
@@ -179,6 +181,13 @@ OTTransport *ot_transport_create(const char *host, uint16_t port)
     t->state = kOTTransport_Idle;
     t->port  = port;
 
+    if (host == NULL || strlen(host) >= sizeof(t->host)) {
+        t->lastError = kOTBadNameErr;
+        t->state = kOTTransport_Error;
+        return t;
+    }
+    strcpy(t->host, host);
+
     err = ot_setup_endpoint(t);
     if (err != noErr) {
         t->lastError = err;
@@ -191,7 +200,7 @@ OTTransport *ot_transport_create(const char *host, uint16_t port)
 
     /* Start DNS resolution */
     t->state = kOTTransport_ResolvingDNS;
-    ot_start_dns(t, host);
+    ot_start_dns(t);
 
     return t;
 }

@@ -123,3 +123,28 @@ replaces the caller's notifier with its own and starts in the Connected state,
 so `MacTLS_Pump()` proceeds straight to the handshake. Ownership transfers
 unconditionally, including on failure, so there is no path where both sides
 think they should close it.
+
+## 6. Asynchronous DNS held a pointer the caller was free to reuse
+
+`ot_start_dns()` passed the caller's hostname straight to the resolver:
+
+```c
+err = OTInetStringToAddress(t->inetSvc, (char *)host, &t->hostInfo);
+```
+
+The provider is in asynchronous mode, so this call returns immediately and Open
+Transport reads the name later, when the lookup actually runs — it does not
+take a copy. The buffer must stay valid and unchanged until
+`T_DNRSTRINGTOADDRCOMPLETE` arrives.
+
+Upstream never noticed because its callers pass string literals. Gateway hit it
+the moment a hostname came from anywhere else: connections whose host was a
+literal or a long-lived struct member worked, while the OAuth token refresh —
+whose host comes from the prefs cache, a small rotating set of buffers — got a
+name that had been overwritten by the time the resolver looked, and failed with
+a bare "connect failed".
+
+`OTTransport` now carries `char host[256]` and resolves that, so the call is
+safe whatever the caller does with its own buffer afterwards. Gateway also
+keeps its own copies at both call sites, since relying on a library not to
+retain a pointer is exactly the assumption that broke here.

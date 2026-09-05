@@ -47,27 +47,39 @@ client's own TLS runs end to end, and Gateway never sees inside it.
 then set `network.http.proxy.use-http-proxy-for-https` to `true` in
 about:config.
 
-## Module 2 — mail splice on `:1993` and `:1587`
+## Module 2 — mail splice on `:1993`, `:1995` and `:1587`
 
-Outlook Express 5 talks to Gateway in the clear; Gateway talks IMAPS and SMTPS
-outward with `AUTHENTICATE XOAUTH2`.
+Outlook Express 5 talks to Gateway in the clear; Gateway talks IMAPS, POP3S and
+SMTPS outward with `AUTHENTICATE XOAUTH2`.
 
-**Outlook Express 5 setup:** incoming IMAP on port `1993` with SSL **off**;
-outgoing SMTP on port `1587` with SSL **off** and authentication **on**. The
-password you type there is checked against `local_password` in Gateway's prefs
-and never leaves the machine.
+| Gateway port | Protocol | Upstream |
+|---|---|---|
+| `1993` | IMAP | `outlook.office365.com:993`, implicit TLS |
+| `1995` | POP3 | `outlook.office365.com:995`, implicit TLS |
+| `1587` | SMTP | `smtp-mail.outlook.com:587`, STARTTLS |
+
+**Outlook Express 5 setup:** create the account as a plain **IMAP** or **POP**
+account — *not* the "Hotmail" account type, which speaks Microsoft's long-dead
+HTTPMail protocol. SSL stays **off** on every port; Gateway is the one that
+speaks TLS. Authentication is **on** for SMTP. The password you type is checked
+against `local_password` in Gateway's prefs and never leaves the machine.
 
 OAuth consent happens out of band on a modern computer. Gateway only ever
 exchanges a refresh token — dropped into its prefs file — for a short-lived
 access token, and reuses that token until it expires.
 
-See `docs/prefs-example.txt` for the whole prefs file. It goes in the System
-Preferences folder, named `Gateway Prefs`.
+If your token comes from [email-oauth2-proxy](https://github.com/simonrob/email-oauth2-proxy),
+its config stores tokens **encrypted** (Fernet, keyed off your account password
+via PBKDF2). A `refresh_token` beginning `gAAAAA` is ciphertext and will not
+work. Decrypt it first, on the modern machine:
 
-> **Known gap:** Certainly opens TLS at connect time and cannot upgrade an
-> already-open socket, so Gateway cannot do `STARTTLS` on port 587.
-> `smtp_upstream_port` defaults to 465 (implicit SMTPS). Gmail is fine with
-> that; Office 365 documents 587 only. See `docs/inventory.md` §9.
+```sh
+python3 tools/extract-refresh-token.py /path/to/emailproxy.config
+```
+
+See `docs/prefs-example.txt` for the whole prefs file. It goes in the System
+Preferences folder, named `Gateway Prefs`, and CR, LF or CRLF line endings all
+work.
 
 ---
 
@@ -96,6 +108,7 @@ src/gw_core.[ch]      the seam between the UI and the network core
 src/gw_config.[ch]    the "Gateway Prefs" file
 src/net/gw_net.[ch]   Open Transport listeners, connections, stream abstraction
 src/proxy/            Module 1, Module 2, and the OAuth token refresher
+tools/                host-side helper for extracting an OAuth refresh token
 src/portable/         protocol grammar with no system headers at all
 src/ui/gateway.r      SIZE (8 MB / 4 MB) and vers, as raw data blocks
 tests/host/           unit tests for src/portable, built with the host cc

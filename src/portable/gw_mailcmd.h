@@ -45,6 +45,15 @@ int gw_smtp_parse(const char *line, size_t len,
                   char *arg, size_t arg_cap);
 
 /*
+ * Parse one POP3 client line into a verb and its argument. Same shape as
+ * gw_smtp_parse, minus the colon handling that MAIL FROM: needs.
+ * Returns 1 when a verb was found.
+ */
+int gw_pop_parse(const char *line, size_t len,
+                 char *verb, size_t verb_cap,
+                 char *arg, size_t arg_cap);
+
+/*
  * Decode a SASL PLAIN payload ("[authzid]\0authcid\0password", base64).
  * Returns 1 on success.
  */

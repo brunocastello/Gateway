@@ -33,6 +33,7 @@ const char *GW_StatusLine(void);
 int         GW_ActiveSessions(void);
 int         GW_HttpPort(void);
 int         GW_ImapPort(void);
+int         GW_PopPort(void);
 int         GW_SmtpPort(void);
 
 #ifdef __cplusplus

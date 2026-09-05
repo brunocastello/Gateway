@@ -380,6 +380,25 @@ static void test_mailcmd(void)
     }
 
     {
+        char verb[32], arg[128];
+        check(gw_pop_parse("USER me@example.com\r\n", 21, verb, sizeof(verb),
+                           arg, sizeof(arg)), "POP USER parses");
+        check_str(verb, "USER", "POP verb");
+        check_str(arg, "me@example.com", "POP argument");
+
+        check(gw_pop_parse("CAPA\r\n", 6, verb, sizeof(verb),
+                           arg, sizeof(arg)), "POP bare verb parses");
+        check_str(verb, "CAPA", "POP bare verb");
+        check_str(arg, "", "POP bare verb has no argument");
+
+        /* A password may contain anything, including spaces and colons. */
+        check(gw_pop_parse("PASS a:b c\r\n", 12, verb, sizeof(verb),
+                           arg, sizeof(arg)), "POP PASS parses");
+        check_str(verb, "PASS", "POP PASS verb");
+        check_str(arg, "a:b c", "POP PASS keeps the whole argument");
+    }
+
+    {
         char user[64], pass[64], blob[128];
         size_t n = gw_sasl_plain_encode("me@example.com", "s3cret",
                                         blob, sizeof(blob));
