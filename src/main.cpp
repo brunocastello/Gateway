@@ -19,7 +19,6 @@
 #include <Menus.h>
 #include <Quickdraw.h>
 #include <TextEdit.h>
-#include <ToolUtils.h>
 #include <Windows.h>
 
 #include <cstdio>
@@ -197,8 +196,11 @@ private:
 
     void HandleMenu(long selection)
     {
-        short menu = HiWord(selection);
-        short item = LoWord(selection);
+        /* MenuSelect packs the menu ID in the high word and the item in the
+         * low one. HiWord/LoWord are 68K trap glue that InterfaceLib does not
+         * export to PowerPC, so unpack it by hand. */
+        short menu = static_cast<short>((selection >> 16) & 0xFFFF);
+        short item = static_cast<short>(selection & 0xFFFF);
 
         switch (menu) {
         case kAppleMenuID:
