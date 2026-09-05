@@ -52,7 +52,9 @@ void ToPascal(const char *src, Str255 dst)
 
 void DrawCString(const char *s)
 {
-    DrawText(s, 0, static_cast<short>(std::strlen(s)));
+    /* Multiversal types DrawText's buffer as Ptr, so the cast is required
+     * even though QuickDraw only reads it. */
+    DrawText(const_cast<char *>(s), 0, static_cast<short>(std::strlen(s)));
 }
 
 class GatewayApp {
