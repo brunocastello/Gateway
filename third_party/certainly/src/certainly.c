@@ -16,6 +16,7 @@
 #include "certainly_internal.h"
 
 #include <Memory.h>   /* NewPtrClear, DisposePtr */
+#include <Events.h>   /* TickCount - Gateway patch, see PATCHES.md */
 #include <string.h>
 
 /* ── Library lifecycle ── */

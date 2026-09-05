@@ -22,3 +22,13 @@ The patch stashes the received tag before the call and compares it against the
 computed tag with `tls13_ct_equal()`, a constant-time compare ported from the
 equivalent check in `mplsllc/macTLS`. The AES-GCM branch already did the right
 thing via `br_gcm_check_tag()`.
+
+## 2. `src/certainly.c` — missing `<Events.h>`
+
+`MacTLS_Pump()` calls `TickCount()` to time out a stalled handshake but never
+included `<Events.h>`. Upstream gets away with it because its build installs
+Apple's Universal Interfaces over the whole toolchain, and something else in
+the include chain happens to declare it. Gateway puts those headers on the
+Open Transport translation units only, so the declaration has to be explicit.
+Without it GCC 12 fails on `-Werror=implicit-function-declaration`, which is
+the default in C99 mode.

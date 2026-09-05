@@ -1,6 +1,7 @@
+# Build output. Note the absence of *.o and *.a globs: Apple's Interfaces &
+# Libraries ships static Open Transport glue as .o files and assembler
+# includes as .a files, and ignoring those silently breaks the PPC link.
 build/
 package/
 tests/host/run_tests
-*.o
-*.a
 .DS_Store
