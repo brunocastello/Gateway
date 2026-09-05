@@ -1,7 +1,8 @@
 /*
  * main.cpp - Gateway's Classic Toolbox shell.
  *
- * Compiled against the Multiversal Interfaces. It must not include
+ * Compiled against the Multiversal Interfaces, which use the classic header
+ * names (<Windows.h>, not <MacWindows.h>). It must not include
  * <OpenTransport.h> or anything that reaches it: the Universal Interfaces are
  * supplied only to the Certainly and Open Transport translation units
  * (CLAUDE.md rule 3). Everything this file knows about the proxy comes through
@@ -15,11 +16,11 @@
 #include <Devices.h>
 #include <Events.h>
 #include <Fonts.h>
-#include <MacWindows.h>
 #include <Menus.h>
 #include <Quickdraw.h>
 #include <TextEdit.h>
 #include <ToolUtils.h>
+#include <Windows.h>
 
 #include <cstdio>
 #include <cstring>
