@@ -1,0 +1,52 @@
+# Gateway Prefs
+#
+# Copy this file into the System Preferences folder and name it
+# "Gateway Prefs" (no extension). Gateway reads it once at launch.
+#
+# Lines are "key = value" or "key: value". '#' and ';' start a comment.
+# Keys are case-insensitive; surrounding whitespace is trimmed.
+
+# ---------------------------------------------------------------- Module 1
+# The forward proxy. Point Classilla at this address and port, and turn on
+# network.http.proxy.use-http-proxy-for-https so https:// URLs come here too.
+http_port      = 8765
+
+# ---------------------------------------------------------------- Module 2
+# Ports Outlook Express 5 connects to. SSL stays OFF in Outlook Express for
+# both; Gateway is the one that speaks TLS.
+imap_port      = 1993
+smtp_port      = 1587
+
+# The password you type into Outlook Express. It never leaves this Mac:
+# Gateway checks it locally and then authenticates upstream with XOAUTH2.
+# Leaving it unset refuses every login.
+local_password = change-me
+
+# Upstream mail servers. Both hops are implicit TLS.
+#
+# NOTE: Certainly opens TLS at connect time and has no way to upgrade a socket
+# that is already open, so Gateway cannot do STARTTLS on port 587. The default
+# below is implicit SMTPS on 465. See docs/inventory.md for the details.
+imap_host          = outlook.office365.com
+imap_upstream_port = 993
+smtp_host          = smtp.office365.com
+smtp_upstream_port = 465
+
+# ------------------------------------------------------------------- OAuth
+# Consent happens out of band on a modern machine; Gateway only ever exchanges
+# the refresh token below for a short-lived access token.
+oauth_user          = you@outlook.com
+oauth_client_id     = 00000000-0000-0000-0000-000000000000
+# oauth_client_secret is only needed for confidential clients.
+oauth_client_secret =
+oauth_host          = login.microsoftonline.com
+oauth_path          = /common/oauth2/v2.0/token
+oauth_scope         = offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send
+refresh_token       = paste-your-refresh-token-here
+
+# For Gmail instead:
+#   imap_host      = imap.gmail.com
+#   smtp_host      = smtp.gmail.com
+#   oauth_host     = oauth2.googleapis.com
+#   oauth_path     = /token
+#   oauth_scope    = https://mail.google.com/

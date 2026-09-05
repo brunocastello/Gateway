@@ -1,0 +1,26 @@
+name: Host tests (portable code)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and run the portable unit tests
+        run: make -C tests/host test
+
+      - name: Check that the portable sources stay portable
+        run: |
+          set -euo pipefail
+          # CLAUDE.md rule 8: these files must compile on a plain Linux gcc, so
+          # none of them may reach for a platform header.
+          if grep -rnE '#include[[:space:]]*<(OpenTransport|OpenTpt|Windows|MacTypes|MacWindows|Quickdraw|Files|Folders|Events|Memory|Fonts|Menus)\.h>' src/portable/; then
+            echo "a portable source pulled in a platform header" >&2
+            exit 1
+          fi

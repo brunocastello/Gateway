@@ -1,0 +1,4 @@
+# Apple's Universal Interfaces ship with Mac resource forks stored as
+# AppleDouble sidecars ("._Name"). They are binary; never let Git touch them.
+third_party/InterfacesAndLibraries/** -text -diff
+* text=auto

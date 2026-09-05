@@ -1,0 +1,6 @@
+build/
+package/
+tests/host/run_tests
+*.o
+*.a
+.DS_Store

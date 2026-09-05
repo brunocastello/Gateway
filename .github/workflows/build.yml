@@ -1,0 +1,79 @@
+name: Build (Mac OS 9 PowerPC / Classic Toolbox)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build with Retro68
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/root/Gateway" \
+            -w /root/Gateway \
+            -i ghcr.io/autc04/retro68 /bin/bash <<'EOF'
+          set -euo pipefail
+          TOOLCHAIN=/Retro68-build/toolchain
+          IAL=/Retro68-build/bin/interfaces-and-libraries.sh
+
+          # Stage Apple's Universal Interfaces. The trailing arguments are
+          # BUILD_68K BUILD_PPC BUILD_CARBON: Gateway is PowerPC-only and
+          # deliberately not Carbon (CLAUDE.md rule 1), so only PPC is built.
+          # This produces $TOOLCHAIN/universal/{CIncludes,RIncludes,libppc}
+          # and, as a side effect, links those headers into the toolchain.
+          "$IAL" "$TOOLCHAIN" /root/Gateway/third_party/InterfacesAndLibraries false true false
+
+          # Put the toolchain back on the Multiversal Interfaces. The staged
+          # $TOOLCHAIN/universal copy survives -- only the symlinks change.
+          # This is what keeps CLAUDE.md rule 3 honest: src/main.cpp compiles
+          # against Multiversal, and CMake hands $TOOLCHAIN/universal/CIncludes
+          # to the Certainly and Open Transport targets alone.
+          "$IAL" "$TOOLCHAIN" --multiversal false true false
+
+          test -f "$TOOLCHAIN/universal/libppc/libOpenTransportLib.a"
+          test -f "$TOOLCHAIN/universal/libppc/libOpenTptInternetLib.a"
+          test -f "$TOOLCHAIN/universal/CIncludes/OpenTransport.h"
+
+          mkdir -p build
+          cd build
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN/powerpc-apple-macos/cmake/retroppc.toolchain.cmake" \
+            -DGW_UNIVERSAL_DIR="$TOOLCHAIN/universal"
+          cmake --build . --verbose
+          ls -la
+          EOF
+
+      - name: Package release assets (.sit archive)
+        run: |
+          set -euo pipefail
+
+          # build/ is owned by root (it was created inside the Retro68
+          # container), so everything this step creates goes into package/,
+          # which the runner user owns.
+          mkdir -p package
+
+          git clone --depth 1 https://github.com/thecloudexpanse/sit.git /tmp/sit-src
+          make -C /tmp/sit-src
+
+          # Rez writes the data fork as "Gateway.ad" and the resource fork as
+          # "%Gateway.ad"; sit wants the AppleDouble sidecar named "._Gateway".
+          cp build/Gateway.ad package/Gateway
+          cp "build/%Gateway.ad" package/._Gateway
+          /tmp/sit-src/sit -T APPL -C GT9A -o package/Gateway.sit package/Gateway
+
+      - name: Upload disk image and application
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gateway-mac-os-9-ppc
+          path: |
+            build/Gateway.dsk
+            build/Gateway.APPL
+            build/Gateway.bin
+            package/Gateway.sit
+          if-no-files-found: error
