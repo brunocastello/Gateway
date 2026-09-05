@@ -84,3 +84,42 @@ instead of failing. Each site now rejects `record_len > TLS13_MAX_CIPHERTEXT`.
 `TLS13_MAX_PLAINTEXT` and `TLS13_MAX_CIPHERTEXT` are defined in
 `tls13_record.h`, and `tls13_handshake.c` carries compile-time assertions so
 the buffer sizes cannot drift back.
+
+## 4. Handshake messages spanning several records were rejected
+
+`tls13_read_encrypted_hs()` decrypted one record at a time and required each
+handshake message to be complete within it:
+
+```c
+if (total_hs > remaining) {
+    /* Handshake message spans multiple records — uncommon but legal. */
+    hs->error = BR_ERR_BAD_PARAM;
+    return kTLS13_Error;
+}
+```
+
+It is legal and not especially uncommon: a server is free to fragment the
+Certificate message across records, and CDNs with large chains do. The
+handshake failed against those hosts with a bad-parameter error.
+
+The buffered plaintext is now reassembled. When what is held is not yet a whole
+message — including the case where even the 4-byte header is split — the
+partial message is compacted to the front of `plain_buf` and the next record is
+decrypted directly behind it. `plain_buf` grew to
+`TLS13_MAX_PLAINTEXT + TLS13_MAX_CIPHERTEXT` so it can hold a partial message
+plus the whole of the record that completes it.
+
+## 5. No way to start TLS on an existing connection (STARTTLS)
+
+`MacTLS_Create()` opens the socket itself, so there was no way to hand
+Certainly a connection that had already carried plaintext. That ruled out
+STARTTLS, and with it SMTP submission on port 587 — which is the only port
+Microsoft offers for personal Outlook.com accounts.
+
+Added `ot_transport_adopt()` and the public `MacTLS_CreateOnEndpoint()`. The
+caller connects the endpoint and speaks the cleartext protocol up to the
+server's "ready to start TLS" reply, then transfers the endpoint; the transport
+replaces the caller's notifier with its own and starts in the Connected state,
+so `MacTLS_Pump()` proceeds straight to the handshake. Ownership transfers
+unconditionally, including on failure, so there is no path where both sides
+think they should close it.

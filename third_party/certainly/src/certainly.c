@@ -184,6 +184,45 @@ MacTLS_Context *MacTLS_CreateWithConfig(const char *host, uint16_t port,
     return ctx;
 }
 
+MacTLS_Context *MacTLS_CreateOnEndpoint(const char *host, EndpointRef ep)
+{
+    MacTLS_Context *ctx;
+
+    if (ep == NULL) return NULL;
+
+    ctx = (MacTLS_Context *)NewPtrClear(sizeof(MacTLS_Context));
+    if (ctx == NULL) {
+        /* Ownership transferred unconditionally, so it is ours to close. */
+        OTCloseProvider(ep);
+        return NULL;
+    }
+
+    ctx->state  = kMacTLS_Connecting;
+    ctx->config = NULL;
+
+    if (strlen(host) > 253 || strlen(host) >= sizeof(ctx->host)) {
+        ctx->state = kMacTLS_Error;
+        ctx->error = kMacTLS_ErrDNS;
+        OTCloseProvider(ep);
+        return ctx;
+    }
+
+    strncpy(ctx->host, host, sizeof(ctx->host) - 1);
+    ctx->host[sizeof(ctx->host) - 1] = '\0';
+
+    ctx->transport = ot_transport_adopt(ep);
+    if (ctx->transport == NULL) {
+        ctx->state = kMacTLS_Error;
+        ctx->error = kMacTLS_ErrMemory;
+        OTCloseProvider(ep);
+        return ctx;
+    }
+
+    setup_bearssl(ctx);
+
+    return ctx;
+}
+
 /* ── TLS 1.3 Pump Helpers ── */
 
 /*

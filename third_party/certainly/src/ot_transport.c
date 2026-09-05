@@ -196,6 +196,40 @@ OTTransport *ot_transport_create(const char *host, uint16_t port)
     return t;
 }
 
+OTTransport *ot_transport_adopt(EndpointRef ep)
+{
+    OTTransport *t;
+    OSStatus     err;
+
+    if (ep == NULL) return NULL;
+
+    t = (OTTransport *)NewPtrClear(sizeof(OTTransport));
+    if (t == NULL) return NULL;
+
+    t->endpoint = ep;
+    t->connect_start_ticks = (uint32_t)TickCount();
+
+    /*
+     * Take the endpoint over from whoever was driving it in the clear. Its
+     * notifier pointed at their state, so ours has to replace it before any
+     * further event arrives.
+     */
+    OTRemoveNotifier(ep);
+
+    err = OTInstallNotifier(ep, ot_notifier, t);
+    if (err == noErr) err = OTSetAsynchronous(ep);
+    if (err == noErr) err = OTSetNonBlocking(ep);
+    if (err != noErr) {
+        t->lastError = err;
+        t->state = kOTTransport_Error;
+        return t;
+    }
+
+    /* TCP is already up; the handshake can start on the next pump. */
+    t->state = kOTTransport_Connected;
+    return t;
+}
+
 OTTransportState ot_transport_pump(OTTransport *t)
 {
     switch (t->state) {

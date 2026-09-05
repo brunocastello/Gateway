@@ -59,6 +59,12 @@ int GW_Init(void)
         return 0;
     }
 
+    gw_log("mail upstream: imap %s:%ld, smtp %s:%ld",
+           GWConfig_Str("imap_host", "outlook.office365.com"),
+           GWConfig_Num("imap_upstream_port", 993),
+           GWConfig_Str("smtp_host", "smtp-mail.outlook.com"),
+           GWConfig_Num("smtp_upstream_port", 587));
+
     GW_SetStatus("idle - proxy :%d  imap :%d  smtp :%d",
                  sHttpPort, sImapPort, sSmtpPort);
     return 1;

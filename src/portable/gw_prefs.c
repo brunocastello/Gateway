@@ -3,6 +3,31 @@
 
 #include <string.h>
 
+/*
+ * Find the end of the current line and the start of the next one.
+ *
+ * Three line endings have to work here. A prefs file typed on the Mac itself
+ * ends lines with CR, one moved over from a modern machine ends them with LF,
+ * and one that has been through a Windows editor uses CRLF. Splitting on LF
+ * alone made a Mac-authored file look like a single line, which silently
+ * turned every setting into its default.
+ */
+static void gw_prefs_line(const char *text, size_t len, size_t off,
+                          size_t *line_end, size_t *next)
+{
+    size_t i = off;
+
+    while (i < len && text[i] != '\n' && text[i] != '\r') i++;
+    *line_end = i;
+
+    if (i < len && text[i] == '\r' && i + 1 < len && text[i + 1] == '\n')
+        *next = i + 2;                      /* CRLF counts as one ending */
+    else if (i < len)
+        *next = i + 1;
+    else
+        *next = len;
+}
+
 int gw_prefs_get(const char *text, size_t len, const char *key,
                  char *out, size_t cap)
 {
@@ -12,12 +37,9 @@ int gw_prefs_get(const char *text, size_t len, const char *key,
     if (cap) out[0] = '\0';
 
     while (off < len) {
-        size_t eol = off;
-        size_t line_end, i, vs;
+        size_t line_end, next, i, vs;
 
-        while (eol < len && text[eol] != '\n') eol++;
-        line_end = eol;
-        if (line_end > off && text[line_end - 1] == '\r') line_end--;
+        gw_prefs_line(text, len, off, &line_end, &next);
 
         /* trim leading blanks */
         i = off;
@@ -42,7 +64,7 @@ int gw_prefs_get(const char *text, size_t len, const char *key,
                 }
             }
         }
-        off = eol < len ? eol + 1 : len;
+        off = next;
     }
     return 0;
 }

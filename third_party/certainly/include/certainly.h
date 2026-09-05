@@ -91,6 +91,24 @@ void         MacTLS_Shutdown(void);
 MacTLS_Context *MacTLS_Create(const char *host, uint16_t port);
 MacTLS_Context *MacTLS_CreateWithConfig(const char *host, uint16_t port,
                                         MacTLS_Config *cfg);
+
+/*
+ * Start TLS on a connection that is already open and has already carried
+ * plaintext -- the STARTTLS / STLS / STARTTLS-on-587 pattern.
+ *
+ * The caller opens the endpoint, connects it, and speaks the cleartext part of
+ * the protocol up to and including the server's "ready to start TLS" reply.
+ * It must have consumed that reply completely: anything left unread on the
+ * wire is the first bytes of the TLS handshake.
+ *
+ * Ownership of ep transfers to the returned context unconditionally, including
+ * on failure, so the caller must not close it afterwards. host is used for SNI
+ * and certificate validation exactly as in MacTLS_Create.
+ *
+ * Same return contract as MacTLS_Create: check MacTLS_GetState() as well as
+ * the NULL case.
+ */
+MacTLS_Context *MacTLS_CreateOnEndpoint(const char *host, EndpointRef ep);
 MacTLS_State    MacTLS_Pump(MacTLS_Context *ctx);
 void            MacTLS_Close(MacTLS_Context *ctx);
 

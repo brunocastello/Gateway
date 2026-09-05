@@ -5,6 +5,8 @@
 #
 # Lines are "key = value" or "key: value". '#' and ';' start a comment.
 # Keys are case-insensitive; surrounding whitespace is trimmed.
+# CR, LF and CRLF line endings all work, so it does not matter whether you
+# type this on the Mac itself or copy it over from a modern machine.
 
 # ---------------------------------------------------------------- Module 1
 # The forward proxy. Point Classilla at this address and port, and turn on
@@ -22,15 +24,19 @@ smtp_port      = 1587
 # Leaving it unset refuses every login.
 local_password = change-me
 
-# Upstream mail servers. Both hops are implicit TLS.
+# Upstream mail servers.
 #
-# NOTE: Certainly opens TLS at connect time and has no way to upgrade a socket
-# that is already open, so Gateway cannot do STARTTLS on port 587. The default
-# below is implicit SMTPS on 465. See docs/inventory.md for the details.
+# IMAP on 993 is TLS from the first byte. SMTP on 587 starts in the clear and
+# upgrades with STARTTLS, which Gateway now supports; set smtp_starttls = 0
+# and the port to 465 if your provider offers implicit TLS instead.
+#
+# Note the SMTP host: personal Outlook.com / Hotmail accounts use
+# smtp-mail.outlook.com, not smtp.office365.com.
 imap_host          = outlook.office365.com
 imap_upstream_port = 993
-smtp_host          = smtp.office365.com
-smtp_upstream_port = 465
+smtp_host          = smtp-mail.outlook.com
+smtp_upstream_port = 587
+smtp_starttls      = 1
 
 # ------------------------------------------------------------------- OAuth
 # Consent happens out of band on a modern machine; Gateway only ever exchanges
@@ -43,6 +49,10 @@ oauth_host          = login.microsoftonline.com
 oauth_path          = /common/oauth2/v2.0/token
 oauth_scope         = offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send
 refresh_token       = paste-your-refresh-token-here
+
+# oauth_client_id is the public client your refresh token was issued to. If the
+# token came out of email-oauth2-proxy, reuse the client_id from its config --
+# there is no secret involved for a public client.
 
 # For Gmail instead:
 #   imap_host      = imap.gmail.com

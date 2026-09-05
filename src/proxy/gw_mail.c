@@ -35,6 +35,8 @@ typedef enum {
     kMSUpConnect,
     kMSUpGreet,
     kMSUpEhlo,
+    kMSUpStartTLS,      /* sent STARTTLS, waiting for the server's 220   */
+    kMSUpHandshake,     /* Certainly is negotiating on the same socket   */
     kMSUpAuth,
     kMSSplice,
     kMSFlushClose,
@@ -56,6 +58,9 @@ typedef struct {
     char          tag[GW_MAX_TAG];          /* IMAP tag owed a reply */
     char          user[GW_MAX_USER];
     int           loginPhase;               /* SMTP AUTH LOGIN sub-state */
+    int           wantStartTLS;             /* upstream needs a STARTTLS upgrade */
+    int           tlsUp;                    /* the upgrade has happened  */
+    char          upHost[GW_NET_HOST_MAX];  /* kept for SNI on the upgrade */
     unsigned long lastActivity;
 } GWMailSession;
 
@@ -149,12 +154,26 @@ static void mail_fail(GWMailSession *s, const char *clientText,
 /* Local authentication                                                */
 /* ------------------------------------------------------------------ */
 
-static int local_password_ok(const char *pass)
+/*
+ * Returns 1 on a match, 0 on a mismatch, -1 when prefs carry no password at
+ * all. The three-way answer exists so the log can tell "you typed the wrong
+ * password" apart from "Gateway never read your prefs file", which look
+ * identical to the mail client and are the two things that actually go wrong.
+ */
+static int local_password_check(const char *pass)
 {
     const char *want = GWConfig_Str("local_password", "");
 
-    if (want[0] == '\0') return 0;          /* unset means "refuse everyone" */
-    return strcmp(want, pass) == 0;
+    if (want[0] == '\0') return -1;
+    return strcmp(want, pass) == 0 ? 1 : 0;
+}
+
+static void log_auth_failure(long id, const char *proto, int verdict)
+{
+    if (verdict < 0)
+        gw_log("mail #%ld %s refused: prefs have no local_password", id, proto);
+    else
+        gw_log("mail #%ld %s refused: password did not match prefs", id, proto);
 }
 
 static void begin_upstream(GWMailSession *s)
@@ -198,11 +217,13 @@ static void imap_command(GWMailSession *s, const char *line, size_t len)
         return;
     }
     if (gw_stricmp(cmd.cmd, "LOGIN") == 0) {
-        if (!cmd.has_credentials || !local_password_ok(cmd.pass)) {
+        int verdict = cmd.has_credentials ? local_password_check(cmd.pass) : 0;
+
+        if (verdict != 1) {
             snprintf(reply, sizeof(reply),
                      "%s NO Gateway rejected that password\r\n", cmd.tag);
             say_client(s, reply);
-            gw_log("mail #%ld IMAP login refused", s->id);
+            log_auth_failure(s->id, "IMAP", verdict);
             return;
         }
         strncpy(s->tag, cmd.tag, sizeof(s->tag) - 1);
@@ -254,20 +275,29 @@ static void smtp_command(GWMailSession *s, const char *line, size_t len)
             return;
         }
         pass[n] = '\0';
-        if (!local_password_ok(pass)) {
-            say_client(s, "535 5.7.8 Gateway rejected that password\r\n");
-            return;
+        {
+            int verdict = local_password_check(pass);
+            if (verdict != 1) {
+                say_client(s, "535 5.7.8 Gateway rejected that password\r\n");
+                log_auth_failure(s->id, "SMTP", verdict);
+                return;
+            }
         }
         smtp_auth_success(s);
         return;
     }
     if (s->loginPhase == 3) {               /* expecting the SASL PLAIN blob */
         s->loginPhase = 0;
-        if (!gw_sasl_plain_decode(line, len, s->user, sizeof(s->user),
-                                  pass, sizeof(pass)) ||
-            !local_password_ok(pass)) {
-            say_client(s, "535 5.7.8 Gateway rejected that password\r\n");
-            return;
+        {
+            int verdict = gw_sasl_plain_decode(line, len, s->user,
+                                               sizeof(s->user),
+                                               pass, sizeof(pass))
+                              ? local_password_check(pass) : 0;
+            if (verdict != 1) {
+                say_client(s, "535 5.7.8 Gateway rejected that password\r\n");
+                log_auth_failure(s->id, "SMTP", verdict);
+                return;
+            }
         }
         smtp_auth_success(s);
         return;
@@ -309,12 +339,17 @@ static void smtp_command(GWMailSession *s, const char *line, size_t len)
                 say_client(s, "334 \r\n");
                 return;
             }
-            if (!gw_sasl_plain_decode(payload, strlen(payload),
-                                      s->user, sizeof(s->user),
-                                      pass, sizeof(pass)) ||
-                !local_password_ok(pass)) {
-                say_client(s, "535 5.7.8 Gateway rejected that password\r\n");
-                return;
+            {
+                int verdict = gw_sasl_plain_decode(payload, strlen(payload),
+                                                   s->user, sizeof(s->user),
+                                                   pass, sizeof(pass))
+                                  ? local_password_check(pass) : 0;
+                if (verdict != 1) {
+                    say_client(s,
+                               "535 5.7.8 Gateway rejected that password\r\n");
+                    log_auth_failure(s->id, "SMTP", verdict);
+                    return;
+                }
             }
             smtp_auth_success(s);
             return;
@@ -393,10 +428,47 @@ static void step_up_ehlo(GWMailSession *s)
             return;
         }
         if (line[3] != '-') {               /* final line of the 250 block */
-            send_xoauth2(s);
+            if (s->wantStartTLS && !s->tlsUp) {
+                say_up(s, "STARTTLS\r\n");
+                s->state = kMSUpStartTLS;
+            } else {
+                send_xoauth2(s);
+            }
             return;
         }
     }
+}
+
+/*
+ * The server has answered STARTTLS. Everything after its reply is TLS, so the
+ * reply has to have been read in full and nothing may be left buffered before
+ * Certainly takes the socket over.
+ */
+static void step_up_starttls(GWMailSession *s)
+{
+    char line[GW_MAIL_LINE];
+
+    if (!take_line(s->ubuf, &s->uLen, line, sizeof(line))) return;
+
+    if (line[0] != '2') {
+        mail_fail(s, "421 4.4.1 Upstream refused STARTTLS\r\n",
+                  "upstream refused STARTTLS");
+        return;
+    }
+    if (s->uLen != 0) {
+        mail_fail(s, "421 4.4.1 Upstream sent data before TLS\r\n",
+                  "upstream spoke before the TLS handshake");
+        return;
+    }
+
+    if (!GWStream_UpgradeToTLS(&s->up, s->upHost)) {
+        mail_fail(s, "421 4.4.1 Gateway could not start TLS\r\n",
+                  "STARTTLS upgrade failed");
+        return;
+    }
+    s->tlsUp = 1;
+    gw_log("mail #%ld STARTTLS accepted, negotiating", s->id);
+    s->state = kMSUpHandshake;
 }
 
 static void step_up_auth(GWMailSession *s)
@@ -564,12 +636,22 @@ static void session_step(GWMailSession *s)
             if (s->kind == kMailImap) {
                 host = GWConfig_Str("imap_host", "outlook.office365.com");
                 port = GWConfig_Num("imap_upstream_port", 993);
+                s->wantStartTLS = 0;        /* 993 is implicit TLS */
             } else {
-                host = GWConfig_Str("smtp_host", "smtp.office365.com");
-                port = GWConfig_Num("smtp_upstream_port", 465);
+                host = GWConfig_Str("smtp_host", "smtp-mail.outlook.com");
+                port = GWConfig_Num("smtp_upstream_port", 587);
+                /* 587 is plaintext until STARTTLS; 465 is TLS from the
+                 * first byte. Follow the port unless prefs say otherwise. */
+                s->wantStartTLS = (int)GWConfig_Num("smtp_starttls",
+                                                    port == 465 ? 0 : 1);
             }
-            gw_log("mail #%ld connecting to %s:%ld", s->id, host, port);
-            if (!GWStream_ConnectTLS(&s->up, host, (UInt16)port)) {
+            strncpy(s->upHost, host, sizeof(s->upHost) - 1);
+            gw_log("mail #%ld connecting to %s:%ld%s", s->id, host, port,
+                   s->wantStartTLS ? " (STARTTLS)" : " (TLS)");
+
+            if (!(s->wantStartTLS
+                      ? GWStream_ConnectPlain(&s->up, host, (UInt16)port)
+                      : GWStream_ConnectTLS(&s->up, host, (UInt16)port))) {
                 mail_fail(s, s->kind == kMailImap
                                  ? "* BYE Gateway could not reach the mail server\r\n"
                                  : "421 4.4.1 Gateway could not reach the mail server\r\n",
@@ -605,8 +687,22 @@ static void session_step(GWMailSession *s)
         }
         break;
 
+    case kMSUpHandshake:
+        if (s->up.state == kGWStreamReady) {
+            /* RFC 3207: the session resets, so EHLO again inside TLS. */
+            say_up(s, "EHLO gateway\r\n");
+            q_flush(&s->up, s->pq, &s->pLen, &s->pSent);
+            s->state = kMSUpEhlo;
+        } else if (s->up.state == kGWStreamError ||
+                   s->up.state == kGWStreamClosed) {
+            mail_fail(s, "421 4.4.1 TLS handshake with the mail server failed\r\n",
+                      GWStream_ErrorText(&s->up));
+        }
+        break;
+
     case kMSUpGreet:
     case kMSUpEhlo:
+    case kMSUpStartTLS:
     case kMSUpAuth:
         if (q_flush(&s->up, s->pq, &s->pLen, &s->pSent) < 0) {
             s->state = kMSFlushClose;
@@ -620,9 +716,10 @@ static void session_step(GWMailSession *s)
                       "upstream closed during login");
             break;
         }
-        if (s->state == kMSUpGreet)      step_up_greet(s);
-        else if (s->state == kMSUpEhlo)  step_up_ehlo(s);
-        else                             step_up_auth(s);
+        if (s->state == kMSUpGreet)          step_up_greet(s);
+        else if (s->state == kMSUpEhlo)      step_up_ehlo(s);
+        else if (s->state == kMSUpStartTLS)  step_up_starttls(s);
+        else                                 step_up_auth(s);
 
         q_flush(&s->up, s->pq, &s->pLen, &s->pSent);
         q_flush(&s->cli, s->oq, &s->oLen, &s->oSent);

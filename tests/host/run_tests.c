@@ -474,6 +474,41 @@ static void test_prefs(void)
           "empty value counts as absent");
     check(!gw_prefs_get(text, sizeof(text) - 1, "Gateway", value, sizeof(value)),
           "comment text is not a key");
+
+    /*
+     * Line endings. A prefs file typed on Mac OS 9 ends its lines with CR and
+     * contains no LF at all; splitting on LF alone made the whole file look
+     * like one comment line, so every setting silently fell back to its
+     * default and every mail login was refused as a bad password.
+     */
+    {
+        static const char cr[] =
+            "# Gateway Prefs\r"
+            "local_password = hunter2\r"
+            "imap_port = 1993\r";
+        static const char crlf[] =
+            "# Gateway Prefs\r\n"
+            "local_password = hunter2\r\n"
+            "imap_port = 1993\r\n";
+        static const char noeol[] = "local_password = hunter2";
+
+        check(gw_prefs_get(cr, sizeof(cr) - 1, "local_password",
+                           value, sizeof(value)), "CR line endings parse");
+        check_str(value, "hunter2", "CR value");
+        check(gw_prefs_get_num(cr, sizeof(cr) - 1, "imap_port", -1) == 1993,
+              "CR numeric value");
+        check(!gw_prefs_get(cr, sizeof(cr) - 1, "Gateway",
+                            value, sizeof(value)),
+              "CR comment is still a comment");
+
+        check(gw_prefs_get(crlf, sizeof(crlf) - 1, "local_password",
+                           value, sizeof(value)), "CRLF line endings parse");
+        check_str(value, "hunter2", "CRLF value");
+
+        check(gw_prefs_get(noeol, sizeof(noeol) - 1, "local_password",
+                           value, sizeof(value)),
+              "last line without a terminator parses");
+    }
 }
 
 int main(void)

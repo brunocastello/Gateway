@@ -1157,53 +1157,54 @@ static tls13_hs_result tls13_read_encrypted_hs(
          */
         if (hs->plain_offset < hs->plain_len) {
             size_t remaining = hs->plain_len - hs->plain_offset;
-            uint32_t hs_body_len;
-            size_t total_hs;
-
-            /* Need at least 4 bytes for the handshake header */
-            if (remaining < 4) {
-                hs->error = BR_ERR_BAD_PARAM;
-                return kTLS13_Error;
-            }
-
-            *out_hs_type = hs->plain_buf[hs->plain_offset];
-            hs_body_len = get_u24(hs->plain_buf + hs->plain_offset + 1);
-            total_hs = 4 + (size_t)hs_body_len;
-
-            if (total_hs > remaining) {
-                /*
-                 * Handshake message spans multiple records —
-                 * uncommon but legal. Not supported in v1.
-                 */
-                hs->error = BR_ERR_BAD_PARAM;
-                return kTLS13_Error;
-            }
+            int complete = 0;
+            size_t total_hs = 0;
 
             /*
-             * Gateway patch (see PATCHES.md). hs_body_len is a uint24 read
-             * straight off the wire; without this check a large Certificate
-             * message walked off the end of the caller's buffer.
+             * A handshake message may be split across records, and a large
+             * certificate chain routinely is (Gateway patch, see PATCHES.md).
+             * Both the 4-byte header and the body are reassembled here: if
+             * what is buffered is not yet a whole message, slide it to the
+             * front so the next record's plaintext lands directly behind it,
+             * and go around again.
              */
-            if (total_hs > out_cap) {
-                hs->error = BR_ERR_BAD_PARAM;
-                return kTLS13_Error;
+            if (remaining >= 4) {
+                uint32_t hs_body_len =
+                    get_u24(hs->plain_buf + hs->plain_offset + 1);
+                total_hs = 4 + (size_t)hs_body_len;
+
+                if (total_hs > sizeof(hs->plain_buf) || total_hs > out_cap) {
+                    hs->error = BR_ERR_BAD_PARAM;
+                    return kTLS13_Error;
+                }
+                complete = (total_hs <= remaining);
             }
 
-            /* Copy the handshake message to out_data */
-            memcpy(out_data, hs->plain_buf + hs->plain_offset, total_hs);
-            *out_len = total_hs;
-            hs->plain_offset += total_hs;
+            if (complete) {
+                *out_hs_type = hs->plain_buf[hs->plain_offset];
+                memcpy(out_data, hs->plain_buf + hs->plain_offset, total_hs);
+                *out_len = total_hs;
+                hs->plain_offset += total_hs;
 
-            /* If we consumed all plaintext, reset for next record */
-            if (hs->plain_offset >= hs->plain_len) {
-                hs->plain_len = 0;
+                /* If we consumed all plaintext, reset for next record */
+                if (hs->plain_offset >= hs->plain_len) {
+                    hs->plain_len = 0;
+                    hs->plain_offset = 0;
+                }
+
+                return kTLS13_OK;
+            }
+
+            /* Partial message: compact so the next record appends to it. */
+            if (hs->plain_offset > 0) {
+                memmove(hs->plain_buf, hs->plain_buf + hs->plain_offset,
+                        remaining);
+                hs->plain_len = remaining;
                 hs->plain_offset = 0;
             }
-
-            return kTLS13_OK;
         }
 
-        /* Plaintext buffer empty — read the next record from the network */
+        /* Need another record to make progress */
         if (*recv_len < 5) {
             return kTLS13_WantRead;
         }
@@ -1249,17 +1250,30 @@ static tls13_hs_result tls13_read_encrypted_hs(
          * we consume them one at a time via the loop above.
          */
         {
+            /*
+             * Append behind whatever partial message is already buffered,
+             * rather than overwriting it (Gateway patch, see PATCHES.md).
+             * plain_offset is 0 here: either the buffer was empty, or the
+             * block above just compacted it.
+             */
             size_t pt_len = 0;
+            size_t used = hs->plain_len;
+
+            if (sizeof(hs->plain_buf) - used < (size_t)record_len) {
+                hs->error = BR_ERR_BAD_PARAM;
+                return kTLS13_Error;
+            }
+
             ret = tls13_record_decrypt(&hs->read_ctx,
                                        recv_buf + 5, record_len,
-                                       hs->plain_buf, sizeof(hs->plain_buf),
+                                       hs->plain_buf + used,
+                                       sizeof(hs->plain_buf) - used,
                                        &pt_len, &inner_ct);
             if (ret != 0) {
                 hs->error = BR_ERR_BAD_MAC;
                 return kTLS13_Error;
             }
-            hs->plain_len = pt_len;
-            hs->plain_offset = 0;
+            hs->plain_len = used + pt_len;
         }
 
         /* Consume the record from the front of the recv buffer */

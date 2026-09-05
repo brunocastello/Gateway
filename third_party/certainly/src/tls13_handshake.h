@@ -140,9 +140,14 @@ typedef struct {
      * here, advancing plain_offset. When plain_offset == plain_len,
      * we decrypt the next record.
      */
-    /* Sized against the ciphertext limit, not the plaintext one: records are
-     * decrypted in place, so the tag and content-type byte land here too. */
-    unsigned char       plain_buf[TLS13_MAX_CIPHERTEXT];
+    /*
+     * Sized against the ciphertext limit, not the plaintext one, because
+     * records are decrypted in place and the tag and content-type byte land
+     * here too -- and then again for a full message, because a handshake
+     * message split across records is reassembled in this buffer: it has to
+     * hold the partial message plus the whole of the record that completes it.
+     */
+    unsigned char       plain_buf[TLS13_MAX_PLAINTEXT + TLS13_MAX_CIPHERTEXT];
     size_t              plain_len;
     size_t              plain_offset;
 

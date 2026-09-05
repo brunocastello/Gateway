@@ -73,6 +73,17 @@ typedef struct {
 OTTransport *ot_transport_create(const char *host, uint16_t port);
 
 /*
+ * Wrap an endpoint that is already open, bound and connected, and that has
+ * already carried plaintext. This is what STARTTLS needs: the caller speaks
+ * the cleartext part of the protocol itself, then hands the endpoint over.
+ *
+ * Ownership of ep transfers to the returned transport, which closes it in
+ * ot_transport_destroy(). The caller must have removed its own notifier, or
+ * accept that this function replaces it. Returns NULL on allocation failure.
+ */
+OTTransport *ot_transport_adopt(EndpointRef ep);
+
+/*
  * Drive the connection state machine forward. Call this frequently.
  * Checks notifier flags, advances state (DNS done → connect, etc.).
  * Returns current state.

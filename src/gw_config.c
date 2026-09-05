@@ -60,6 +60,17 @@ void GWConfig_Load(void)
     sLoaded = 1;
     strcpy(sSource, "Preferences:Gateway Prefs");
     gw_log("read %ld bytes of prefs", sLen);
+
+    /*
+     * Say out loud whether the settings that matter actually parsed. A prefs
+     * file that loads but yields nothing looks exactly like no prefs file at
+     * all from the mail client's side -- every login comes back as a bad
+     * password -- so the log has to distinguish the two.
+     */
+    if (GWConfig_Str("local_password", "")[0] == '\0')
+        gw_log("WARNING: no local_password in prefs; mail logins will fail");
+    else
+        gw_log("local_password is set; mail logins will be checked against it");
 }
 
 int GWConfig_Loaded(void)

@@ -75,6 +75,13 @@ long         GWConn_Send(GWConn *c, const void *buf, size_t len);
 /* >= 0: bytes read (0 means nothing yet). -1: error. -2: peer sent FIN. */
 long         GWConn_Recv(GWConn *c, void *buf, size_t len);
 
+/*
+ * Hand the endpoint to someone else. Our notifier comes off and c->ep is
+ * cleared, so GWConn_Destroy() no longer closes it. Used by STARTTLS, where
+ * Certainly takes over a socket Gateway has been speaking plaintext on.
+ */
+EndpointRef  GWConn_DetachEndpoint(GWConn *c);
+
 void         GWConn_Close(GWConn *c);       /* orderly: sends FIN */
 void         GWConn_Destroy(GWConn *c);
 void         GWConn_PeerText(GWConn *c, char *out, size_t cap);
@@ -132,6 +139,14 @@ void          GWStream_Init(GWStream *s);
 int           GWStream_ConnectPlain(GWStream *s, const char *host, UInt16 port);
 int           GWStream_ConnectTLS(GWStream *s, const char *host, UInt16 port);
 void          GWStream_Adopt(GWStream *s, GWConn *c);
+
+/*
+ * Turn a live plaintext stream into a TLS one in place (STARTTLS). Call it
+ * once the server's "ready to start TLS" reply has been read in full and
+ * nothing is left queued in either direction. Returns 0 if the stream is not
+ * in a state that can be upgraded.
+ */
+int           GWStream_UpgradeToTLS(GWStream *s, const char *host);
 GWStreamState GWStream_Pump(GWStream *s);
 
 /* Same conventions as GWConn_Send / GWConn_Recv. */

@@ -240,15 +240,13 @@ drifting.
 
 ## 9. Known gaps
 
-* **SMTP STARTTLS on port 587.** Certainly's only entry point is
-  `MacTLS_Create(host, port)`, which opens the socket itself; there is no way
-  to hand it an endpoint that is already connected and speaking plaintext. So
-  Gateway cannot perform the `STARTTLS` upgrade, and `smtp_upstream_port`
-  defaults to **465** (implicit SMTPS). Gmail supports 465. Office 365
-  officially documents 587/STARTTLS only, so an Outlook.com account may need
-  `MacTLS_CreateFromEndpoint()` added to Certainly before SMTP send works.
-  IMAP is unaffected — 993 is implicit TLS already. This is the one part of
-  Phase 2 that is blocked on a library change rather than on Gateway.
+* ~~**SMTP STARTTLS on port 587.**~~ Closed. Certainly gained
+  `MacTLS_CreateOnEndpoint()`, so Gateway connects in the clear, speaks
+  EHLO/STARTTLS itself, and hands the endpoint over for the handshake. The
+  defaults are now `smtp-mail.outlook.com:587` with `smtp_starttls = 1`, which
+  is what personal Outlook.com and Hotmail accounts require; set
+  `smtp_starttls = 0` with port 465 for a provider offering implicit TLS.
+  See `third_party/certainly/PATCHES.md` §5.
 * **HTTP/1.1 keep-alive to the client** is not implemented and will not be:
   the client hop is always `Connection: close`, which is what makes an
   EOF-delimited body legal and keeps the state machine small.
@@ -257,6 +255,12 @@ drifting.
   undecoded.
 * **Untested on hardware beyond the HTTPS path.** The `CONNECT` tunnel and
   both mail splices have not faced a real client yet.
+* **Prefs line endings** were a real trap: the parser split on LF only, so a
+  file typed on the Mac (CR endings) parsed as a single comment line and every
+  setting silently fell back to its default — including `local_password`, which
+  made every mail login fail as a bad password. All three conventions are
+  accepted now, `tests/host` covers them, and `GWConfig_Load()` logs whether
+  `local_password` actually parsed.
 * The build has never been compiled locally. Every check in this document is
   either a source-level fact about the vendored trees or an assertion the CI
   job makes (`test -f` on the staged Open Transport libraries before CMake

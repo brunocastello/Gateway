@@ -347,6 +347,19 @@ long GWConn_Recv(GWConn *c, void *buf, size_t len)
     return (long)r;
 }
 
+EndpointRef GWConn_DetachEndpoint(GWConn *c)
+{
+    EndpointRef ep;
+
+    if (c == NULL || c->ep == NULL) return NULL;
+
+    ep = c->ep;
+    OTRemoveNotifier(ep);       /* our flags must stop being written to */
+    c->ep = NULL;
+    c->state = kGWConnClosed;
+    return ep;
+}
+
 void GWConn_Close(GWConn *c)
 {
     if (c == NULL) return;
@@ -596,6 +609,36 @@ void GWStream_Adopt(GWStream *s, GWConn *c)
     s->plain = c;
     s->state = (c != NULL && c->state == kGWConnReady)
                    ? kGWStreamReady : kGWStreamError;
+}
+
+int GWStream_UpgradeToTLS(GWStream *s, const char *host)
+{
+    EndpointRef ep;
+
+    if (s == NULL || s->tls || s->plain == NULL) return 0;
+    if (s->plain->state != kGWConnReady || s->plain->remoteEOF) return 0;
+
+    ep = GWConn_DetachEndpoint(s->plain);
+    GWConn_Destroy(s->plain);           /* closes the DNS provider, not the ep */
+    s->plain = NULL;
+
+    if (ep == NULL) {
+        s->state = kGWStreamError;
+        return 0;
+    }
+
+    /* Certainly owns the endpoint from here, including on failure. */
+    s->sec = MacTLS_CreateOnEndpoint(host, ep);
+    if (s->sec == NULL || MacTLS_GetState(s->sec) == kMacTLS_Error) {
+        s->state = kGWStreamError;
+        return 0;
+    }
+
+    s->tls = true;
+    s->eof = false;
+    s->startTicks = GWNet_Ticks();
+    s->state = kGWStreamConnecting;
+    return 1;
 }
 
 GWStreamState GWStream_Pump(GWStream *s)
