@@ -25,6 +25,19 @@
 #define TLS13_TAG_SIZE  16
 
 /*
+ * Record size limits, RFC 8446 section 5.2 (Gateway patch - see PATCHES.md).
+ *
+ * TLSInnerPlaintext is at most 2^14 bytes, and TLSCiphertext.length is at most
+ * 2^14 + 256 to cover the content-type byte, padding and the AEAD tag. Both
+ * numbers matter: a record arrives with a 16-bit length taken straight off the
+ * wire, and every buffer it is copied into has to be sized against the
+ * ciphertext limit, not the plaintext one, because decryption happens in
+ * place.
+ */
+#define TLS13_MAX_PLAINTEXT   16384                     /* 2^14        */
+#define TLS13_MAX_CIPHERTEXT  (TLS13_MAX_PLAINTEXT + 256) /* 2^14 + 256 */
+
+/*
  * Record encryption/decryption context.
  * One per direction (read and write), each with its own key, IV,
  * and sequence counter.
@@ -65,15 +78,23 @@ int tls13_record_encrypt(tls13_record_ctx *ctx,
  *
  * ciphertext: the encrypted payload (after the 5-byte record header)
  * ct_len:     length of ciphertext (includes content type byte + tag)
- * out:        output buffer (must be at least ct_len)
+ * out:        output buffer
+ * out_cap:    capacity of out, in bytes
  * out_len:    receives the plaintext length (excluding content type)
  * out_ct:     receives the real content type (extracted from decrypted payload)
  *
- * Returns 0 on success, -1 on decryption failure (bad MAC).
+ * Decryption is in place, so out must have room for the whole ciphertext, not
+ * just the plaintext that comes out of it. out_cap is checked against ct_len
+ * before anything is written (Gateway patch - see PATCHES.md); passing a
+ * buffer that is too small is reported as a failure rather than overrunning
+ * it.
+ *
+ * Returns 0 on success, -1 on decryption failure (bad MAC), an over-long
+ * record, or insufficient capacity.
  */
 int tls13_record_decrypt(tls13_record_ctx *ctx,
                          const void *ciphertext, size_t ct_len,
-                         void *out, size_t *out_len,
+                         void *out, size_t out_cap, size_t *out_len,
                          uint8_t *out_ct);
 
 #endif /* CERTAINLY_TLS13_RECORD_H */

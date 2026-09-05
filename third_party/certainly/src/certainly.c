@@ -426,7 +426,7 @@ static void tls13_recv_records(MacTLS_Context *ctx)
         uint16_t record_len;
         uint8_t record_type;
         size_t total_record;
-        unsigned char decrypted[16384];
+        unsigned char *decrypted = ctx->tls13_dec_buf;
         size_t dec_len;
         uint8_t inner_ct;
         int ret;
@@ -436,6 +436,19 @@ static void tls13_recv_records(MacTLS_Context *ctx)
                                  ctx->tls13_recv_buf[4]);
 
         total_record = 5 + record_len;
+
+        /*
+         * Gateway patch (see PATCHES.md): recv_buf holds exactly one maximum
+         * record, so a longer one can never arrive in full. Without this the
+         * loop would break every pass waiting for bytes that cannot fit, and
+         * the connection would hang instead of failing.
+         */
+        if (record_len > TLS13_MAX_CIPHERTEXT) {
+            ctx->state = kMacTLS_Error;
+            ctx->error = kMacTLS_ErrRead;
+            return;
+        }
+
         if (ctx->tls13_recv_len < total_record) {
             /* Incomplete record — wait for more data */
             break;
@@ -476,7 +489,8 @@ static void tls13_recv_records(MacTLS_Context *ctx)
         /* Decrypt the record */
         ret = tls13_record_decrypt(&ctx->hs13.read_ctx,
                                    ctx->tls13_recv_buf + 5, record_len,
-                                   decrypted, &dec_len, &inner_ct);
+                                   decrypted, sizeof(ctx->tls13_dec_buf),
+                                   &dec_len, &inner_ct);
         if (ret != 0) {
             ctx->state = kMacTLS_Error;
             ctx->error = kMacTLS_ErrRead;
@@ -864,12 +878,12 @@ int MacTLS_Write(MacTLS_Context *ctx, const void *data, size_t len)
          *
          * Max plaintext per record is 16384 (2^14). We cap at that.
          */
-        unsigned char ciphertext[16384 + 1 + TLS13_TAG_SIZE];
+        unsigned char *ciphertext = ctx->tls13_enc_buf;
         unsigned char record_hdr[5];
         size_t ct_len;
         int ret, sent, total;
 
-        if (len > 16384) len = 16384;
+        if (len > TLS13_MAX_PLAINTEXT) len = TLS13_MAX_PLAINTEXT;
 
         ret = tls13_record_encrypt(&ctx->hs13.write_ctx,
                                    data, len,

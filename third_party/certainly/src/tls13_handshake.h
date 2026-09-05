@@ -107,8 +107,19 @@ typedef struct {
     unsigned char       client_hs_secret[64];
     unsigned char       server_hs_secret[64];
 
-    /* Buffer for non-certificate handshake messages (outgoing) */
-    unsigned char       msg_buf[4096];
+    /*
+     * Handshake message buffer, used for outgoing messages and for the one
+     * incoming message currently being examined.
+     *
+     * Gateway patch (see PATCHES.md): this was 4096 bytes, while the incoming
+     * path copies whole handshake messages into it. A TLS 1.3 Certificate
+     * message carrying a leaf plus an intermediate is routinely larger than
+     * that, so any site behind a mainstream CDN overran the buffer and
+     * corrupted the rest of this struct -- and then the heap. Sized to hold
+     * the largest message that can arrive, which is bounded by plain_buf
+     * because messages spanning several records are rejected outright.
+     */
+    unsigned char       msg_buf[TLS13_MAX_PLAINTEXT];
     size_t              msg_len;
     size_t              msg_offset;
 
@@ -129,7 +140,9 @@ typedef struct {
      * here, advancing plain_offset. When plain_offset == plain_len,
      * we decrypt the next record.
      */
-    unsigned char       plain_buf[16384];
+    /* Sized against the ciphertext limit, not the plaintext one: records are
+     * decrypted in place, so the tag and content-type byte land here too. */
+    unsigned char       plain_buf[TLS13_MAX_CIPHERTEXT];
     size_t              plain_len;
     size_t              plain_offset;
 

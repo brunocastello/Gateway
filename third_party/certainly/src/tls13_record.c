@@ -139,7 +139,7 @@ static int tls13_ct_equal(const unsigned char *a, const unsigned char *b,
 
 int tls13_record_decrypt(tls13_record_ctx *ctx,
                          const void *ciphertext, size_t ct_len,
-                         void *out, size_t *out_len,
+                         void *out, size_t out_cap, size_t *out_len,
                          uint8_t *out_ct)
 {
     unsigned char nonce[12];
@@ -149,6 +149,16 @@ int tls13_record_decrypt(tls13_record_ctx *ctx,
     int ok;
 
     if (ct_len < 1 + TLS13_TAG_SIZE) return -1;
+
+    /*
+     * Gateway patch (see PATCHES.md). ct_len comes from the record header on
+     * the wire, so it is entirely under the peer's control. Reject anything
+     * past the RFC 8446 limit, and refuse to run if the caller's buffer cannot
+     * hold the whole ciphertext -- the memcpy below decrypts in place, so a
+     * short buffer would be overrun before a single byte was authenticated.
+     */
+    if (ct_len > TLS13_MAX_CIPHERTEXT) return -1;
+    if (ct_len > out_cap) return -1;
 
     payload_len = ct_len - TLS13_TAG_SIZE;
 

@@ -1033,6 +1033,14 @@ static tls13_hs_result tls13_state_recv_server_hello(tls13_hs_ctx *hs,
     record_len = get_u16(recv_buf + 3);
     total = (size_t)5 + record_len;
 
+    /* Gateway patch (see PATCHES.md): same reasoning as in
+     * tls13_read_encrypted_hs -- a record longer than the receive buffer can
+     * never complete, so waiting for it hangs the handshake. */
+    if (record_len > TLS13_MAX_CIPHERTEXT) {
+        hs->error = BR_ERR_BAD_PARAM;
+        return kTLS13_Error;
+    }
+
     /* Check we have the full record */
     if (*recv_len < total) {
         return kTLS13_WantRead;
@@ -1117,9 +1125,21 @@ static tls13_hs_result tls13_state_recv_server_hello(tls13_hs_ctx *hs,
  *   kTLS13_WantRead — need more data from network
  *   kTLS13_Error    — decryption or parse failure
  */
+/*
+ * Gateway patch (see PATCHES.md). Records are decrypted in place, so any
+ * buffer a record lands in has to be sized against the ciphertext limit. The
+ * negative-array-size idiom fails the build rather than the connection if
+ * either of these ever shrinks again.
+ */
+typedef char tls13_plain_buf_is_big_enough[
+    (sizeof(((tls13_hs_ctx *)0)->plain_buf) >= TLS13_MAX_CIPHERTEXT) ? 1 : -1];
+typedef char tls13_msg_buf_holds_one_record[
+    (sizeof(((tls13_hs_ctx *)0)->msg_buf) >= TLS13_MAX_PLAINTEXT) ? 1 : -1];
+
 static tls13_hs_result tls13_read_encrypted_hs(
     tls13_hs_ctx *hs, unsigned char *recv_buf, size_t *recv_len,
-    uint8_t *out_hs_type, unsigned char *out_data, size_t *out_len)
+    uint8_t *out_hs_type, unsigned char *out_data, size_t out_cap,
+    size_t *out_len)
 {
     uint8_t record_type;
     uint16_t record_len;
@@ -1159,6 +1179,16 @@ static tls13_hs_result tls13_read_encrypted_hs(
                 return kTLS13_Error;
             }
 
+            /*
+             * Gateway patch (see PATCHES.md). hs_body_len is a uint24 read
+             * straight off the wire; without this check a large Certificate
+             * message walked off the end of the caller's buffer.
+             */
+            if (total_hs > out_cap) {
+                hs->error = BR_ERR_BAD_PARAM;
+                return kTLS13_Error;
+            }
+
             /* Copy the handshake message to out_data */
             memcpy(out_data, hs->plain_buf + hs->plain_offset, total_hs);
             *out_len = total_hs;
@@ -1181,6 +1211,16 @@ static tls13_hs_result tls13_read_encrypted_hs(
         record_type = recv_buf[0];
         record_len = get_u16(recv_buf + 3);
         total = (size_t)5 + record_len;
+
+        /*
+         * Gateway patch (see PATCHES.md): a record claiming more than the RFC
+         * limit can never be satisfied, because the receive buffer is not that
+         * large. Waiting for it would wedge the handshake forever, so fail.
+         */
+        if (record_len > TLS13_MAX_CIPHERTEXT) {
+            hs->error = BR_ERR_BAD_PARAM;
+            return kTLS13_Error;
+        }
 
         if (*recv_len < total) {
             return kTLS13_WantRead;
@@ -1212,7 +1252,8 @@ static tls13_hs_result tls13_read_encrypted_hs(
             size_t pt_len = 0;
             ret = tls13_record_decrypt(&hs->read_ctx,
                                        recv_buf + 5, record_len,
-                                       hs->plain_buf, &pt_len, &inner_ct);
+                                       hs->plain_buf, sizeof(hs->plain_buf),
+                                       &pt_len, &inner_ct);
             if (ret != 0) {
                 hs->error = BR_ERR_BAD_MAC;
                 return kTLS13_Error;
@@ -1255,7 +1296,7 @@ static tls13_hs_result tls13_state_recv_encrypted_extensions(
     tls13_hs_result r;
 
     r = tls13_read_encrypted_hs(hs, recv_buf, recv_len, &hs_type,
-                                hs->msg_buf, &msg_len);
+                                hs->msg_buf, sizeof(hs->msg_buf), &msg_len);
     if (r != kTLS13_OK) return r;
 
     /* Must be EncryptedExtensions (type 8) */
@@ -1311,7 +1352,7 @@ static tls13_hs_result tls13_state_recv_cert_request_or_cert(
     tls13_hs_result r;
 
     r = tls13_read_encrypted_hs(hs, recv_buf, recv_len, &hs_type,
-                                hs->msg_buf, &msg_len);
+                                hs->msg_buf, sizeof(hs->msg_buf), &msg_len);
     if (r != kTLS13_OK) return r;
 
     if (hs_type == TLS13_HT_CERTIFICATE_REQUEST) {
@@ -1425,7 +1466,8 @@ static tls13_hs_result tls13_state_recv_certificate(
         hs_type = hs->msg_buf[0];
     } else {
         r = tls13_read_encrypted_hs(hs, recv_buf, recv_len, &hs_type,
-                                    hs->msg_buf, &msg_len);
+                                    hs->msg_buf, sizeof(hs->msg_buf),
+                                    &msg_len);
         if (r != kTLS13_OK) return r;
     }
 
@@ -1616,7 +1658,7 @@ static tls13_hs_result tls13_state_recv_certificate_verify(
     tls13_hs_result r;
 
     r = tls13_read_encrypted_hs(hs, recv_buf, recv_len, &hs_type,
-                                hs->msg_buf, &msg_len);
+                                hs->msg_buf, sizeof(hs->msg_buf), &msg_len);
     if (r != kTLS13_OK) return r;
 
     if (hs_type != TLS13_HT_CERTIFICATE_VERIFY) {
@@ -1809,7 +1851,7 @@ static tls13_hs_result tls13_state_recv_finished(
     tls13_hs_result r;
 
     r = tls13_read_encrypted_hs(hs, recv_buf, recv_len, &hs_type,
-                                hs->msg_buf, &msg_len);
+                                hs->msg_buf, sizeof(hs->msg_buf), &msg_len);
     if (r != kTLS13_OK) return r;
 
     if (hs_type != TLS13_HT_FINISHED) {

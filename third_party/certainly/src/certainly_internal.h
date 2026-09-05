@@ -75,11 +75,24 @@ struct MacTLS_Context {
      *           TLS records are parsed and decrypted.
      * app_buf:  holds decrypted application data ready for MacTLS_Read().
      */
-    unsigned char   tls13_recv_buf[16384 + 325]; /* max TLS record + header */
+    unsigned char   tls13_recv_buf[5 + TLS13_MAX_CIPHERTEXT]; /* one max record */
     size_t          tls13_recv_len;               /* bytes currently in recv_buf */
-    unsigned char   tls13_app_buf[16384];         /* decrypted app data */
+    unsigned char   tls13_app_buf[TLS13_MAX_PLAINTEXT]; /* decrypted app data */
     size_t          tls13_app_len;                /* bytes in app_buf */
     size_t          tls13_app_offset;             /* read cursor in app_buf */
+
+    /*
+     * Record scratch, Gateway patch (see PATCHES.md).
+     *
+     * These used to be locals in tls13_recv_records() and MacTLS_Write(),
+     * which put 16 KB on the stack inside a call chain that already runs
+     * several frames deep from the application's event loop. On Mac OS 9 that
+     * is a poor bet, and the decrypt buffer was 256 bytes short of the largest
+     * record a peer may legally send. Both now live with the rest of the
+     * connection state, on the heap, sized against the RFC 8446 limit.
+     */
+    unsigned char   tls13_dec_buf[TLS13_MAX_CIPHERTEXT];
+    unsigned char   tls13_enc_buf[TLS13_MAX_PLAINTEXT + 1 + TLS13_TAG_SIZE];
 
     /* True once TLS 1.3 handshake is confirmed (ServerHello chose 1.3) */
     bool            tls13_active;

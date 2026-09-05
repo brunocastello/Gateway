@@ -200,6 +200,34 @@ first and compares it with a constant-time `tls13_ct_equal()` ported from the
 equivalent check in `mplsllc/macTLS`. The AES-GCM branch was already correct
 via `br_gcm_check_tag()`. Details in `third_party/certainly/PATCHES.md`.
 
+## 7a. TLS buffer sizing
+
+Records are decrypted **in place**, so every buffer a record passes through has
+to be sized against the *ciphertext* limit, not the plaintext one. RFC 8446
+§5.2: `TLSInnerPlaintext` is at most 2^14 = 16384 bytes, and
+`TLSCiphertext.length` is at most 2^14 + 256 = 16640 to cover the content-type
+byte, padding and the AEAD tag. Certainly had all of these sized at 16384, and
+its handshake message buffer at 4096, which is smaller than a routine
+certificate chain. See `third_party/certainly/PATCHES.md` §3.
+
+Per TLS connection, after the fix:
+
+| Buffer | Size |
+|---|---|
+| `iobuf` (BearSSL, TLS 1.2 path) | 16709 |
+| `tls13_recv_buf` | 16645 |
+| `tls13_app_buf` | 16384 |
+| `tls13_dec_buf` | 16640 |
+| `tls13_enc_buf` | 16401 |
+| `hs13.msg_buf` | 16384 |
+| `hs13.plain_buf` | 16640 |
+| BearSSL client + X.509 contexts, key schedule | ~10 KB |
+
+That is roughly **126 KB per `MacTLS_Context`**. Gateway opens at most nine at
+once — four HTTP upstreams, four mail upstreams and the token refresher — so
+about 1.1 MB, on top of ~400 KB of session buffers. Comfortable at the 8 MB
+preferred size; the 4 MB minimum is the real floor.
+
 ## 8. Portability guard
 
 CLAUDE.md rule 8: the HTTP request parser, the OAuth form body and the IMAP
@@ -227,6 +255,8 @@ drifting.
 * **Content codings.** Gateway sends `Accept-Encoding: identity` upstream. An
   origin that ignores that and gzips anyway will have its bytes passed through
   undecoded.
+* **Untested on hardware beyond the HTTPS path.** The `CONNECT` tunnel and
+  both mail splices have not faced a real client yet.
 * The build has never been compiled locally. Every check in this document is
   either a source-level fact about the vendored trees or an assertion the CI
   job makes (`test -f` on the staged Open Transport libraries before CMake

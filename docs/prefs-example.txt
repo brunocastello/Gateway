@@ -35,7 +35,7 @@ smtp_upstream_port = 465
 # ------------------------------------------------------------------- OAuth
 # Consent happens out of band on a modern machine; Gateway only ever exchanges
 # the refresh token below for a short-lived access token.
-oauth_user          = you@outlook.com
+oauth_user          = bfcastello@hotmail.com
 oauth_client_id     = 00000000-0000-0000-0000-000000000000
 # oauth_client_secret is only needed for confidential clients.
 oauth_client_secret =
