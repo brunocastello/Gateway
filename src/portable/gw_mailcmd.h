@@ -20,6 +20,16 @@ extern "C" {
 #define GW_MAX_USER  256
 #define GW_MAX_PASS  256
 
+/*
+ * A Microsoft OAuth access token is a JWT and runs to a couple of thousand
+ * characters; the SASL payload wrapping it has to have room for that plus the
+ * user name and the fixed text around them.
+ */
+#define GW_MAX_TOKEN     4096
+#define GW_XOAUTH2_RAW   (GW_MAX_USER + GW_MAX_TOKEN + 32)
+/* base64 expands by 4/3, plus padding and the terminator. */
+#define GW_XOAUTH2_B64   (((GW_XOAUTH2_RAW + 2) / 3) * 4 + 4)
+
 typedef struct {
     char tag[GW_MAX_TAG];
     char cmd[GW_MAX_CMD];

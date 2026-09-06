@@ -136,7 +136,7 @@ int gw_sasl_plain_decode(const char *b64, size_t len,
 size_t gw_sasl_xoauth2(const char *user, const char *token,
                        char *out, size_t cap)
 {
-    char raw[1536];
+    char raw[GW_XOAUTH2_RAW];
     size_t o = 0;
     size_t ul = strlen(user), tl = strlen(token);
 

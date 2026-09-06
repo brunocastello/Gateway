@@ -411,6 +411,21 @@ static void test_mailcmd(void)
     }
 
     {
+        /* A real Microsoft access token is a JWT of a couple of thousand
+         * characters; the payload buffer has to take it. */
+        static char big_token[2600];
+        static char big_blob[GW_XOAUTH2_B64];
+        size_t i;
+
+        for (i = 0; i < sizeof(big_token) - 1; i++) big_token[i] = 'A';
+        big_token[sizeof(big_token) - 1] = '\0';
+
+        check(gw_sasl_xoauth2("me@example.com", big_token,
+                              big_blob, sizeof(big_blob)) > 0,
+              "XOAUTH2 encodes a full-size access token");
+    }
+
+    {
         char blob[256];
         char raw[256];
         size_t n = gw_sasl_xoauth2("me@example.com", "TOKEN", blob, sizeof(blob));

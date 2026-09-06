@@ -60,6 +60,7 @@ typedef struct {
     int           loginPhase;               /* SMTP AUTH LOGIN sub-state */
     int           wantStartTLS;             /* upstream needs a STARTTLS upgrade */
     int           tlsUp;                    /* the upgrade has happened  */
+    int           xoauthSent;               /* POP: payload sent after "+" */
     char          upHost[GW_NET_HOST_MAX];  /* kept for SNI on the upgrade */
     unsigned long lastActivity;
 } GWMailSession;
@@ -441,24 +442,83 @@ static void smtp_command(GWMailSession *s, const char *line, size_t len)
 /* Upstream login                                                      */
 /* ------------------------------------------------------------------ */
 
-static void send_xoauth2(GWMailSession *s)
+/*
+ * Build the base64 SASL XOAUTH2 initial response for this session.
+ * Returns 0 when there is no token or it will not fit.
+ */
+static int build_xoauth2(GWMailSession *s, char *out, size_t cap)
 {
-    char blob[3072];
-    char line[3200];
     const char *user = GWConfig_Str("oauth_user", s->user);
     const char *token = GWToken_Access();
 
-    if (token == NULL ||
-        gw_sasl_xoauth2(user, token, blob, sizeof(blob)) == 0) {
+    if (token == NULL) return 0;
+    return gw_sasl_xoauth2(user, token, out, cap) != 0;
+}
+
+/*
+ * Decode and log whatever the server said when it refused the token.
+ *
+ * A SASL failure normally comes back as a base64 challenge holding a small
+ * JSON object, e.g. {"status":"401","schemes":"Bearer","scope":"..."}, which
+ * distinguishes an expired token from one issued for the wrong scope. Throwing
+ * it away, as this used to, leaves nothing to act on.
+ */
+static void log_xoauth2_rejection(GWMailSession *s, const char *line)
+{
+    const char *payload = NULL;
+    char decoded[256];
+    size_t n;
+
+    if (line[0] == '+') {
+        payload = line + 1;
+        while (*payload == ' ') payload++;
+    } else if (gw_strnicmp(line, "GW1 NO ", 7) == 0) {
+        /* IMAP puts the challenge in the tagged response on some servers. */
+        payload = line + 7;
+    }
+
+    if (payload != NULL && *payload != '\0') {
+        n = gw_b64_decode(payload, strlen(payload), decoded,
+                          sizeof(decoded) - 1);
+        if (n != (size_t)-1 && n > 0) {
+            decoded[n] = '\0';
+            gw_log("mail #%ld upstream said: %s", s->id, decoded);
+            return;
+        }
+    }
+    gw_log("mail #%ld upstream said: %s", s->id, line);
+}
+
+static void send_xoauth2(GWMailSession *s)
+{
+    /* Static, not automatic: a real access token makes these ~6 KB apiece,
+     * and the cooperative loop is single-threaded, so each is filled and
+     * queued before this function returns. */
+    static char blob[GW_XOAUTH2_B64];
+    static char line[GW_XOAUTH2_B64 + 64];
+
+    if (s->kind == kMailPop) {
+        /*
+         * POP3 uses the two-step form. Microsoft documents AUTH XOAUTH2 on a
+         * line by itself, answered with a bare "+", and only then the base64
+         * payload -- unlike IMAP and SMTP, which take it as an initial
+         * response on the command line.
+         */
+        say_up(s, "AUTH XOAUTH2\r\n");
+        s->state = kMSUpAuth;
+        return;
+    }
+
+    if (!build_xoauth2(s, blob, sizeof(blob))) {
         mail_fail(s, mail_error_text(s, "Gateway could not build an XOAUTH2 token"),
-                  "XOAUTH2 blob would not fit");
+                  "no access token, or the XOAUTH2 blob would not fit");
         return;
     }
 
     if (s->kind == kMailImap)
         snprintf(line, sizeof(line), "GW1 AUTHENTICATE XOAUTH2 %s\r\n", blob);
     else
-        snprintf(line, sizeof(line), "AUTH XOAUTH2 %s\r\n", blob);   /* POP and SMTP */
+        snprintf(line, sizeof(line), "AUTH XOAUTH2 %s\r\n", blob);
 
     say_up(s, line);
     s->state = kMSUpAuth;
@@ -565,6 +625,7 @@ static void step_up_auth(GWMailSession *s)
             if (line[0] == '+') {
                 /* An error challenge: an empty line cancels the exchange and
                  * makes the server send its tagged NO. */
+                log_xoauth2_rejection(s, line);
                 say_up(s, "\r\n");
                 continue;
             }
@@ -577,6 +638,7 @@ static void step_up_auth(GWMailSession *s)
                 return;
             }
             if (gw_strnicmp(line, "GW1 ", 4) == 0) {
+                log_xoauth2_rejection(s, line);
                 snprintf(reply, sizeof(reply),
                          "%s NO Upstream rejected XOAUTH2\r\n", s->tag);
                 mail_fail(s, reply, "upstream rejected XOAUTH2");
@@ -586,23 +648,51 @@ static void step_up_auth(GWMailSession *s)
         }
 
         if (s->kind == kMailPop) {
-            if (line[0] == '+' && line[1] == ' ') {
-                /* Base64 error challenge: '*' cancels the exchange. */
-                say_up(s, "*\r\n");
-                continue;
-            }
             if (gw_strnicmp(line, "+OK", 3) == 0) {
                 say_client(s, "+OK Logged in\r\n");
                 gw_log("mail #%ld POP splice established", s->id);
                 s->state = kMSSplice;
                 return;
             }
+
+            if (line[0] == '+') {
+                const char *payload = line + 1;
+                while (*payload == ' ') payload++;
+
+                if (*payload == '\0' && !s->xoauthSent) {
+                    /* The server's go-ahead: send the payload now. */
+                    static char blob[GW_XOAUTH2_B64];
+                    static char out[GW_XOAUTH2_B64 + 8];
+
+                    if (!build_xoauth2(s, blob, sizeof(blob))) {
+                        say_up(s, "*\r\n");
+                        mail_fail(s, "-ERR Gateway could not build an XOAUTH2 token\r\n",
+                                  "no access token, or the blob would not fit");
+                        return;
+                    }
+                    snprintf(out, sizeof(out), "%s\r\n", blob);
+                    say_up(s, out);
+                    s->xoauthSent = 1;
+                    continue;
+                }
+
+                /* Anything else is an error challenge; '*' cancels it. */
+                log_xoauth2_rejection(s, line);
+                say_up(s, "*\r\n");
+                continue;
+            }
+
+            log_xoauth2_rejection(s, line);
             mail_fail(s, "-ERR Upstream rejected XOAUTH2\r\n",
                       "upstream rejected XOAUTH2");
             return;
         }
 
-        if (line[0] == '3') { say_up(s, "\r\n"); continue; }
+        if (line[0] == '3') {
+            log_xoauth2_rejection(s, line + 4);   /* skip the "334 " */
+            say_up(s, "\r\n");
+            continue;
+        }
         if (gw_strnicmp(line, "235", 3) == 0) {
             say_client(s, "235 2.7.0 Authentication successful\r\n");
             gw_log("mail #%ld SMTP splice established", s->id);
@@ -610,6 +700,7 @@ static void step_up_auth(GWMailSession *s)
             return;
         }
         if (line[0] == '4' || line[0] == '5') {
+            gw_log("mail #%ld upstream said: %s", s->id, line);
             mail_fail(s, "535 5.7.8 Upstream rejected XOAUTH2\r\n",
                       "upstream rejected XOAUTH2");
             return;

@@ -54,7 +54,9 @@ oauth_client_id     = 00000000-0000-0000-0000-000000000000
 oauth_client_secret =
 oauth_host          = login.microsoftonline.com
 oauth_path          = /common/oauth2/v2.0/token
-oauth_scope         = offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send
+# The scope must name every protocol you intend to use. A token issued without
+# POP.AccessAsUser.All is refused by the POP server even though it is valid.
+oauth_scope         = offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/POP.AccessAsUser.All https://outlook.office.com/SMTP.Send
 refresh_token       = paste-your-refresh-token-here
 
 # oauth_client_id is the public client your refresh token was issued to. If the
