@@ -145,7 +145,7 @@ static void test_request(void)
         check_str(req.url.host, "example.com", "shape 1 host");
         check_str(req.url.path, "/index.html", "shape 1 path");
 
-        n = gw_http_build_upstream(&req, r, req.head_len, out, sizeof(out));
+        n = gw_http_build_upstream(&req, r, req.head_len, out, sizeof(out), 0);
         check(n > 0, "shape 1 rewrite succeeds");
         out[n] = '\0';
         check(strstr(out, "GET /index.html HTTP/1.0\r\n") == out,
@@ -159,6 +159,16 @@ static void test_request(void)
               "rewrite keeps end-to-end headers");
         check(strstr(out, "Accept-Encoding: identity\r\n") != NULL,
               "rewrite forces identity encoding");
+
+        /* Asking to hold the connection open needs HTTP/1.1 to mean anything. */
+        n = gw_http_build_upstream(&req, r, req.head_len, out, sizeof(out), 1);
+        out[n] = '\0';
+        check(strstr(out, "GET /index.html HTTP/1.1\r\n") == out,
+              "keep-alive upgrades the request to HTTP/1.1");
+        check(strstr(out, "Connection: keep-alive\r\n") != NULL,
+              "and asks for the connection to be held");
+        check(strstr(out, "Connection: close") == NULL,
+              "without also asking for it to be closed");
     }
 
     /* Shape 2: Classilla with proxy-for-https. */
@@ -189,7 +199,7 @@ static void test_request(void)
         check_str(req.url.host, "origin.test", "origin form host");
         check(req.url.port == 8080, "origin form port");
 
-        n = gw_http_build_upstream(&req, r, req.head_len, out, sizeof(out));
+        n = gw_http_build_upstream(&req, r, req.head_len, out, sizeof(out), 0);
         out[n] = '\0';
         check(strstr(out, "Host: origin.test:8080\r\n") != NULL,
               "non-default port is kept in Host");

@@ -131,6 +131,7 @@ Where the 8 MB goes:
 | HTTP session: request head, response head, rewritten request | 3 × 16 KB |
 | HTTP session: read scratch + pending client output | 16 KB + 32 KB |
 | HTTP sessions, 8 concurrent (`max_sessions`, clamped to 16) | ~880 KB |
+| Idle upstream connections kept for reuse, 4 | ~560 KB |
 | Mail session: four line/queue buffers | 4 × 4 KB |
 | Mail sessions, 4 concurrent | 64 KB |
 | Token refresh: request + response | 16 KB |
@@ -302,7 +303,11 @@ the Resource Manager returns the **existing** refNum and the matching
   fix.
 * **HTTP/1.1 keep-alive to the client** is not implemented and will not be:
   the client hop is always `Connection: close`, which is what makes an
-  EOF-delimited body legal and keeps the state machine small.
+  EOF-delimited body legal and keeps the state machine small. Upstream is a
+  different matter — connections there *are* reused, because a TLS handshake
+  on this hardware costs more than the transfer it protects. That obliges the
+  relay to frame every response exactly, by `Content-Length` or by chunked; a
+  response that says neither is read to EOF and its connection dropped.
 * **Content codings.** Gateway sends `Accept-Encoding: identity` upstream. An
   origin that ignores that and gzips anyway will have its bytes passed through
   undecoded.

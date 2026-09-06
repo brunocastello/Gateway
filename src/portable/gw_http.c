@@ -141,7 +141,7 @@ int gw_http_parse_request(const char *buf, size_t len, GWRequest *req)
 
 size_t gw_http_build_upstream(const GWRequest *req,
                               const char *client_head, size_t head_len,
-                              char *out, size_t cap)
+                              char *out, size_t cap, int keep_alive)
 {
     size_t used = 0;
     size_t off;
@@ -151,7 +151,8 @@ size_t gw_http_build_upstream(const GWRequest *req,
     if (!appends(out, cap, &used, " ")) return 0;
     if (!appends(out, cap, &used, req->url.path[0] ? req->url.path : "/"))
         return 0;
-    if (!appends(out, cap, &used, " HTTP/1.0\r\n")) return 0;
+    if (!appends(out, cap, &used, keep_alive ? " HTTP/1.1\r\n"
+                                             : " HTTP/1.0\r\n")) return 0;
 
     if (!appends(out, cap, &used, "Host: ")) return 0;
     if (!appends(out, cap, &used, req->url.host)) return 0;
@@ -204,7 +205,9 @@ size_t gw_http_build_upstream(const GWRequest *req,
 
     /* Certainly gives us bytes, not a decompressor: refuse content codings. */
     if (!appends(out, cap, &used, "Accept-Encoding: identity\r\n")) return 0;
-    if (!appends(out, cap, &used, "Connection: close\r\n")) return 0;
+    if (!appends(out, cap, &used, keep_alive ? "Connection: keep-alive\r\n"
+                                             : "Connection: close\r\n"))
+        return 0;
     if (!appends(out, cap, &used, "\r\n")) return 0;
     return used;
 }
@@ -241,6 +244,12 @@ int gw_http_parse_response(const char *buf, size_t len, GWResponse *res)
             res->content_length = cl;
         }
     }
+
+    v = gw_header_find(buf, head_len, "Connection", &v_len);
+    if (v != NULL && v_len >= 5 && gw_strnicmp(v, "close", 5) == 0)
+        res->connection_close = 1;
+    if (res->http_minor == 0 && v == NULL)
+        res->connection_close = 1;      /* HTTP/1.0 closes unless told not to */
 
     v = gw_header_find(buf, head_len, "Location", &v_len);
     if (v != NULL && v_len > 0 && v_len < sizeof(res->location)) {

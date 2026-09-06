@@ -54,12 +54,20 @@ int gw_http_parse_request(const char *buf, size_t len, GWRequest *req);
 
 /*
  * Build the request Gateway sends upstream. Copies the client's headers minus
- * the hop-by-hop ones, forces Host:, Connection: close and identity encoding.
+ * the hop-by-hop ones, forces Host: and identity encoding.
+ *
+ * keep_alive asks for HTTP/1.1 with the connection held open, so the stream
+ * can serve the next request too. That is worth a great deal here: every
+ * archive fetch goes to the same host, and a TLS handshake on this hardware
+ * costs more than the transfer does. It obliges the caller to frame the
+ * response exactly -- by Content-Length or by chunked -- since there is no
+ * closing EOF to mark the end.
+ *
  * Returns the number of bytes written, or 0 if it would not fit in cap.
  */
 size_t gw_http_build_upstream(const GWRequest *req,
                               const char *client_head, size_t head_len,
-                              char *out, size_t cap);
+                              char *out, size_t cap, int keep_alive);
 
 typedef struct {
     int    status;
@@ -69,6 +77,7 @@ typedef struct {
     int    has_content_length;
     long   content_length;
     int    has_location;
+    int    connection_close;    /* the origin will not hold the connection */
     char   location[GW_MAX_PATH];
 } GWResponse;
 

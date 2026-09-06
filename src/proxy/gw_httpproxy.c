@@ -40,6 +40,22 @@
  */
 #define GW_WB_RETRIES   3
 #define GW_WB_BACKOFF   40          /* ticks; multiplied by the attempt */
+
+/*
+ * Idle upstream connections, kept for the next request to the same host.
+ *
+ * This is the difference between a period page loading and not. Every archive
+ * fetch goes to web.archive.org, and a TLS handshake on this hardware costs
+ * far more than the transfer that follows -- so a page of thirty assets was
+ * paying for thirty handshakes, plus thirty more for the snapshot redirects.
+ * Reusing one connection collapses that to a handful.
+ *
+ * The price is exactness: with no closing EOF to mark the end of a response,
+ * the body has to be framed by Content-Length or by chunked, and a connection
+ * is only kept when it was.
+ */
+#define GW_POOL_SIZE    4
+#define GW_POOL_IDLE    (45 * 60)   /* ticks: drop after 45 seconds idle */
 #define GW_IDLE_TIMEOUT (120 * 60)          /* ticks: two minutes */
 
 typedef enum {
@@ -70,6 +86,14 @@ typedef struct {
     GWUrl         waybackOrigin;            /* what the client actually asked for */
     int           retries;
     unsigned long retryAt;
+
+    /* Upstream connection reuse. */
+    char          upHost[GW_MAX_HOST];
+    UInt16        upPort;
+    int           upTls;
+    int           upPooled;                 /* came from the pool */
+    int           upReusable;               /* framing lets us keep it */
+    long          bodyLeft;                 /* -1 when the end is EOF */
     int           redirects;
 
     char         *chead;                    /* client request head           */
@@ -95,9 +119,107 @@ typedef struct {
     unsigned long lastActivity;
 } GWHttpSession;
 
+typedef struct {
+    GWStream      stream;
+    char          host[GW_MAX_HOST];
+    UInt16        port;
+    int           tls;
+    int           live;
+    unsigned long idleSince;
+} GWUpstreamSlot;
+
+static GWUpstreamSlot sPool[GW_POOL_SIZE];
+
 static GWHttpSession *sSessions;
 static int            sSessionCount;
 static long           sNextId;
+
+/* ------------------------------------------------------------------ */
+/* Idle upstream connections                                           */
+/* ------------------------------------------------------------------ */
+
+static void pool_drop(GWUpstreamSlot *slot)
+{
+    GWStream_Destroy(&slot->stream);
+    slot->live = 0;
+}
+
+/* Hand an idle connection back out, if one goes to the same place. */
+static int pool_take(const char *host, UInt16 port, int tls, GWStream *out)
+{
+    int i;
+
+    for (i = 0; i < GW_POOL_SIZE; i++) {
+        GWUpstreamSlot *slot = &sPool[i];
+
+        if (!slot->live) continue;
+        if (slot->port != port || slot->tls != tls) continue;
+        if (gw_stricmp(slot->host, host) != 0) continue;
+
+        /* Only if it is still up: the far end may have closed it since. */
+        if (GWStream_Pump(&slot->stream) != kGWStreamReady) {
+            pool_drop(slot);
+            continue;
+        }
+
+        *out = slot->stream;
+        GWStream_Init(&slot->stream);       /* ownership moves to the caller */
+        slot->live = 0;
+        return 1;
+    }
+    return 0;
+}
+
+/* Keep a finished connection for the next request, or let it go. */
+static void pool_put(GWStream *s, const char *host, UInt16 port, int tls)
+{
+    int i;
+
+    if (GWStream_Pump(s) != kGWStreamReady) {
+        GWStream_Destroy(s);
+        return;
+    }
+
+    for (i = 0; i < GW_POOL_SIZE; i++) {
+        GWUpstreamSlot *slot = &sPool[i];
+
+        if (slot->live) continue;
+
+        slot->stream = *s;
+        GWStream_Init(s);                   /* ownership moves to the pool */
+        gw_copy_n(slot->host, sizeof(slot->host), host, strlen(host));
+        slot->port = port;
+        slot->tls = tls;
+        slot->idleSince = GWNet_Ticks();
+        slot->live = 1;
+        return;
+    }
+
+    GWStream_Destroy(s);                    /* pool full */
+}
+
+/* Idle connections still need pumping, or a close goes unnoticed until it is
+ * handed to a request that then fails. */
+static void pool_poll(void)
+{
+    int i;
+
+    for (i = 0; i < GW_POOL_SIZE; i++) {
+        GWUpstreamSlot *slot = &sPool[i];
+
+        if (!slot->live) continue;
+        if (GWStream_Pump(&slot->stream) != kGWStreamReady ||
+            GWNet_Ticks() - slot->idleSince > GW_POOL_IDLE)
+            pool_drop(slot);
+    }
+}
+
+static void pool_clear(void)
+{
+    int i;
+    for (i = 0; i < GW_POOL_SIZE; i++)
+        if (sPool[i].live) pool_drop(&sPool[i]);
+}
 
 /* ------------------------------------------------------------------ */
 
@@ -311,7 +433,7 @@ static void session_start_upstream(GWHttpSession *s)
     int ok;
 
     s->ureqLen = gw_http_build_upstream(&s->req, s->chead, s->req.head_len,
-                                        s->ureq, GW_HEAD_MAX);
+                                        s->ureq, GW_HEAD_MAX, 1);
     if (s->ureqLen == 0) {
         session_fail(s, "HTTP/1.0 502 Bad Gateway\r\nConnection: close\r\n\r\n"
                         "Gateway: request headers too large.\r\n",
@@ -320,11 +442,27 @@ static void session_start_upstream(GWHttpSession *s)
     }
     s->ureqSent = 0;
     s->uheadLen = 0;
+    s->bodyLeft = -1;
+    s->upReusable = 0;
+
+    gw_copy_n(s->upHost, sizeof(s->upHost), s->req.url.host,
+              strlen(s->req.url.host));
+    s->upPort = s->req.url.port;
+    s->upTls = s->req.url.tls;
+
+    /* An idle connection to the same place saves a handshake, which on this
+     * hardware is most of the cost of the request. */
+    if (pool_take(s->upHost, s->upPort, s->upTls, &s->up)) {
+        s->upPooled = 1;
+        s->state = kHPSendRequest;
+        return;
+    }
+    s->upPooled = 0;
 
     if (s->req.url.tls)
-        ok = GWStream_ConnectTLS(&s->up, s->req.url.host, s->req.url.port);
+        ok = GWStream_ConnectTLS(&s->up, s->upHost, s->upPort);
     else
-        ok = GWStream_ConnectPlain(&s->up, s->req.url.host, s->req.url.port);
+        ok = GWStream_ConnectPlain(&s->up, s->upHost, s->upPort);
 
     if (!ok) {
         session_fail(s, "HTTP/1.0 502 Bad Gateway\r\nConnection: close\r\n\r\n"
@@ -333,6 +471,41 @@ static void session_start_upstream(GWHttpSession *s)
         return;
     }
     s->state = kHPConnect;
+}
+
+/*
+ * A pooled connection can have been closed by the far end between being put
+ * away and being handed out again, and nothing reveals that until the request
+ * on it fails. Once, and only once, start over on a fresh connection.
+ */
+static int session_retry_fresh(GWHttpSession *s)
+{
+    if (!s->upPooled) return 0;
+
+    gw_log("#%ld pooled connection was stale, reconnecting", s->id);
+    GWStream_Destroy(&s->up);
+    s->upPooled = 0;
+    s->ureqSent = 0;
+    s->uheadLen = 0;
+
+    if (s->req.url.tls)
+        GWStream_ConnectTLS(&s->up, s->upHost, s->upPort);
+    else
+        GWStream_ConnectPlain(&s->up, s->upHost, s->upPort);
+
+    s->state = kHPConnect;
+    return 1;
+}
+
+/* The response is complete: keep the connection if its framing allowed it. */
+static void session_finish_body(GWHttpSession *s)
+{
+    if (s->upReusable && s->uheadLen == 0)
+        pool_put(&s->up, s->upHost, s->upPort, s->upTls);
+    else
+        GWStream_Destroy(&s->up);
+
+    s->state = kHPFlushAndClose;
 }
 
 /* ------------------------------------------------------------------ */
@@ -407,6 +580,7 @@ static void step_send_request(GWHttpSession *s)
         long n = GWStream_Write(&s->up, s->ureq + s->ureqSent,
                                 s->ureqLen - s->ureqSent);
         if (n < 0) {
+            if (session_retry_fresh(s)) return;
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
                          "upstream write failed");
@@ -530,6 +704,7 @@ static void step_recv_head(GWHttpSession *s)
             s->uheadLen += (size_t)n;
             s->lastActivity = GWNet_Ticks();
         } else if (n == -1) {
+            if (s->uheadLen == 0 && session_retry_fresh(s)) return;
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
                          "upstream read failed");
@@ -543,10 +718,12 @@ static void step_recv_head(GWHttpSession *s)
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
                          "response head exceeded 16K");
-        else if (s->up.eof)
+        else if (s->up.eof) {
+            if (s->uheadLen == 0 && session_retry_fresh(s)) return;
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
                          "upstream closed before sending a response");
+        }
         return;
     }
     if (parsed < 0) {
@@ -602,7 +779,19 @@ static void step_recv_head(GWHttpSession *s)
             gw_log("#%ld -> %s%s:%u%.44s (redirect %d)",
                    s->id, next.tls ? "https://" : "http://", next.host,
                    (unsigned)next.port, next.path, s->redirects);
-            GWStream_Destroy(&s->up);
+
+            /*
+             * The archive answers a dated request with an empty redirect to
+             * the exact snapshot, so this is the common case on the Wayback
+             * port -- and keeping the connection here halves the handshakes
+             * for a page.
+             */
+            if (!res.connection_close && res.has_content_length &&
+                res.content_length == 0 && s->uheadLen == 0)
+                pool_put(&s->up, s->upHost, s->upPort, s->upTls);
+            else
+                GWStream_Destroy(&s->up);
+
             session_start_upstream(s);
             return;
         }
@@ -637,8 +826,28 @@ static void step_recv_head(GWHttpSession *s)
         s->outSent = 0;
     }
 
+    /*
+     * How the body ends. With the connection held open there is no closing
+     * EOF to fall back on, so a response that says neither Content-Length nor
+     * chunked has to be read to EOF and the connection then dropped.
+     */
     s->chunked = res.chunked;
     if (s->chunked) gw_chunked_init(&s->chunk);
+
+    if (gw_stricmp(s->req.method, "HEAD") == 0 ||
+        res.status == 204 || res.status == 304 ||
+        (res.status >= 100 && res.status < 200))
+        s->bodyLeft = 0;                       /* no body at all */
+    else if (res.chunked)
+        s->bodyLeft = -1;                      /* the decoder says when */
+    else if (res.has_content_length)
+        s->bodyLeft = res.content_length;
+    else
+        s->bodyLeft = -1;                      /* until EOF; cannot be kept */
+
+    s->upReusable = !res.connection_close &&
+                    (res.chunked || res.has_content_length ||
+                     s->bodyLeft == 0);
 
     /* Whatever of the body already arrived with the head gets replayed by
      * shifting it to the front of uhead. */
@@ -685,8 +894,9 @@ static long body_emit(GWHttpSession *s, const char *data, size_t len)
 
 static void step_body(GWHttpSession *s)
 {
-    long n;
-    int  flushed = session_flush(s);
+    long   n;
+    size_t want;
+    int    flushed = session_flush(s);
 
     if (flushed < 0) { s->state = kHPDone; return; }
     if (flushed == 0) return;                /* client is flow controlled */
@@ -694,7 +904,8 @@ static void step_body(GWHttpSession *s)
     if (s->bodyCap > 0 && s->bodyBytes > s->bodyCap) {
         gw_log("#%ld body hit the %ld MiB cap, truncating",
                s->id, s->bodyCap / (1024L * 1024L));
-        s->state = kHPFlushAndClose;
+        s->upReusable = 0;                   /* the rest is still on the wire */
+        session_finish_body(s);
         return;
     }
 
@@ -703,26 +914,44 @@ static void step_body(GWHttpSession *s)
         long used = body_emit(s, s->uhead, s->uheadLen);
         if (used < 0) {
             gw_log("#%ld malformed chunked body", s->id);
-            s->state = kHPFlushAndClose;
+            s->upReusable = 0;
+            session_finish_body(s);
             return;
         }
         if (used > 0) {
             s->uheadLen -= (size_t)used;
             if (s->uheadLen > 0)
                 memmove(s->uhead, s->uhead + used, s->uheadLen);
+            if (s->bodyLeft > 0) s->bodyLeft -= used;
         }
+        if (s->bodyLeft != 0 || s->uheadLen > 0) return;
+    }
+
+    /* Done? Either the decoder says so, or the announced length ran out. */
+    if ((s->chunked && gw_chunked_done(&s->chunk)) || s->bodyLeft == 0) {
+        session_finish_body(s);
         return;
     }
 
-    if (s->chunked && gw_chunked_done(&s->chunk)) {
-        s->state = kHPFlushAndClose;
-        return;
-    }
+    /*
+     * Never read past the end of this response. With the connection held open
+     * the next bytes on the wire belong to the next request, and swallowing
+     * them here would desynchronise the stream for whoever gets it next.
+     */
+    want = (size_t)GW_RAW_MAX;
+    if (s->bodyLeft > 0 && (long)want > s->bodyLeft) want = (size_t)s->bodyLeft;
 
-    n = GWStream_Read(&s->up, s->raw, (size_t)GW_RAW_MAX);
+    n = GWStream_Read(&s->up, s->raw, want);
     if (n == 0) return;
-    if (n < 0) {                             /* EOF or error ends the body */
-        s->state = kHPFlushAndClose;
+    if (n < 0) {
+        /*
+         * EOF is a legitimate end only when the response never said how long
+         * it was; otherwise the origin cut us short and the connection is not
+         * fit to keep.
+         */
+        if (s->bodyLeft > 0 || (s->chunked && !gw_chunked_done(&s->chunk)))
+            s->upReusable = 0;
+        session_finish_body(s);
         return;
     }
     s->lastActivity = GWNet_Ticks();
@@ -731,9 +960,11 @@ static void step_body(GWHttpSession *s)
         long used = body_emit(s, s->raw, (size_t)n);
         if (used < 0) {
             gw_log("#%ld malformed chunked body", s->id);
-            s->state = kHPFlushAndClose;
+            s->upReusable = 0;
+            session_finish_body(s);
             return;
         }
+        if (s->bodyLeft > 0) s->bodyLeft -= used;
         if (used < n) {
             /* Output buffer filled: stash the remainder back in uhead. */
             size_t left = (size_t)(n - used);
@@ -924,6 +1155,7 @@ void GWProxy_Shutdown(void)
     DisposePtr((Ptr)sSessions);
     sSessions = NULL;
     sSessionCount = 0;
+    pool_clear();
 }
 
 int GWProxy_Accept(GWConn *c, int wayback)
@@ -958,6 +1190,7 @@ void GWProxy_Poll(void)
 
     if (sSessions == NULL) return;
     for (i = 0; i < sSessionCount; i++) session_step(&sSessions[i]);
+    pool_poll();
 }
 
 int GWProxy_ActiveCount(void)
