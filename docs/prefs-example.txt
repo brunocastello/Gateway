@@ -9,23 +9,15 @@
 # type this on the Mac itself or copy it over from a modern machine.
 
 # ------------------------------------------------------------------ Window
-# 1: Gateway shows its log window and appears in the Application menu, in the
-#    Finder's process list, and in a dock such as A-Dock. The window carries a
-#    Quit button; File > Quit does the same, and File > Hide Window puts the
-#    window away for this session without stopping the proxy.
+# 1: Gateway opens its log window at launch.
+# 0: Gateway starts with no window and just runs.
 #
-# 0: Gateway runs faceless -- no window, no menu bar, nothing in the
-#    Application menu or the dock, like StuffIt's background helper.
+# Either way the File menu is there, with Show/Hide Window and Quit, so the
+# window can be brought back and Gateway can always be quit. A Quit Apple
+# event works too:  tell application "Gateway" to quit
 #
-# Whether an application appears in the Application menu is fixed when the
-# Process Manager launches it, so changing this takes effect at the NEXT
-# launch: Gateway writes the setting into its own SIZE resource and says so in
-# the log.
-#
-# To stop a faceless Gateway, send it a Quit Apple event -- in AppleScript,
-#   tell application "Gateway" to quit
-# The Finder also sends one at shutdown and restart. To get the window back,
-# set this to 1 and launch Gateway again.
+# To start Gateway with the Mac, put an alias to it in the Startup Items
+# folder inside the System Folder, the same way StuffIt's helper is set up.
 show_window    = 1
 
 # ---------------------------------------------------------------- Module 1

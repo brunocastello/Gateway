@@ -40,6 +40,13 @@ jobs:
           test -f "$TOOLCHAIN/universal/libppc/libOpenTptInternetLib.a"
           test -f "$TOOLCHAIN/universal/CIncludes/OpenTransport.h"
 
+          # The Multiversal Interfaces use the classic header names, but not
+          # every Universal Interfaces header has an equivalent. Listing them
+          # once in the build log beats guessing at include lines.
+          echo "--- Multiversal headers available to src/main.cpp ---"
+          ls "$TOOLCHAIN/powerpc-apple-macos/include" | tr '\n' ' '
+          echo
+
           mkdir -p build
           cd build
           cmake .. \

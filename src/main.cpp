@@ -16,7 +16,9 @@
 #include <AppleEvents.h>
 #include <Devices.h>
 #include <Events.h>
+#include <Files.h>
 #include <Fonts.h>
+#include <Icons.h>
 #include <Menus.h>
 #include <Processes.h>
 #include <Quickdraw.h>
@@ -38,16 +40,20 @@ const short kAboutItem = 1;
 const short kHideItem  = 1;
 const short kQuitItem  = 3;
 
-/* SIZE resource flag: a background-only application has no menu bar, no
- * windows, and does not appear in the Application menu or in a dock. */
-const short kOnlyBackgroundFlag = 0x0400;
-
-const short kButtonHeight = 20;
-const short kButtonWidth  = 60;
-const short kButtonMargin = 8;
+/*
+ * Finder flags, from Finder.h. Written as literals so this file does not take
+ * a dependency on which header the Multiversal Interfaces put them in.
+ */
+const short kFlagHasBundle    = 0x2000;
+const short kFlagHasBeenInited = 0x0100;
 
 const short kWinWidth   = 520;
 const short kWinHeight  = 340;
+
+const short kAboutWidth  = 280;
+const short kAboutHeight = 230;
+
+const short kFontGeneva = 3;
 const short kLineHeight = 11;
 const short kTextLeft   = 6;
 const short kHeaderRows = 3;
@@ -61,6 +67,15 @@ void ToPascal(const char *src, Str255 dst)
     std::memcpy(dst + 1, src, n);
 }
 
+void DrawCenteredCString(short centerX, short baseline, const char *s)
+{
+    short len = static_cast<short>(std::strlen(s));
+    short width = TextWidth(const_cast<char *>(s), 0, len);
+
+    MoveTo(static_cast<short>(centerX - width / 2), baseline);
+    DrawText(const_cast<char *>(s), 0, len);
+}
+
 void DrawCString(const char *s)
 {
     /* Multiversal types DrawText's buffer as Ptr, so the cast is required
@@ -68,45 +83,24 @@ void DrawCString(const char *s)
     DrawText(const_cast<char *>(s), 0, static_cast<short>(std::strlen(s)));
 }
 
-/* True when the Process Manager started us as a background-only application. */
-bool RunningBackgroundOnly()
-{
-    ProcessSerialNumber psn;
-    ProcessInfoRec      info;
-    FSSpec              spec;
-
-    psn.highLongOfPSN = 0;
-    psn.lowLongOfPSN  = kCurrentProcess;
-
-    std::memset(&info, 0, sizeof(info));
-    info.processInfoLength = sizeof(info);
-    info.processName       = nullptr;
-    info.processAppSpec    = &spec;
-
-    if (GetProcessInformation(&psn, &info) != noErr) return false;
-    return (info.processMode & modeOnlyBackground) != 0;
-}
-
 /*
- * Set or clear the onlyBackground bit in our own SIZE resource.
+ * Ask the Finder to use our icon.
  *
- * There is no way to change this while running: the Process Manager reads
- * SIZE when it launches a process, and the answer is fixed for that run. So
- * the setting is written back to the application file and takes effect at the
- * next launch, which is how classic applications have always handled it.
+ * The icon family, BNDL and FREF only take effect when the application file
+ * carries the "has bundle" flag, and the build toolchain does not set it.
+ * Setting it here is a plain file-info write -- unlike touching our own
+ * resource fork, which cannot be done safely while running: the Resource
+ * Manager hands back the map that is already open, and closing it takes the
+ * application's own resources with it.
  *
- * SIZE(0), when present, is what the Finder wrote after someone changed the
- * memory settings in Get Info, and it takes precedence over SIZE(-1); both are
- * updated when both exist.
+ * Clearing "has been inited" is what asks the Finder to look again.
  */
-bool SetBackgroundOnlyFlag(bool on)
+void EnsureBundleBit()
 {
     ProcessSerialNumber psn;
     ProcessInfoRec      info;
     FSSpec              spec;
-    short               saved, ref;
-    bool                changed = false;
-    const short         ids[2] = { 0, -1 };
+    FInfo               finder;
 
     psn.highLongOfPSN = 0;
     psn.lowLongOfPSN  = kCurrentProcess;
@@ -116,34 +110,14 @@ bool SetBackgroundOnlyFlag(bool on)
     info.processName       = nullptr;
     info.processAppSpec    = &spec;
 
-    if (GetProcessInformation(&psn, &info) != noErr) return false;
+    if (GetProcessInformation(&psn, &info) != noErr) return;
+    if (FSpGetFInfo(&spec, &finder) != noErr) return;
+    if ((finder.fdFlags & kFlagHasBundle) != 0) return;
 
-    saved = CurResFile();
-    ref = FSpOpenResFile(&spec, fsRdWrPerm);
-    if (ref == -1) return false;      /* locked volume, or busy: leave it be */
-
-    UseResFile(ref);
-    for (int i = 0; i < 2; i++) {
-        Handle h = Get1Resource('SIZE', ids[i]);
-        short flags, want;
-
-        if (h == nullptr || GetHandleSize(h) < 2) continue;
-
-        flags = *reinterpret_cast<short *>(*h);
-        want = on ? static_cast<short>(flags | kOnlyBackgroundFlag)
-                  : static_cast<short>(flags & ~kOnlyBackgroundFlag);
-        if (want == flags) continue;
-
-        *reinterpret_cast<short *>(*h) = want;
-        ChangedResource(h);
-        WriteResource(h);
-        changed = true;
-    }
-    if (changed) UpdateResFile(ref);
-    CloseResFile(ref);
-    UseResFile(saved);
-
-    return changed;
+    finder.fdFlags |= kFlagHasBundle;
+    finder.fdFlags &= ~kFlagHasBeenInited;
+    if (FSpSetFInfo(&spec, &finder) == noErr)
+        GW_SetStatus("icon registered - rebuild the desktop to see it");
 }
 
 class GatewayApp;
@@ -155,42 +129,26 @@ class GatewayApp {
 public:
     GatewayApp()
         : mWindow(nullptr), mAppleMenu(nullptr), mFileMenu(nullptr),
-          mDone(false), mRunning(false), mFaceless(false),
-          mSeenGeneration(-1) {}
+          mDone(false), mRunning(false), mSeenGeneration(-1) {}
 
     bool Start()
     {
         bool wantWindow;
 
         GW_LoadSettings();
-        mFaceless = RunningBackgroundOnly();
         wantWindow = GW_ShowWindowPref() != 0;
 
-        /*
-         * A faceless launch has no menu bar and no window by definition, so
-         * there is nowhere to report a problem. If the core will not start,
-         * come up with a window anyway rather than failing invisibly.
-         */
         mRunning = GW_Init() != 0;
+
+        /* Nowhere to report a problem without a window, so if the core will
+         * not start, show one regardless of the setting. */
         if (!mRunning) wantWindow = true;
 
-        if (!mFaceless && wantWindow) {
-            SetUpMenus();
-            SetUpWindow();
-        }
+        /* The menu bar stays either way: it is how Gateway is quit. */
+        SetUpMenus();
+        if (wantWindow) SetUpWindow();
 
-        /*
-         * Whether we appear in the Application menu is fixed at launch by the
-         * SIZE resource, so bring the file into line with the setting for
-         * next time. Only ever writes when the two actually disagree.
-         */
-        if (mRunning && SetBackgroundOnlyFlag(!wantWindow)) {
-            GW_SetStatus(wantWindow
-                             ? "quit and relaunch to show in the Application menu"
-                             : "quit and relaunch to run without a window");
-        }
-
-        if (mFaceless) GW_SetStatus("running in the background");
+        EnsureBundleBit();
 
         gApp = this;
         AEInstallEventHandler(kCoreEventClass, kAEQuitApplication,
@@ -244,7 +202,7 @@ private:
         ToPascal("File", title);
         mFileMenu = NewMenu(kFileMenuID, title);
         if (mFileMenu != nullptr) {
-            ToPascal("Hide Window/H", title);
+            ToPascal("Show Window/H", title);
             AppendMenu(mFileMenu, title);
             ToPascal("(-", title);
             AppendMenu(mFileMenu, title);
@@ -270,74 +228,159 @@ private:
     }
 
     /*
-     * The Quit button is drawn rather than made from a Control Manager
-     * push button: the Multiversal Interfaces have no Controls.h, and one
-     * rounded rectangle with a label is not worth an interface dependency.
+     * About Gateway, laid out the way iWordle's is: the application icon,
+     * then alternating Charcoal and Geneva lines for name, author and
+     * credits. A real title bar with a close box and no OK button, which is
+     * the Mac OS 9 convention -- SimpleText's About box does the same.
      */
-    Rect QuitButtonRect() const
+    void DrawAboutContent(WindowPtr w)
     {
-        Rect r;
-        SetRect(&r,
-                static_cast<short>(kWinWidth - kButtonMargin - kButtonWidth),
-                static_cast<short>(kWinHeight - kButtonMargin - kButtonHeight),
-                static_cast<short>(kWinWidth - kButtonMargin),
-                static_cast<short>(kWinHeight - kButtonMargin));
-        return r;
-    }
+        GrafPtr port = reinterpret_cast<GrafPtr>(w);
+        Rect    box = port->portRect;
+        Rect    iconRect;
+        Str255  fontName;
+        short   midX, charcoal;
 
-    void DrawQuitButton()
-    {
-        Rect  r = QuitButtonRect();
-        short width;
+        SetPort(port);
+        EraseRect(&box);
 
-        PenNormal();
-        EraseRoundRect(&r, 10, 10);
-        FrameRoundRect(&r, 10, 10);
+        midX = static_cast<short>(box.left + (box.right - box.left) / 2);
 
-        TextFont(0);                    /* the system font, as a button wants */
+        SetRect(&iconRect, static_cast<short>(midX - 16),
+                static_cast<short>(box.top + 14),
+                static_cast<short>(midX + 16),
+                static_cast<short>(box.top + 46));
+        PlotIconID(&iconRect, atNone, ttNone, 128);
+
+        /* Charcoal is a later TrueType face rather than a fixed classic font
+         * ID, so it has to be looked up by name; GetFNum falls back to the
+         * system font when it is not installed. */
+        ToPascal("Charcoal", fontName);
+        GetFNum(fontName, &charcoal);
+
+        TextFace(normal);
+
+        TextFont(charcoal);
         TextSize(12);
-        width = TextWidth(const_cast<char *>("Quit"), 0, 4);
-        MoveTo(static_cast<short>(r.left + ((r.right - r.left) - width) / 2),
-               static_cast<short>(r.top + 14));
-        DrawCString("Quit");
+        DrawCenteredCString(midX, static_cast<short>(box.top + 64),
+                            "Gateway 0.1");
+
+        TextFont(kFontGeneva);
+        TextSize(10);
+        DrawCenteredCString(midX, static_cast<short>(box.top + 84),
+                            "A TLS 1.3 gateway for Mac OS 9");
+
+        TextFont(charcoal);
+        TextSize(12);
+        DrawCenteredCString(midX, static_cast<short>(box.top + 112),
+                            "Bruno Castello");
+
+        TextFont(kFontGeneva);
+        TextSize(10);
+        DrawCenteredCString(midX, static_cast<short>(box.top + 132),
+                            "bfcastello@hotmail.com");
+
+        TextFont(charcoal);
+        TextSize(12);
+        DrawCenteredCString(midX, static_cast<short>(box.top + 160),
+                            "Engineer: Claude Opus 5");
+
+        TextFont(kFontGeneva);
+        TextSize(10);
+        DrawCenteredCString(midX, static_cast<short>(box.top + 188),
+                            "\xA9 Castello Designs, 2026");
+        DrawCenteredCString(midX, static_cast<short>(box.top + 208),
+                            "Built with Retro68");
     }
 
-    /*
-     * Track a press the way the Control Manager would: highlight while the
-     * mouse is held inside, and act only if it is released there. The proxy
-     * is still pumped throughout, so holding the button down does not stall a
-     * transfer.
-     */
-    void TrackQuitButton()
+    void ShowAbout()
     {
-        Rect    r = QuitButtonRect();
-        Boolean inside = true;
+        Rect        bounds;
+        Str255      title;
+        WindowPtr   about;
+        Boolean     done = false;
+        EventRecord event;
+        short       left, top;
 
-        InvertRoundRect(&r, 10, 10);
-        while (StillDown()) {
-            Point   p;
-            Boolean now;
+        left = static_cast<short>((qd.screenBits.bounds.right -
+                                   qd.screenBits.bounds.left - kAboutWidth) / 2);
+        top = static_cast<short>((qd.screenBits.bounds.bottom -
+                                  qd.screenBits.bounds.top - kAboutHeight) / 3);
+        SetRect(&bounds, left, top,
+                static_cast<short>(left + kAboutWidth),
+                static_cast<short>(top + kAboutHeight));
 
-            GetMouse(&p);
-            now = PtInRect(p, &r);
-            if (now != inside) {
-                InvertRoundRect(&r, 10, 10);
-                inside = now;
+        ToPascal("About Gateway", title);
+        about = NewCWindow(nullptr, &bounds, title, true, noGrowDocProc,
+                           reinterpret_cast<WindowPtr>(-1L), true, 0);
+        if (about == nullptr) return;
+
+        SelectWindow(about);
+
+        while (!done && !mDone) {
+            WaitNextEvent(everyEvent, &event, 5, nullptr);
+
+            switch (event.what) {
+            case updateEvt:
+                if (reinterpret_cast<WindowPtr>(event.message) == about) {
+                    BeginUpdate(about);
+                    DrawAboutContent(about);
+                    EndUpdate(about);
+                } else {
+                    HandleEvent(event);
+                }
+                break;
+
+            case keyDown:
+            case autoKey: {
+                char c = static_cast<char>(event.message & charCodeMask);
+                if (c == '\r' || c == 3 || c == 27) done = true;
+                break;
             }
+
+            case mouseDown: {
+                WindowPtr win;
+                short part = FindWindow(event.where, &win);
+
+                if (win != about) break;        /* About stays in front */
+                if (part == inGoAway) {
+                    if (TrackGoAway(about, event.where)) done = true;
+                } else if (part == inDrag) {
+                    Rect limit = qd.screenBits.bounds;
+                    InsetRect(&limit, 4, 4);
+                    DragWindow(about, event.where, &limit);
+                }
+                break;
+            }
+
+            default:
+                break;
+            }
+
+            /* The proxy keeps running while the box is open. */
             GW_Poll();
         }
-        if (inside) {
-            InvertRoundRect(&r, 10, 10);
-            mDone = true;
-        }
+
+        DisposeWindow(about);
+        if (mWindow != nullptr) Redraw();
     }
 
-    /* Take the window down without quitting: Gateway keeps proxying. */
-    void HideWindow()
+    /* Put the window away, or bring it back. Either way Gateway keeps
+     * proxying; only the display stops. */
+    void ToggleWindow()
     {
-        if (mWindow == nullptr) return;
-        DisposeWindow(mWindow);
-        mWindow = nullptr;
+        Str255 title;
+
+        if (mWindow != nullptr) {
+            DisposeWindow(mWindow);
+            mWindow = nullptr;
+            ToPascal("Show Window/H", title);
+        } else {
+            SetUpWindow();
+            Redraw();
+            ToPascal("Hide Window/H", title);
+        }
+        if (mFileMenu != nullptr) SetMenuItemText(mFileMenu, kHideItem, title);
     }
 
     void HandleEvent(EventRecord &event)
@@ -402,14 +445,6 @@ private:
                 SelectWindow(win);
                 break;
             }
-            if (win == mWindow) {
-                Point local = event.where;
-                Rect  button = QuitButtonRect();
-
-                SetPort(reinterpret_cast<GrafPtr>(mWindow));
-                GlobalToLocal(&local);
-                if (PtInRect(local, &button)) TrackQuitButton();
-            }
             break;
 
         default:
@@ -428,8 +463,7 @@ private:
         switch (menu) {
         case kAppleMenuID:
             if (item == kAboutItem) {
-                GW_SetStatus("Gateway 0.1 - TLS 1.3 gateway for Mac OS 9");
-                Redraw();
+                ShowAbout();
             } else if (mAppleMenu != nullptr) {
                 Str255 name;
                 GetMenuItemText(mAppleMenu, item, name);
@@ -438,7 +472,7 @@ private:
             break;
 
         case kFileMenuID:
-            if (item == kHideItem) HideWindow();
+            if (item == kHideItem) ToggleWindow();
             else if (item == kQuitItem) mDone = true;
             break;
 
@@ -486,12 +520,8 @@ private:
         MoveTo(kTextLeft, v);
         LineTo(static_cast<short>(area.right - kTextLeft), v);
 
-        DrawQuitButton();
-
         {
-            short logBottom =
-                static_cast<short>(area.bottom - kButtonHeight -
-                                   2 * kButtonMargin);
+            short logBottom = static_cast<short>(area.bottom - 2);
             int rows = (logBottom - kHeaderRows * kLineHeight) / kLineHeight;
             count = GW_LogCount();
             first = (count > rows) ? count - rows : 0;
@@ -513,7 +543,6 @@ private:
     MenuHandle    mFileMenu;
     bool          mDone;
     bool          mRunning;
-    bool          mFaceless;
     long          mSeenGeneration;
 };
 

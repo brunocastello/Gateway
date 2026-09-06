@@ -85,19 +85,19 @@ work.
 
 ## Running with or without a window
 
-`show_window = 1` (the default) gives an ordinary application: a log window
-with a Quit button, a File menu with Hide Window and Quit, and an entry in the
-Application menu and in docks like A-Dock.
-
-`show_window = 0` makes Gateway faceless — no window, no menu bar, no entry in
-the Application menu or the dock, in the manner of StuffIt's background helper.
-Whether an application appears there is fixed by the Process Manager at launch,
-so Gateway writes the setting into its own `SIZE` resource and the change takes
-effect the **next** time it starts.
-
-A faceless Gateway is stopped with a Quit Apple event —
+`show_window = 1` (the default) opens the log window at launch; `show_window =
+0` starts with no window and just runs. Either way the File menu is present,
+with **Show/Hide Window** and **Quit**, so the window can be brought back and
+Gateway can always be quit. A Quit Apple event works as well —
 `tell application "Gateway" to quit` — which is also what the Finder sends at
-shutdown. Set `show_window = 1` and relaunch to get the window back.
+shutdown.
+
+To start Gateway with the Mac, put an alias to it in **Startup Items** inside
+the System Folder, the same way StuffIt's helper is set up.
+
+If the Finder shows a generic application icon, the desktop database has not
+picked Gateway up yet: hold Command-Option through startup to rebuild it.
+Gateway sets its own bundle bit on first launch, so one rebuild is enough.
 
 ## Building
 

@@ -49,7 +49,8 @@ int GW_Init(void)
         return 0;
     }
 
-    GWConfig_Load();            /* again: harmless, and picks up late edits */
+    /* Already loaded by GW_LoadSettings(), which the UI calls first so it
+     * knows whether to open a window. */
     gw_log("settings: %s", GWConfig_Source());
 
     MacTLS_Init();
