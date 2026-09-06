@@ -19,10 +19,44 @@ machine itself. Folding this in collapses two machines into one and removes the
 modern Mac from the daily path.
 
 The trick that makes it tractable is the Wayback Machine's `id_` URL modifier,
-which returns the **original archived bytes** — no toolbar, no injected
-JavaScript. That means **no HTML rewriting**, which is the one part that would
-be genuinely painful here. Everything else is URL and header string work, which
-is what `src/portable/` is for.
+which returns the **original archived bytes** — no toolbar, no injected script,
+no rewritten links. That means essentially **no HTML rewriting**, which is the
+one part that would be genuinely painful here: there is no regex engine on this
+platform and writing one is not the project. Everything else is URL and header
+string work, which is what `src/portable/` is for.
+
+### Use `id_`, not `if_` — measured
+
+The reference implementation uses the `if_` modifier and then cleans up after
+it with about a dozen regular-expression substitutions on the response body.
+That is avoidable. Fetching the same 2001 snapshot three ways:
+
+| Modifier | Bytes | Toolbar markers | Rewritten `/web/` links |
+|---|---:|---:|---:|
+| `id_` | 13,200 | **0** | **0** |
+| `if_` | 18,084 | 2 | 69 |
+| none | 18,086 | 2 | 69 |
+
+`id_` hands back what the server sent in 2001. Nothing to strip, no `<base>` to
+undo, and the links inside the page are **original** URLs — which the browser
+then requests through the proxy, where they are rewritten one at a time by the
+same code path as the first request. `if_` would instead yield archive URLs
+that have to be mapped back.
+
+Two consequences to keep in mind:
+
+- Some snapshots may not offer `id_`. Decide what to do on a miss — most likely
+  fall back to `if_` and accept that those pages carry a toolbar, rather than
+  building the cleanup machinery for every page.
+- **GeoCities pages carry server-injected markup in the original bytes**, so
+  `id_` preserves it. That is what the "PLEASE REMOVE" comments in the
+  reference implementation are about; they are 1990s GeoCities artefacts, not
+  Wayback's doing. Stripping them needs only a literal search for the delimiter
+  comments and a memmove — perhaps 20 lines, no regex. The same goes for
+  turning `oocities.com` back into `geocities.com` in served bodies.
+
+So the body work is at most two literal substitutions, both GeoCities-specific
+and both optional, rather than twelve regexes.
 
 ## 2. How it is used today, and what must not change
 
@@ -142,7 +176,8 @@ broken.
 | Glob matching | `src/portable/gw_util.c` | 40 |
 | Archive URL build / Location rewrite / timestamp parse | `src/portable/gw_wayback.[ch]` (new) | 300 |
 | Query-string parse and URL-decode | `src/portable/gw_url.c` | 80 |
-| Settings page HTML | `src/portable/gw_wayback.c` | 120 |
+| Settings page HTML and form parsing | `src/portable/gw_wayback.c` | 150 |
+| GeoCities body cleanup (optional) | `src/portable/gw_wayback.c` | 40 |
 | Repeated-key prefs lookup | `src/portable/gw_prefs.c` | 30 |
 | Hooks, plus the per-session mode flag | `src/proxy/gw_httpproxy.c` | 100 |
 | Second listener | `src/gw_core.c` | 20 |
@@ -154,6 +189,57 @@ system calls, so it is testable in `tests/host` exactly like the rest of
 platform code, and that is one call into whatever `gw_transport.h` turns into. Write the tests first; the URL rewriting rules are fiddly and
 a wrong one is hard to spot from the browser end.
 
+### The settings page
+
+This is how the date gets changed, so it is not optional. It is served on the
+Wayback listener when the request host is `web.archive.org` and the path is
+`/`, and it is what the existing bookmarks point at.
+
+It is a plain `GET` form with `action="/"`, which is why the settings arrive as
+a query string on that host and why the whole thing can be bookmarked. Keep the
+field names exactly:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `date` | text | `YYYYMMDD`, `YYYYMM` or `YYYY` |
+| `dateTolerance` | text | days after `date` to accept |
+| `targetUrl` | text | optional; when set, save and `302` straight there |
+| `gcFix` | checkbox | GeoCities to OoCities |
+| `quickImages` | checkbox | let the browser fetch assets from the archive |
+| `ctEncoding` | checkbox | allow a charset in `Content-Type` |
+
+Checkboxes arrive as `name=on` and are simply absent when unchecked — so an
+absent checkbox means false, which is the one piece of form handling that is
+easy to get wrong.
+
+The `targetUrl` field is a local addition to the reference implementation and
+is the reason the workflow is pleasant: one bookmarked URL sets the era and
+lands on a site, without typing anything into a browser where typing is
+tedious. Preserve it.
+
+**Write plain HTML.** The clients are Internet Explorer 4, Netscape 3 and iCab.
+No CSS, no JavaScript, no tables beyond simple layout. The reference page is
+`<b>`, `<br>`, `<p>` and form inputs, and that is the right level.
+
+Gateway synthesises the response the same way it already produces error pages
+in `gw_httpproxy.c` — build the bytes, queue them, close. Parsing the query
+string needs URL-decoding, which `src/portable/gw_url.c` does not have yet.
+
+**Persist to prefs.** `GWConfig_Set()` exists and is already used for the
+rotated OAuth token. The reference implementation only changes its running
+state, so its config file has to be hand-edited for anything permanent; on a
+machine that gets restarted as often as this one, re-setting the era every
+launch would be tiresome. Save `date` and `dateTolerance`; leave the
+checkboxes session-only, matching the reference.
+
+### Proxy auto-configuration
+
+The reference implementation also serves a PAC file at `/proxy.pac`,
+`/wpad.dat` and `/wpad.da`, which lets a browser be pointed at a URL instead of
+a host and port. Worth having eventually — some period browsers handle PAC
+better than manual proxy settings — but it is independent of everything else
+here and can come last.
+
 ### Rewriting rules
 
 Request, when the session arrived on the Wayback listener and the host is not
@@ -164,8 +250,8 @@ GET http://www.example.com/page.html
   -> https://web.archive.org/web/<date>id_/http://www.example.com/page.html
 ```
 
-`id_` is what suppresses the toolbar and the injected script. Without it this
-becomes an HTML rewriting project.
+`id_` is what makes this a string-rewriting job rather than an HTML-rewriting
+one. See the measurements above.
 
 Response: the archive answers a `/web/<timestamp>/…` request with a redirect to
 the exact snapshot. Two things to do with it:
