@@ -246,6 +246,19 @@ resource at launch. There is no runtime call for it, so `show_window` is
 applied by editing Gateway's own `SIZE` resource, taking effect at the next
 launch.
 
+The edit happens **only at launch**, never mid-session. An earlier version
+applied it the moment the window was hidden, which left a running application
+with no window, no menu bar and no Application menu entry -- nothing to quit it
+with short of restarting the machine. Hiding a window must never be the thing
+that makes an application unreachable, so hiding now records the preference and
+nothing more; the transition happens at the next launch. A faceless session can
+still be ended by putting `show_window` back to 1, since Gateway re-reads the
+prefs file every three seconds and stops when it sees the change.
+
+Because `ApplyFacelessSetting()` runs unconditionally at startup, an
+application file left with the flag set repairs itself the first time it starts
+with the setting back at 1.
+
 That edit goes through the resource map the Process Manager already opened.
 Reopening the file with `FSpOpenResFile` is what broke it the first time: the
 Resource Manager returns the **existing** refNum rather than a second one, so

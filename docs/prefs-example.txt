@@ -9,12 +9,21 @@
 # type this on the Mac itself or copy it over from a modern machine.
 
 # ------------------------------------------------------------------ Window
-# 1: Gateway opens its log window at launch.
-# 0: Gateway starts with no window and just runs.
+# 1: Gateway opens its log window at launch and appears in the Application
+#    menu and in a dock such as A-Dock.
+# 0: Gateway runs faceless -- no window, no menu bar, and nothing in the
+#    Application menu or the dock, the way a background helper does.
 #
-# Either way the File menu is there, with Show/Hide Window and Quit, so the
-# window can be brought back and Gateway can always be quit. A Quit Apple
-# event works too:  tell application "Gateway" to quit
+# File > Hide Window puts the window away and records the choice here, but it
+# does NOT change the session you are in: the menu bar stays, so Quit and Show
+# Window are always available. Whether an application appears in the
+# Application menu is decided by the Process Manager at launch, so the faceless
+# part only takes effect the NEXT time Gateway starts.
+#
+# To stop a faceless Gateway, set this back to 1. It re-reads this file every
+# few seconds and quits when it sees the change, ready to be launched again
+# with a window. A Quit Apple event works too:
+#   tell application "Gateway" to quit
 #
 # To start Gateway with the Mac, put an alias to it in the Startup Items
 # folder inside the System Folder, the same way StuffIt's helper is set up.
