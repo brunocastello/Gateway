@@ -13,14 +13,22 @@
  * want room, and Certainly's TLS 1.3 write path puts a 16 KB record buffer on
  * the stack.
  *
- * Flags word 0x5880:
+ * Flags word 0x58E0:
  *   0x4000  acceptSuspendResumeEvents
  *   0x1000  canBackground            - Gateway proxies while it is behind
  *   0x0800  doesActivateOnFGSwitch
  *   0x0080  is32BitCompatible
+ *   0x0040  isHighLevelEventAware    - so the Quit Apple event arrives
+ *   0x0020  localAndRemoteHLEvents
+ *
+ * 0x0400 (onlyBackground) is deliberately clear: Gateway ships as an ordinary
+ * application with a window. Setting show_window = 0 in prefs makes it write
+ * that bit into this resource, and from the next launch it runs faceless --
+ * no window, no menu bar, and no entry in the Application menu. The Quit
+ * Apple event is what stops it in that state.
  */
 data 'SIZE' (-1, "Gateway", purgeable) {
-    $"5880"
+    $"58E0"
     $"0080 0000"                        /* preferred: 8388608 bytes */
     $"0040 0000"                        /* minimum:   4194304 bytes */
 };

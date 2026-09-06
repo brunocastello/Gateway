@@ -27,6 +27,18 @@ int gw_prefs_get(const char *text, size_t len, const char *key,
 /* Same, but parses the value as a decimal number. Returns def when absent. */
 long gw_prefs_get_num(const char *text, size_t len, const char *key, long def);
 
+/*
+ * Produce a copy of the prefs text with key set to value, writing it into out.
+ * An existing setting is rewritten where it stands, keeping its separator and
+ * the file's line endings; a new one is appended. Comments, ordering and
+ * spacing elsewhere are left alone, because this file is hand-edited and
+ * Gateway only ever has business changing one line of it.
+ *
+ * Returns the length written, or 0 if it would not fit in cap.
+ */
+size_t gw_prefs_set(const char *text, size_t len, const char *key,
+                    const char *value, char *out, size_t cap);
+
 #ifdef __cplusplus
 }
 #endif

@@ -22,6 +22,8 @@ static char   sText[GW_PREFS_MAX];
 static long   sLen;
 static int    sLoaded;
 static char   sSource[64];
+static FSSpec sSpec;
+static int    sHaveSpec;
 
 static const unsigned char kPrefsName[] = "\pGateway Prefs";
 
@@ -45,6 +47,9 @@ void GWConfig_Load(void)
 
     err = FSMakeFSSpec(vRefNum, dirID, kPrefsName, &spec);
     if (err != noErr) return;
+
+    sSpec = spec;
+    sHaveSpec = 1;
 
     err = FSpOpenDF(&spec, fsRdPerm, &refNum);
     if (err != noErr) return;
@@ -81,12 +86,17 @@ int GWConfig_Loaded(void)
 /*
  * Callers routinely hold two or three settings at once (host, user, token),
  * so hand out a small rotation of buffers rather than one shared slot.
+ *
+ * The slots are large because one of the values is an OAuth refresh token,
+ * which runs to several hundred characters and is worthless if it arrives
+ * truncated -- a silent failure that looks exactly like a rejected token.
  */
-#define GW_CFG_SLOTS 6
+#define GW_CFG_SLOTS  6
+#define GW_CFG_VALUE  2048
 
 const char *GWConfig_Str(const char *key, const char *def)
 {
-    static char sValue[GW_CFG_SLOTS][512];
+    static char sValue[GW_CFG_SLOTS][GW_CFG_VALUE];
     static int  sSlot;
     char *slot;
 
@@ -95,8 +105,58 @@ const char *GWConfig_Str(const char *key, const char *def)
     slot = sValue[sSlot];
     sSlot = (sSlot + 1) % GW_CFG_SLOTS;
 
-    if (gw_prefs_get(sText, (size_t)sLen, key, slot, 512)) return slot;
+    if (gw_prefs_get(sText, (size_t)sLen, key, slot, GW_CFG_VALUE))
+        return slot;
     return def;
+}
+
+int GWConfig_Set(const char *key, const char *value)
+{
+    static char updated[GW_PREFS_MAX];
+    size_t n;
+    short  refNum;
+    OSErr  err;
+    long   count;
+
+    if (!sHaveSpec) {
+        gw_log("cannot save %s: no prefs file to write to", key);
+        return 0;
+    }
+
+    n = gw_prefs_set(sText, (size_t)sLen, key, value,
+                     updated, sizeof(updated));
+    if (n == 0) {
+        gw_log("cannot save %s: prefs file would exceed %d bytes",
+               key, (int)GW_PREFS_MAX);
+        return 0;
+    }
+
+    err = FSpOpenDF(&sSpec, fsRdWrPerm, &refNum);
+    if (err != noErr) {
+        gw_log("cannot save %s: prefs file would not open (%d)", key, (int)err);
+        return 0;
+    }
+
+    err = SetFPos(refNum, fsFromStart, 0);
+    if (err == noErr) {
+        count = (long)n;
+        err = FSWrite(refNum, &count, updated);
+    }
+    if (err == noErr) err = SetEOF(refNum, (long)n);
+    FSClose(refNum);
+
+    if (err != noErr) {
+        gw_log("cannot save %s: write failed (%d)", key, (int)err);
+        return 0;
+    }
+
+    /* Keep the in-memory copy in step so later reads see the new value. */
+    memcpy(sText, updated, n);
+    sLen = (long)n;
+    sText[sLen] = '\0';
+
+    FlushVol(NULL, sSpec.vRefNum);
+    return 1;
 }
 
 long GWConfig_Num(const char *key, long def)

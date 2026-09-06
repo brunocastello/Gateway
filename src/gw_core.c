@@ -26,6 +26,16 @@ static GWListener *sSmtp;
 static char        sStatus[128];
 static int         sHttpPort, sImapPort, sPopPort, sSmtpPort;
 
+void GW_LoadSettings(void)
+{
+    GWConfig_Load();
+}
+
+int GW_ShowWindowPref(void)
+{
+    return GWConfig_Num("show_window", 1) != 0;
+}
+
 int GW_Init(void)
 {
     OSStatus err;
@@ -39,7 +49,7 @@ int GW_Init(void)
         return 0;
     }
 
-    GWConfig_Load();
+    GWConfig_Load();            /* again: harmless, and picks up late edits */
     gw_log("settings: %s", GWConfig_Source());
 
     MacTLS_Init();

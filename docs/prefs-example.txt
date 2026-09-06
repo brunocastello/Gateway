@@ -8,6 +8,26 @@
 # CR, LF and CRLF line endings all work, so it does not matter whether you
 # type this on the Mac itself or copy it over from a modern machine.
 
+# ------------------------------------------------------------------ Window
+# 1: Gateway shows its log window and appears in the Application menu, in the
+#    Finder's process list, and in a dock such as A-Dock. The window carries a
+#    Quit button; File > Quit does the same, and File > Hide Window puts the
+#    window away for this session without stopping the proxy.
+#
+# 0: Gateway runs faceless -- no window, no menu bar, nothing in the
+#    Application menu or the dock, like StuffIt's background helper.
+#
+# Whether an application appears in the Application menu is fixed when the
+# Process Manager launches it, so changing this takes effect at the NEXT
+# launch: Gateway writes the setting into its own SIZE resource and says so in
+# the log.
+#
+# To stop a faceless Gateway, send it a Quit Apple event -- in AppleScript,
+#   tell application "Gateway" to quit
+# The Finder also sends one at shutdown and restart. To get the window back,
+# set this to 1 and launch Gateway again.
+show_window    = 1
+
 # ---------------------------------------------------------------- Module 1
 # The forward proxy. Point Classilla at this address and port, and turn on
 # network.http.proxy.use-http-proxy-for-https so https:// URLs come here too.
@@ -57,6 +77,9 @@ oauth_path          = /common/oauth2/v2.0/token
 # The scope must name every protocol you intend to use. A token issued without
 # POP.AccessAsUser.All is refused by the POP server even though it is valid.
 oauth_scope         = offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/POP.AccessAsUser.All https://outlook.office.com/SMTP.Send
+# Gateway rewrites this line itself. Providers hand back a fresh refresh token
+# each time the old one is spent, and the old one's lifetime does not extend,
+# so an unsaved rotation is an account that stops working a few weeks later.
 refresh_token       = paste-your-refresh-token-here
 
 # oauth_client_id is the public client your refresh token was issued to. If the

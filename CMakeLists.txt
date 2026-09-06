@@ -145,6 +145,7 @@ target_compile_options(gw_net PRIVATE -Wall -Wno-unused-parameter)
 add_application(Gateway
     src/main.cpp
     src/ui/gateway.r
+    src/ui/gateway_icon.r
     TYPE "APPL"
     CREATOR "GT9A"
 )

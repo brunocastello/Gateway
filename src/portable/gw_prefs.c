@@ -78,3 +78,92 @@ long gw_prefs_get_num(const char *text, size_t len, const char *key, long def)
     v = gw_parse_dec(buf, strlen(buf));
     return v < 0 ? def : v;
 }
+
+/* The line ending the file already uses, so an edit does not mix conventions. */
+static const char *gw_prefs_eol(const char *text, size_t len)
+{
+    size_t i;
+
+    for (i = 0; i < len; i++) {
+        if (text[i] == '\r')
+            return (i + 1 < len && text[i + 1] == '\n') ? "\r\n" : "\r";
+        if (text[i] == '\n')
+            return "\n";
+    }
+    return "\r";           /* a new file on this machine: Mac convention */
+}
+
+size_t gw_prefs_set(const char *text, size_t len, const char *key,
+                    const char *value, char *out, size_t cap)
+{
+    size_t off = 0;
+    size_t used = 0;
+    size_t klen = strlen(key);
+    size_t vlen = strlen(value);
+    const char *eol = gw_prefs_eol(text, len);
+    size_t eol_len = strlen(eol);
+    int replaced = 0;
+
+    while (off < len) {
+        size_t line_end, next, i;
+        int is_match = 0;
+
+        gw_prefs_line(text, len, off, &line_end, &next);
+
+        i = off;
+        while (i < line_end && (text[i] == ' ' || text[i] == '\t')) i++;
+
+        if (i < line_end && text[i] != '#' && text[i] != ';') {
+            size_t ke = i;
+            while (ke < line_end && text[ke] != '=' && text[ke] != ':') ke++;
+            if (ke < line_end) {
+                size_t kend = ke;
+                while (kend > i && (text[kend - 1] == ' ' ||
+                                    text[kend - 1] == '\t')) kend--;
+                if (kend - i == klen && gw_strnicmp(text + i, key, klen) == 0)
+                    is_match = 1;
+            }
+        }
+
+        if (is_match && !replaced) {
+            /* Rewrite in place, keeping the key exactly as the user typed it. */
+            size_t ke = i;
+            while (ke < line_end && text[ke] != '=' && text[ke] != ':') ke++;
+            if (used + (ke - off) + 2 + vlen + eol_len > cap) return 0;
+            memcpy(out + used, text + off, ke - off);
+            used += ke - off;
+            out[used++] = text[ke];         /* the separator they used */
+            out[used++] = ' ';
+            memcpy(out + used, value, vlen);
+            used += vlen;
+            memcpy(out + used, eol, eol_len);
+            used += eol_len;
+            replaced = 1;
+        } else {
+            size_t n = next - off;
+            if (used + n > cap) return 0;
+            memcpy(out + used, text + off, n);
+            used += n;
+        }
+        off = next;
+    }
+
+    if (!replaced) {
+        if (used > 0 && out[used - 1] != '\n' && out[used - 1] != '\r') {
+            if (used + eol_len > cap) return 0;
+            memcpy(out + used, eol, eol_len);
+            used += eol_len;
+        }
+        if (used + klen + 3 + vlen + eol_len > cap) return 0;
+        memcpy(out + used, key, klen);
+        used += klen;
+        out[used++] = ' ';
+        out[used++] = '=';
+        out[used++] = ' ';
+        memcpy(out + used, value, vlen);
+        used += vlen;
+        memcpy(out + used, eol, eol_len);
+        used += eol_len;
+    }
+    return used;
+}

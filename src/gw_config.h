@@ -32,6 +32,17 @@ int         GWConfig_Loaded(void);
 const char *GWConfig_Str(const char *key, const char *def);
 long        GWConfig_Num(const char *key, long def);
 
+/*
+ * Rewrite one setting and save the file, keeping every other line, its
+ * comments and its line endings intact. Returns 1 on success.
+ *
+ * Gateway uses this for exactly one thing: storing the refresh token the
+ * provider hands back when the old one is spent. Rotated tokens are the
+ * difference between an account that keeps working for months and one that
+ * stops the day the original token's window closes.
+ */
+int         GWConfig_Set(const char *key, const char *value);
+
 /* Human-readable note about where the settings came from, for the log. */
 const char *GWConfig_Source(void);
 

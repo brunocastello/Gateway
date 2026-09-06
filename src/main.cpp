@@ -13,11 +13,15 @@
  * allocated with new inside main().
  */
 
+#include <AppleEvents.h>
+#include <Controls.h>
 #include <Devices.h>
 #include <Events.h>
 #include <Fonts.h>
 #include <Menus.h>
+#include <Processes.h>
 #include <Quickdraw.h>
+#include <Resources.h>
 #include <TextEdit.h>
 #include <Windows.h>
 
@@ -32,10 +36,19 @@ const short kAppleMenuID = 128;
 const short kFileMenuID  = 129;
 
 const short kAboutItem = 1;
-const short kQuitItem  = 1;
+const short kHideItem  = 1;
+const short kQuitItem  = 3;
+
+/* SIZE resource flag: a background-only application has no menu bar, no
+ * windows, and does not appear in the Application menu or in a dock. */
+const short kOnlyBackgroundFlag = 0x0400;
+
+const short kButtonHeight = 20;
+const short kButtonWidth  = 60;
+const short kButtonMargin = 8;
 
 const short kWinWidth   = 520;
-const short kWinHeight   = 320;
+const short kWinHeight  = 340;
 const short kLineHeight = 11;
 const short kTextLeft   = 6;
 const short kHeaderRows = 3;
@@ -56,18 +69,132 @@ void DrawCString(const char *s)
     DrawText(const_cast<char *>(s), 0, static_cast<short>(std::strlen(s)));
 }
 
+/* True when the Process Manager started us as a background-only application. */
+bool RunningBackgroundOnly()
+{
+    ProcessSerialNumber psn;
+    ProcessInfoRec      info;
+    FSSpec              spec;
+
+    psn.highLongOfPSN = 0;
+    psn.lowLongOfPSN  = kCurrentProcess;
+
+    std::memset(&info, 0, sizeof(info));
+    info.processInfoLength = sizeof(info);
+    info.processName       = nullptr;
+    info.processAppSpec    = &spec;
+
+    if (GetProcessInformation(&psn, &info) != noErr) return false;
+    return (info.processMode & modeOnlyBackground) != 0;
+}
+
+/*
+ * Set or clear the onlyBackground bit in our own SIZE resource.
+ *
+ * There is no way to change this while running: the Process Manager reads
+ * SIZE when it launches a process, and the answer is fixed for that run. So
+ * the setting is written back to the application file and takes effect at the
+ * next launch, which is how classic applications have always handled it.
+ *
+ * SIZE(0), when present, is what the Finder wrote after someone changed the
+ * memory settings in Get Info, and it takes precedence over SIZE(-1); both are
+ * updated when both exist.
+ */
+bool SetBackgroundOnlyFlag(bool on)
+{
+    ProcessSerialNumber psn;
+    ProcessInfoRec      info;
+    FSSpec              spec;
+    short               saved, ref;
+    bool                changed = false;
+    const short         ids[2] = { 0, -1 };
+
+    psn.highLongOfPSN = 0;
+    psn.lowLongOfPSN  = kCurrentProcess;
+
+    std::memset(&info, 0, sizeof(info));
+    info.processInfoLength = sizeof(info);
+    info.processName       = nullptr;
+    info.processAppSpec    = &spec;
+
+    if (GetProcessInformation(&psn, &info) != noErr) return false;
+
+    saved = CurResFile();
+    ref = FSpOpenResFile(&spec, fsRdWrPerm);
+    if (ref == -1) return false;      /* locked volume, or busy: leave it be */
+
+    UseResFile(ref);
+    for (int i = 0; i < 2; i++) {
+        Handle h = Get1Resource('SIZE', ids[i]);
+        short flags, want;
+
+        if (h == nullptr || GetHandleSize(h) < 2) continue;
+
+        flags = *reinterpret_cast<short *>(*h);
+        want = on ? static_cast<short>(flags | kOnlyBackgroundFlag)
+                  : static_cast<short>(flags & ~kOnlyBackgroundFlag);
+        if (want == flags) continue;
+
+        *reinterpret_cast<short *>(*h) = want;
+        ChangedResource(h);
+        WriteResource(h);
+        changed = true;
+    }
+    if (changed) UpdateResFile(ref);
+    CloseResFile(ref);
+    UseResFile(saved);
+
+    return changed;
+}
+
+class GatewayApp;
+extern GatewayApp *gApp;
+
 class GatewayApp {
 public:
     GatewayApp()
-        : mWindow(nullptr), mAppleMenu(nullptr), mFileMenu(nullptr),
-          mDone(false), mRunning(false), mSeenGeneration(-1) {}
+        : mWindow(nullptr), mQuitButton(nullptr), mAppleMenu(nullptr),
+          mFileMenu(nullptr), mDone(false), mRunning(false),
+          mFaceless(false), mSeenGeneration(-1) {}
 
     bool Start()
     {
-        SetUpMenus();
-        SetUpWindow();
+        bool wantWindow;
+
+        GW_LoadSettings();
+        mFaceless = RunningBackgroundOnly();
+        wantWindow = GW_ShowWindowPref() != 0;
+
+        /*
+         * A faceless launch has no menu bar and no window by definition, so
+         * there is nowhere to report a problem. If the core will not start,
+         * come up with a window anyway rather than failing invisibly.
+         */
         mRunning = GW_Init() != 0;
-        return mWindow != nullptr;
+        if (!mRunning) wantWindow = true;
+
+        if (!mFaceless && wantWindow) {
+            SetUpMenus();
+            SetUpWindow();
+        }
+
+        /*
+         * Whether we appear in the Application menu is fixed at launch by the
+         * SIZE resource, so bring the file into line with the setting for
+         * next time. Only ever writes when the two actually disagree.
+         */
+        if (mRunning && SetBackgroundOnlyFlag(!wantWindow)) {
+            GW_SetStatus(wantWindow
+                             ? "quit and relaunch to show in the Application menu"
+                             : "quit and relaunch to run without a window");
+        }
+
+        if (mFaceless) GW_SetStatus("running in the background");
+
+        gApp = this;
+        AEInstallEventHandler(kCoreEventClass, kAEQuitApplication,
+                              NewAEEventHandlerUPP(HandleQuitEvent), 0, false);
+        return true;
     }
 
     void Run()
@@ -83,7 +210,8 @@ public:
              * yields rather than spinning (CLAUDE.md rule 6). */
             GW_Poll();
 
-            if (GW_LogGeneration() != mSeenGeneration) Redraw();
+            if (mWindow != nullptr && GW_LogGeneration() != mSeenGeneration)
+                Redraw();
         }
     }
 
@@ -92,6 +220,8 @@ public:
         GW_Shutdown();
         if (mWindow != nullptr) DisposeWindow(mWindow);
     }
+
+    void Quit() { mDone = true; }
 
 private:
     void SetUpMenus()
@@ -113,6 +243,10 @@ private:
         ToPascal("File", title);
         mFileMenu = NewMenu(kFileMenuID, title);
         if (mFileMenu != nullptr) {
+            ToPascal("Hide Window/H", title);
+            AppendMenu(mFileMenu, title);
+            ToPascal("(-", title);
+            AppendMenu(mFileMenu, title);
             ToPascal("Quit/Q", title);
             AppendMenu(mFileMenu, title);
             InsertMenu(mFileMenu, 0);
@@ -129,7 +263,32 @@ private:
         ToPascal("Gateway", title);
         mWindow = NewWindow(nullptr, &bounds, title, true, documentProc,
                             reinterpret_cast<WindowPtr>(-1L), true, 0);
-        if (mWindow != nullptr) SetPort(reinterpret_cast<GrafPtr>(mWindow));
+        if (mWindow == nullptr) return;
+
+        SetPort(reinterpret_cast<GrafPtr>(mWindow));
+
+        /* A Quit button, so the window is enough on its own -- the menu bar
+         * is not the only way out. */
+        SetRect(&bounds,
+                static_cast<short>(kWinWidth - kButtonMargin - kButtonWidth),
+                static_cast<short>(kWinHeight - kButtonMargin - kButtonHeight),
+                static_cast<short>(kWinWidth - kButtonMargin),
+                static_cast<short>(kWinHeight - kButtonMargin));
+        ToPascal("Quit", title);
+        mQuitButton = NewControl(mWindow, &bounds, title, true, 0, 0, 1,
+                                 pushButProc, 0);
+    }
+
+    /* Take the window down without quitting: Gateway keeps proxying. */
+    void HideWindow()
+    {
+        if (mWindow == nullptr) return;
+        if (mQuitButton != nullptr) {
+            DisposeControl(mQuitButton);
+            mQuitButton = nullptr;
+        }
+        DisposeWindow(mWindow);
+        mWindow = nullptr;
     }
 
     void HandleEvent(EventRecord &event)
@@ -153,6 +312,10 @@ private:
             EndUpdate(win);
             break;
         }
+
+        case kHighLevelEvent:
+            AEProcessAppleEvent(&event);
+            break;
 
         case activateEvt:
         default:
@@ -186,7 +349,20 @@ private:
             break;
 
         case inContent:
-            if (win != FrontWindow()) SelectWindow(win);
+            if (win != FrontWindow()) {
+                SelectWindow(win);
+                break;
+            }
+            if (win == mWindow && mQuitButton != nullptr) {
+                Point local = event.where;
+                ControlHandle hit = nullptr;
+
+                SetPort(reinterpret_cast<GrafPtr>(mWindow));
+                GlobalToLocal(&local);
+                if (FindControl(local, win, &hit) != 0 && hit == mQuitButton) {
+                    if (TrackControl(hit, local, nullptr) != 0) mDone = true;
+                }
+            }
             break;
 
         default:
@@ -215,7 +391,8 @@ private:
             break;
 
         case kFileMenuID:
-            if (item == kQuitItem) mDone = true;
+            if (item == kHideItem) HideWindow();
+            else if (item == kQuitItem) mDone = true;
             break;
 
         default:
@@ -262,8 +439,13 @@ private:
         MoveTo(kTextLeft, v);
         LineTo(static_cast<short>(area.right - kTextLeft), v);
 
+        DrawControls(mWindow);
+
         {
-            int rows = (area.bottom - kHeaderRows * kLineHeight) / kLineHeight;
+            short logBottom =
+                static_cast<short>(area.bottom - kButtonHeight -
+                                   2 * kButtonMargin);
+            int rows = (logBottom - kHeaderRows * kLineHeight) / kLineHeight;
             count = GW_LogCount();
             first = (count > rows) ? count - rows : 0;
 
@@ -272,20 +454,44 @@ private:
                 const char *text = GW_LogLine(i);
                 if (text == nullptr) break;
                 v = static_cast<short>(v + kLineHeight);
-                if (v > area.bottom - 2) break;
+                if (v > logBottom) break;
                 MoveTo(kTextLeft, v);
                 DrawCString(text);
             }
         }
     }
 
-    WindowPtr  mWindow;
-    MenuHandle mAppleMenu;
-    MenuHandle mFileMenu;
-    bool       mDone;
-    bool       mRunning;
-    long       mSeenGeneration;
+    WindowPtr     mWindow;
+    ControlHandle mQuitButton;
+    MenuHandle    mAppleMenu;
+    MenuHandle    mFileMenu;
+    bool          mDone;
+    bool          mRunning;
+    bool          mFaceless;
+    long          mSeenGeneration;
 };
+
+/*
+ * A background-only Gateway has no menu bar and no window, so the Quit Apple
+ * event is the only way to stop it short of restarting: the Finder sends it at
+ * shutdown, and AppleScript can send it on demand.
+ *
+ * The handler cannot capture, so it reaches the application through a file
+ * scope pointer. That is a plain pointer with no constructor, which is what
+ * CLAUDE.md rule 2 requires -- Retro68's PowerPC crt0 would never have run one.
+ */
+GatewayApp *gApp = nullptr;
+
+pascal OSErr HandleQuitEvent(const AppleEvent *event, AppleEvent *reply,
+                             long refcon)
+{
+    (void)event;
+    (void)reply;
+    (void)refcon;
+
+    if (gApp != nullptr) gApp->Quit();
+    return noErr;
+}
 
 }  /* namespace */
 

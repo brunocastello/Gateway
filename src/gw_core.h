@@ -31,6 +31,19 @@ void        GW_SetStatus(const char *fmt, ...);
 const char *GW_StatusLine(void);
 
 int         GW_ActiveSessions(void);
+
+/*
+ * Read the prefs before the Toolbox side decides what to put on screen.
+ * Separate from GW_Init because the window has to be created knowing this.
+ */
+void        GW_LoadSettings(void);
+
+/*
+ * 1 when Gateway should show its window and appear in the Application menu,
+ * 0 when it should run as a faceless background application. From the
+ * show_window setting; defaults to showing.
+ */
+int         GW_ShowWindowPref(void);
 int         GW_HttpPort(void);
 int         GW_ImapPort(void);
 int         GW_PopPort(void);

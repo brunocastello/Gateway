@@ -7,6 +7,7 @@
 #include "../gw_config.h"
 #include "../portable/gw_http.h"
 #include "../portable/gw_log.h"
+#include "../portable/gw_mailcmd.h"   /* GW_MAX_TOKEN */
 #include "../portable/gw_oauth.h"
 
 #define GW_TOKEN_BUF   8192L
@@ -76,7 +77,7 @@ void GWToken_Request(void)
 {
     GWTokenCtx *t = sTok;
     const char *host, *path, *clientId, *secret, *refresh, *scope;
-    char        body[2048];
+    char        body[4096];
     size_t      bodyLen;
 
     if (t == NULL) return;
@@ -163,6 +164,23 @@ static void token_finish(GWTokenCtx *t)
                         "access_token", t->token, sizeof(t->token))) {
         token_fail(t, "no access_token in the response");
         return;
+    }
+
+    /*
+     * Providers rotate refresh tokens: the response usually carries a new one,
+     * and the old one has a fixed lifetime that using it does not extend. Save
+     * it, or the account quietly stops working weeks later.
+     */
+    {
+        static char rotated[GW_MAX_TOKEN];
+
+        if (gw_json_string(t->resp + res.head_len, t->respLen - res.head_len,
+                           "refresh_token", rotated, sizeof(rotated))) {
+            if (strcmp(rotated, GWConfig_Str("refresh_token", "")) != 0) {
+                if (GWConfig_Set("refresh_token", rotated))
+                    gw_log("oauth: saved the rotated refresh token");
+            }
+        }
     }
 
     expires = gw_json_number(t->resp + res.head_len, t->respLen - res.head_len,

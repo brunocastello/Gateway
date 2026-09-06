@@ -7,6 +7,7 @@
  */
 
 #include <stdio.h>
+#define _GNU_SOURCE
 #include <string.h>
 
 #include "gw_b64.h"
@@ -542,6 +543,44 @@ static void test_prefs(void)
         check(gw_prefs_get(noeol, sizeof(noeol) - 1, "local_password",
                            value, sizeof(value)),
               "last line without a terminator parses");
+    }
+
+    /* Writing a setting back, for the rotated OAuth refresh token. */
+    {
+        static const char before[] =
+            "# Gateway Prefs\r"
+            "local_password = hunter2\r"
+            "refresh_token = OLD\r"
+            "imap_port = 1993\r";
+        char out[512];
+        size_t n;
+
+        n = gw_prefs_set(before, sizeof(before) - 1, "refresh_token", "NEW",
+                         out, sizeof(out));
+        check(n > 0, "set rewrites an existing key");
+        check(gw_prefs_get(out, n, "refresh_token", value, sizeof(value)),
+              "rewritten key reads back");
+        check_str(value, "NEW", "rewritten value");
+        check(gw_prefs_get(out, n, "local_password", value, sizeof(value)) &&
+              strcmp(value, "hunter2") == 0, "other settings survive");
+        check(gw_prefs_get_num(out, n, "imap_port", -1) == 1993,
+              "settings after the edit survive");
+        check(memchr(out, '\n', n) == NULL,
+              "CR line endings are preserved, not converted");
+        check(memmem(out, n, "# Gateway Prefs", 15) != NULL,
+              "comments survive");
+
+        /* Appending a key the file does not have yet. */
+        n = gw_prefs_set(before, sizeof(before) - 1, "oauth_user", "me@x.com",
+                         out, sizeof(out));
+        check(n > 0, "set appends a missing key");
+        check(gw_prefs_get(out, n, "oauth_user", value, sizeof(value)) &&
+              strcmp(value, "me@x.com") == 0, "appended value reads back");
+
+        /* A buffer that cannot hold the result must fail, not truncate. */
+        check(gw_prefs_set(before, sizeof(before) - 1, "refresh_token",
+                           "NEW", out, 16) == 0,
+              "set refuses to overflow");
     }
 }
 
