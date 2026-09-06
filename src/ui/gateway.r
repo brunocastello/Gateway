@@ -34,17 +34,17 @@ data 'SIZE' (-1, "Gateway", purgeable) {
 };
 
 /*
- * vers (1): 0.1 development. Byte layout is major(BCD), minor(BCD), stage,
+ * vers (1): 0.2 development. Byte layout is major(BCD), minor(BCD), stage,
  * prerelease, region, then two Pascal strings.
  */
 data 'vers' (1, purgeable) {
-    $"00 10 20 00 0000"
-    $"03" "0.1"
-    $"19" "0.1, Gateway for Mac OS 9"
+    $"00 20 20 00 0000"
+    $"03" "0.2"
+    $"19" "0.2, Gateway for Mac OS 9"
 };
 
 data 'vers' (2, purgeable) {
-    $"00 10 20 00 0000"
-    $"03" "0.1"
+    $"00 20 20 00 0000"
+    $"03" "0.2"
     $"07" "Gateway"
 };

@@ -38,6 +38,10 @@ static GWListener *sSmtp;
 static char        sStatus[128];
 static int         sHttpPort, sImapPort, sPopPort, sSmtpPort;
 
+/* Which modules the prefs asked for: http_enabled, mail_enabled,
+ * wayback_enabled. A module that is off is never initialised at all. */
+static int         sProxyOn, sMailOn, sWaybackOn;
+
 void GW_LoadSettings(void)
 {
     GWConfig_Load();
@@ -271,10 +275,24 @@ int GW_Init(void)
     gw_log("settings: %s", GWConfig_Source());
     start_file_log();
 
+    /*
+     * Each module can be switched off on its own. Someone running only the
+     * archive has no reason to hold mail session buffers, and someone running
+     * only mail has no reason to listen on 8765 at all -- so a disabled module
+     * is not merely unlistened, it is never allocated. GWMail_Poll() and
+     * GWProxy_Poll() both return immediately when their tables are absent, so
+     * skipping the init is all it takes.
+     */
+    sProxyOn   = GWConfig_Num("http_enabled", 1) != 0;
+    sMailOn    = GWConfig_Num("mail_enabled", 1) != 0;
+    sWaybackOn = GWConfig_Num("wayback_enabled", 1) != 0;
+
     MacTLS_Init();
-    GWProxy_Init();
-    GWMail_Init();
-    GWToken_Init();
+    if (sProxyOn || sWaybackOn) GWProxy_Init();
+    if (sMailOn) {
+        GWMail_Init();
+        GWToken_Init();
+    }
 
     sHttpPort = (int)GWConfig_Num("http_port", 8765);
     sImapPort = (int)GWConfig_Num("imap_port", 1993);
@@ -298,35 +316,71 @@ int GW_Init(void)
      * a browser's surplus connections wait, so it wants room for more than one
      * page's worth of parallel requests.
      */
-    sHttp = GWListener_Open((UInt16)sHttpPort, (OTQLen)(GW_MaxSessions() * 2));
-    if (sWaybackPort > 0) {
+    if (sProxyOn)
+        sHttp = GWListener_Open((UInt16)sHttpPort,
+                                (OTQLen)(GW_MaxSessions() * 2));
+    if (sWaybackOn && sWaybackPort > 0) {
         sWayback = GWListener_Open((UInt16)sWaybackPort,
                                    (OTQLen)(GW_MaxSessions() * 2));
         if (sWayback != NULL)
             gw_log("wayback: serving %s +%ld days", sWaybackSet.date,
                    sWaybackSet.tolerance);
     }
-    sImap = GWListener_Open((UInt16)sImapPort, 2);
-    sPop  = GWListener_Open((UInt16)sPopPort, 2);
-    sSmtp = GWListener_Open((UInt16)sSmtpPort, 2);
+    if (sMailOn) {
+        sImap = GWListener_Open((UInt16)sImapPort, 2);
+        sPop  = GWListener_Open((UInt16)sPopPort, 2);
+        sSmtp = GWListener_Open((UInt16)sSmtpPort, 2);
+    }
 
-    if (sHttp == NULL && sImap == NULL && sPop == NULL && sSmtp == NULL) {
+    if (!sProxyOn && !sMailOn && !sWaybackOn) {
+        /*
+         * Deliberate, so it is not an error -- but it is worth saying out
+         * loud, because an application that binds nothing and answers nothing
+         * is otherwise indistinguishable from one that has failed. Gateway
+         * keeps running so the window can be read and the prefs corrected.
+         */
+        gw_log("every module is disabled in the prefs; nothing to serve");
+        GW_SetStatus("all modules disabled");
+        return 1;
+    }
+
+    if (sHttp == NULL && sWayback == NULL &&
+        sImap == NULL && sPop == NULL && sSmtp == NULL) {
         GW_SetStatus("no listener could be bound");
         return 0;
     }
 
-    gw_log("provider: %s", GWConfig_Str("provider", "outlook"));
-    gw_log("mail upstream: imap %s:%ld, pop %s:%ld",
-           GWConfig_Str("imap_host", "outlook.office365.com"),
-           GWConfig_Num("imap_upstream_port", 993),
-           GWConfig_Str("pop_host", "outlook.office365.com"),
-           GWConfig_Num("pop_upstream_port", 995));
-    gw_log("mail upstream: smtp %s:%ld",
-           GWConfig_Str("smtp_host", "smtp-mail.outlook.com"),
-           GWConfig_Num("smtp_upstream_port", 587));
+    if (sMailOn) {
+        gw_log("provider: %s", GWConfig_Str("provider", "outlook"));
+        gw_log("mail upstream: imap %s:%ld, pop %s:%ld",
+               GWConfig_Str("imap_host", "outlook.office365.com"),
+               GWConfig_Num("imap_upstream_port", 993),
+               GWConfig_Str("pop_host", "outlook.office365.com"),
+               GWConfig_Num("pop_upstream_port", 995));
+        gw_log("mail upstream: smtp %s:%ld",
+               GWConfig_Str("smtp_host", "smtp-mail.outlook.com"),
+               GWConfig_Num("smtp_upstream_port", 587));
+    }
 
-    GW_SetStatus("idle - proxy :%d  imap :%d  pop :%d  smtp :%d",
-                 sHttpPort, sImapPort, sPopPort, sSmtpPort);
+    /* Name only what is actually listening. */
+    {
+        char line[160];
+        int  n = 0;
+
+        line[0] = '\0';
+        if (sHttp != NULL && n < (int)sizeof(line) - 1)
+            n += snprintf(line + n, sizeof(line) - n, "proxy :%d  ", sHttpPort);
+        if (sWayback != NULL && n < (int)sizeof(line) - 1)
+            n += snprintf(line + n, sizeof(line) - n, "wayback :%d  ",
+                          sWaybackPort);
+        if (sImap != NULL && n < (int)sizeof(line) - 1)
+            n += snprintf(line + n, sizeof(line) - n, "imap :%d  ", sImapPort);
+        if (sPop != NULL && n < (int)sizeof(line) - 1)
+            n += snprintf(line + n, sizeof(line) - n, "pop :%d  ", sPopPort);
+        if (sSmtp != NULL && n < (int)sizeof(line) - 1)
+            snprintf(line + n, sizeof(line) - n, "smtp :%d", sSmtpPort);
+        GW_SetStatus("idle - %s", line);
+    }
     return 1;
 }
 

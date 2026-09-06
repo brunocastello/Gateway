@@ -31,7 +31,7 @@ and stays on the same machine; only the modern side crosses the network.
 | IMAP, POP3 and SMTP splices | working, verified end to end against Outlook.com |
 | OAuth refresh, including rotated tokens | working |
 | Gmail as a provider | implemented, not yet tried against a live account |
-| Wayback proxy (Module 3) | designed only — see `docs/module3-wayback.md` |
+| Wayback proxy (Module 3) on `:8888` | working — archived pages load in IE 5 and iCab |
 | Streaming media (Flash video) | working — clear the browser cache once after upgrading |
 
 ## Module 1 — HTTP proxy on `:8765`
@@ -47,9 +47,13 @@ Three request shapes:
 For the first two Gateway terminates TLS itself: it resolves, connects,
 handshakes with Certainly, rewrites the request into origin form, and streams
 the response back over plaintext HTTP/1.0. Chunked responses are decoded on the
-way through, redirects are followed up to five hops, and bodies are capped at
-2 MiB. The client hop always carries `Connection: close`, so the body is
-EOF-delimited and no length has to be re-advertised.
+way through and redirects are followed up to five hops. Bodies are not capped
+by default — `max_body_mb` sets a ceiling if you want one, but the original
+2 MiB limit protected nothing, since bodies stream through a 32 KB buffer, and
+it made video impossible. The client hop always carries `Connection: close`.
+Upstream, connections are kept alive and pooled, which on this hardware matters
+more than anything else: a reused connection skips a TLS handshake, and the
+handshake is most of the cost of a request.
 
 `CONNECT` is different on purpose: Gateway answers `200 Connection
 Established` and then does nothing but bounce bytes through a 32 KB buffer. The
@@ -99,7 +103,51 @@ python3 tools/extract-refresh-token.py /path/to/emailproxy.config
 the System Preferences folder named `Gateway Prefs`. Every setting is
 documented in `docs/prefs.md`.
 
+## Module 3 — Wayback proxy on `:8888`
+
+A second listener that serves the web as it was on a chosen date, from the
+Internet Archive. It is a separate port rather than a mode on `:8765` so that
+the live web and the archive are both available at once, and a browser picks
+between them by proxy setting alone.
+
+```
+wayback_date       = 20011231
+wayback_tolerance  = 730
+```
+
+`wayback_tolerance` is how many days either side of that date a snapshot may
+be and still be served; a snapshot outside it is refused, which is what a
+missing image on an archived page usually means. Set it to `0` to accept
+whatever the archive has nearest. Hosts listed in `wayback_live` pass through
+to the present-day web instead, matched with `*` and `?` globs.
+
+Settings can also be changed from the browser, at
+`http://web.archive.org/` through the proxy, using the same query parameters
+as [WaybackProxy](https://github.com/richardg867/WaybackProxy) so existing
+bookmarks keep working. That project is GPL-3 and Gateway is MIT, so this is
+an independent implementation written from the archive's public URL scheme;
+it is credited as prior art, not borrowed from.
+
+Gateway asks the archive for `id_` snapshots, which are the original bytes
+without the archive's own toolbar and link rewriting — a 2001 page arrives as
+2001 served it.
+
 ---
+
+## Turning modules on and off
+
+Each of the three modules is independent, and a module that is switched off is
+never initialised — no listener, and no memory for its sessions.
+
+```
+http_enabled    = 1     # Module 1, the HTTP/TLS proxy on :8765
+mail_enabled    = 1     # Module 2, the IMAP, POP3 and SMTP splices
+wayback_enabled = 1     # Module 3, the Internet Archive proxy on :8888
+```
+
+`mail_enabled` also governs the OAuth token refresher, which exists only to
+serve the mail splices. Turning every module off is allowed: Gateway says so in
+the log and keeps running, so the window can be read and the prefs corrected.
 
 ## Running with or without a window
 
@@ -114,6 +162,12 @@ Manager offers exactly one flag for hiding an application —
 `modeOnlyBackground` — and it removes it from the Application menu and from
 any dock *together*; there is no way to ask for one without the other. A dock
 that should not list Gateway has to be told so in the dock's own settings.
+
+The log window is resizable, and scrolls with the scroll bar or from the
+keyboard (arrows, Page Up/Down, Home/End). It keeps the last 200 lines. For
+more than that, `log_file = 1` mirrors every line to **System Folder :
+Application Support : Gateway : Gateway Log.txt**, written as it happens so the
+tail survives a crash.
 
 To start Gateway with the Mac, put an alias to it in **Startup Items** inside
 the System Folder.
@@ -158,7 +212,7 @@ docs/prefs.md         reference for every setting
 docs/inventory.md     Phase 0: toolchain shape, memory budget, known gaps
 docs/porting.md       what it would take to run this on Windows or Mac OS X
 docs/module3-wayback.md
-                      design for the Internet Archive proxy, not yet built
+                      design and decisions for the Internet Archive proxy
 ```
 
 The one structural rule worth knowing before editing anything:

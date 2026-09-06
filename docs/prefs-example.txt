@@ -7,6 +7,9 @@
 # ------------------------------------------------------------ Application
 
 show_window     = 1
+http_enabled    = 1
+mail_enabled    = 1
+wayback_enabled = 1
 max_sessions    = 12
 max_connects    = 8
 log_file        = 0
