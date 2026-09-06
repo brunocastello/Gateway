@@ -439,13 +439,21 @@ private:
             DisposeWindow(mWindow);
             mWindow = nullptr;
             showing = false;
-            ToPascal("Show Window/H", title);
+            ToPascal("Show Window", title);
         } else {
             SetUpWindow();
             Redraw();
             showing = true;
-            ToPascal("Hide Window/H", title);
+            ToPascal("Hide Window", title);
         }
+
+        /*
+         * Plain text, with no "/H" on the end. AppendMenu reads that as a
+         * command-key metacharacter when the item is created, but
+         * SetMenuItemText takes the string literally -- so passing it here
+         * would put the characters in the menu. The command key set at
+         * creation survives a text change.
+         */
         if (mFileMenu != nullptr) SetMenuItemText(mFileMenu, kHideItem, title);
 
         /*
@@ -457,8 +465,6 @@ private:
          * Going faceless is a launch-time decision, applied in Start().
          */
         GW_SetShowWindowPref(showing ? 1 : 0);
-        if (!showing)
-            GW_Log("window hidden; Gateway keeps running");
         if (mWindow != nullptr) Redraw();
     }
 

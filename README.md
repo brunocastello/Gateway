@@ -22,6 +22,16 @@ and stays on the same machine; only the modern side crosses the network.
 
 ---
 
+## Status
+
+| | |
+|---|---|
+| HTTP proxy, `http://` and `https://` | working, in daily use |
+| `CONNECT` tunnel | implemented, never exercised — no git client for OS 9 |
+| IMAP, POP3 and SMTP splices | working, verified end to end against Outlook.com |
+| OAuth refresh, including rotated tokens | working |
+| Gmail as a provider | implemented, not yet tried against a live account |
+
 ## Module 1 — HTTP proxy on `:8765`
 
 Three request shapes:

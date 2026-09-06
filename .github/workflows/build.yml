@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # only used by the release step, on tags
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -84,3 +86,22 @@ jobs:
             build/Gateway.bin
             package/Gateway.sit
           if-no-files-found: error
+
+      # Tag pushes become releases. Two assets: the StuffIt archive, which
+      # carries the application with its resource fork intact for a real Mac,
+      # and the disk image, which is what an emulator wants.
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp package/Gateway.sit "release/Gateway-${GITHUB_REF_NAME}.sit"
+          cp build/Gateway.dsk   "release/Gateway-${GITHUB_REF_NAME}.dsk"
+
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Gateway $GITHUB_REF_NAME" \
+            --notes-file docs/release-notes.md \
+            "release/Gateway-${GITHUB_REF_NAME}.sit" \
+            "release/Gateway-${GITHUB_REF_NAME}.dsk"
