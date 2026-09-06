@@ -24,6 +24,7 @@ wayback_date      = 20011231
 wayback_tolerance = 730
 wayback_geocities = 1
 wayback_settings  = 1
+wayback_cache     = 1
 
 # Hosts fetched live instead of from the archive. Repeat the key; * and ? work.
 wayback_live = frogfind.com

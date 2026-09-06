@@ -73,6 +73,9 @@ int         GW_WaybackHostIsLive(const char *host);
 /* 1 when the settings page should answer on the Wayback listener. */
 int         GW_WaybackServesSettings(void);
 
+/* 1 when archived responses should be made long-lived for the browser cache. */
+int         GW_WaybackCaches(void);
+
 /*
  * Read the prefs before the Toolbox side decides what to put on screen.
  * Separate from GW_Init because the window has to be created knowing this.

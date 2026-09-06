@@ -67,6 +67,11 @@ int GW_WaybackServesSettings(void)
     return GWConfig_Num("wayback_settings", 1) != 0;
 }
 
+int GW_WaybackCaches(void)
+{
+    return GWConfig_Num("wayback_cache", 1) != 0;
+}
+
 void GW_WaybackSave(void)
 {
     char value[32];

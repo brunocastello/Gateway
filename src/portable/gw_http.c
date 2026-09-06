@@ -261,7 +261,7 @@ int gw_http_parse_response(const char *buf, size_t len, GWResponse *res)
 
 size_t gw_http_filter_response(const char *head, size_t head_len,
                                char *out, size_t cap,
-                               int keep_length, int strip_charset)
+                               const GWFilterOpts *opt)
 {
     size_t used = 0;
     size_t off = 0;
@@ -277,14 +277,22 @@ size_t gw_http_filter_response(const char *head, size_t head_len,
         if (line_end == off) break;                 /* blank line */
 
         drop = header_in(kHopByHop, head + off, line_end - off) ||
-               (!keep_length &&
+               (!opt->keep_length &&
                 is_named(head + off, line_end - off, "Content-Length"));
+
+        /* The replacements are appended once, below. */
+        if (opt->cache_forever &&
+            (is_named(head + off, line_end - off, "Cache-Control") ||
+             is_named(head + off, line_end - off, "Pragma") ||
+             is_named(head + off, line_end - off, "Expires") ||
+             is_named(head + off, line_end - off, "Age")))
+            drop = 1;
 
         if (off == 0 || !drop) {
             size_t emit = line_end - off;
 
             /* Cut "text/html; charset=utf-8" back to "text/html". */
-            if (strip_charset && off != 0 &&
+            if (opt->strip_charset && off != 0 &&
                 is_named(head + off, emit, "Content-Type")) {
                 size_t k;
                 for (k = 0; k < emit; k++) {
@@ -301,6 +309,21 @@ size_t gw_http_filter_response(const char *head, size_t head_len,
             if (!appends(out, cap, &used, "\r\n")) return 0;
         }
         off = eol < head_len ? eol + 1 : head_len;
+    }
+
+    if (opt->cache_forever) {
+        /*
+         * A fixed date rather than one computed from the clock: it needs no
+         * time formatting, and a Mac whose clock has drifted still gets a
+         * date comfortably in the future. Both headers are sent because the
+         * browsers this serves span the HTTP/1.0 and 1.1 divide.
+         */
+        if (!appends(out, cap, &used,
+                     "Cache-Control: public, max-age=31536000\r\n"))
+            return 0;
+        if (!appends(out, cap, &used,
+                     "Expires: Thu, 31 Dec 2037 23:59:59 GMT\r\n"))
+            return 0;
     }
 
     if (!appends(out, cap, &used, "Connection: close\r\n")) return 0;

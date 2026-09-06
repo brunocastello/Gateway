@@ -221,8 +221,11 @@ static void test_request(void)
 static void test_response(void)
 {
     GWResponse res;
+    GWFilterOpts fopt;
     char out[1024];
     size_t n;
+
+    memset(&fopt, 0, sizeof(fopt));
 
     puts("gw_http responses");
 
@@ -236,7 +239,8 @@ static void test_response(void)
         check(res.status == 200, "status");
         check(res.chunked == 1, "chunked detected");
 
-        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 0, 0);
+        fopt.keep_length = 0;
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), &fopt);
         out[n] = '\0';
         check(strstr(out, "HTTP/1.1 200 OK\r\n") == out, "status line survives");
         check(strstr(out, "Transfer-Encoding") == NULL,
@@ -263,7 +267,8 @@ static void test_response(void)
               "media response parses");
         check(!res.chunked, "media response is not chunked");
 
-        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 1, 0);
+        fopt.keep_length = 1;
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), &fopt);
         out[n] = '\0';
         check(strstr(out, "Content-Length: 15728640\r\n") != NULL,
               "Content-Length survives when the body is untouched");
@@ -272,7 +277,8 @@ static void test_response(void)
         check(strstr(out, "keep-alive") == NULL,
               "Connection is still dropped");
 
-        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 0, 0);
+        fopt.keep_length = 0;
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), &fopt);
         out[n] = '\0';
         check(strstr(out, "Content-Length") == NULL,
               "Content-Length is dropped when de-chunking would change it");
@@ -285,16 +291,57 @@ static void test_response(void)
             "Content-Type: text/html; charset=utf-8\r\n\r\n";
         gw_http_parse_response(r, sizeof(r) - 1, &res);
 
-        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 1, 0);
+        fopt.keep_length = 1;
+        fopt.strip_charset = 0;
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), &fopt);
         out[n] = '\0';
         check(strstr(out, "charset=utf-8") != NULL,
               "the charset is kept when encoding is allowed");
 
-        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 1, 1);
+        fopt.strip_charset = 1;
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), &fopt);
         out[n] = '\0';
         check(strstr(out, "Content-Type: text/html\r\n") != NULL,
               "the charset parameter is cut off");
         check(strstr(out, "charset") == NULL, "and nothing of it remains");
+        fopt.strip_charset = 0;
+    }
+
+    /*
+     * An archived snapshot cannot change, but the archive still serves it with
+     * a half-hour lifetime. Taken at face value that means re-fetching every
+     * asset through Gateway twice an hour for bytes that are known in advance
+     * to be identical.
+     */
+    {
+        static const char r[] =
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/html\r\n"
+            "Cache-Control: max-age=1800\r\n"
+            "Pragma: no-cache\r\n"
+            "Expires: Tue, 18 Dec 2001 02:09:33 GMT\r\n\r\n";
+        gw_http_parse_response(r, sizeof(r) - 1, &res);
+
+        fopt.keep_length = 1;
+        fopt.cache_forever = 0;
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), &fopt);
+        out[n] = '\0';
+        check(strstr(out, "max-age=1800") != NULL,
+              "the origin's caching is left alone for the live web");
+
+        fopt.cache_forever = 1;
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), &fopt);
+        out[n] = '\0';
+        check(strstr(out, "max-age=1800") == NULL,
+              "the archive's half-hour lifetime is replaced");
+        check(strstr(out, "no-cache") == NULL, "Pragma: no-cache goes with it");
+        check(strstr(out, "2001") == NULL, "and the expiry from 2001");
+        check(strstr(out, "max-age=31536000") != NULL, "a year is offered");
+        check(strstr(out, "Expires: Thu, 31 Dec 2037") != NULL,
+              "with an Expires for browsers that prefer one");
+        check(strstr(out, "Content-Type: text/html\r\n") != NULL,
+              "everything else survives");
+        fopt.cache_forever = 0;
     }
 
     /* Which redirects Gateway follows itself. */

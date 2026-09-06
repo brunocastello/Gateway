@@ -853,10 +853,17 @@ static void step_recv_head(GWHttpSession *s)
     {
         /* Keep the length whenever the body passes through untouched. It is
          * only wrong to forward when de-chunking changes it. */
-        size_t filtered = gw_http_filter_response(
-            s->uhead, res.head_len, s->out, (size_t)GW_OUT_MAX,
-            !res.chunked,
-            s->wayback && !GW_WaybackSettings()->ct_encoding);
+        GWFilterOpts opt;
+        size_t filtered;
+
+        opt.keep_length = !res.chunked;
+        opt.strip_charset = s->wayback && !GW_WaybackSettings()->ct_encoding;
+        /* An archived snapshot never changes, so let the browser keep it. */
+        opt.cache_forever = s->wayback && res.status == 200 &&
+                            GW_WaybackCaches();
+
+        filtered = gw_http_filter_response(s->uhead, res.head_len, s->out,
+                                           (size_t)GW_OUT_MAX, &opt);
         if (filtered == 0) {
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",

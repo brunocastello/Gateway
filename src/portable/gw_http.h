@@ -103,14 +103,36 @@ int gw_http_parse_response(const char *buf, size_t len, GWResponse *res);
  *
  * Returns bytes written, or 0 on overflow.
  */
-/*
- * strip_charset drops the "; charset=..." parameter from Content-Type. Some
- * period browsers choke on it; the Wayback settings page exposes this as
- * "Encoding in Content-Type".
- */
+typedef struct {
+    /*
+     * Keep Content-Length. Pass 0 when de-chunking, since the body Gateway
+     * emits is then a different length from the one the origin announced.
+     */
+    int keep_length;
+
+    /*
+     * Drop the "; charset=..." parameter from Content-Type. Some period
+     * browsers choke on it; the Wayback settings page calls this "Encoding in
+     * Content-Type".
+     */
+    int strip_charset;
+
+    /*
+     * Replace the origin's caching headers with a very long expiry.
+     *
+     * For archived pages this is not a liberty: a snapshot of a site as it
+     * stood on a day in 2001 is immutable, and the archive nevertheless
+     * serves it with max-age=1800. Taking that at face value means a browser
+     * re-fetching every asset half an hour later, each one costing a request
+     * through Gateway to a server that will return exactly what it did
+     * before. Only ever set this for the Wayback listener.
+     */
+    int cache_forever;
+} GWFilterOpts;
+
 size_t gw_http_filter_response(const char *head, size_t head_len,
                                char *out, size_t cap,
-                               int keep_length, int strip_charset);
+                               const GWFilterOpts *opt);
 
 /*
  * What to do about a redirect the origin sent.
