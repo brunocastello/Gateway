@@ -324,6 +324,13 @@ the Resource Manager returns the **existing** refNum and the matching
   stack-local `InetAddress` to `OTConnect`, so it dialled whatever had reused
   that frame. Anything handed to an async OT call must live at least as long as
   the transport. See `third_party/certainly/PATCHES.md` §6 and §9.
+* **Teardown is where the crashes live.** Both "error type 3" faults came from
+  connections being destroyed while something was still in flight — one from a
+  notifier left installed on a provider whose context was being freed, the
+  other from encrypting a close_notify with keys the handshake had not yet
+  produced. Anything that runs during teardown deserves the question "can this
+  be reached with the connection half-built?". See
+  `third_party/certainly/PATCHES.md` §15 and §16.
 * **Remove a notifier before closing its provider.** The notifier's context is
   usually the struct about to be freed, and Open Transport can still deliver an
   event to a provider that is being closed with an operation outstanding. The

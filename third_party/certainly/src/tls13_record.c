@@ -78,6 +78,14 @@ int tls13_record_encrypt(tls13_record_ctx *ctx,
                          uint8_t ct,
                          void *out, size_t *out_len)
 {
+    /*
+     * Refuse a context that has no key yet. Gateway patch: BearSSL's cipher
+     * setup derives its round count from the key length, so calling it with
+     * zero produces a nonsense schedule and walks off the end of it rather
+     * than failing. Better to say no here than to trust every caller.
+     */
+    if (ctx->key_len == 0) return -1;
+
     unsigned char nonce[12];
     unsigned char aad[5];
     size_t total_ct_len;
@@ -148,6 +156,7 @@ int tls13_record_decrypt(tls13_record_ctx *ctx,
     size_t payload_len;
     int ok;
 
+    if (ctx->key_len == 0) return -1;       /* see tls13_record_encrypt */
     if (ct_len < 1 + TLS13_TAG_SIZE) return -1;
 
     /*

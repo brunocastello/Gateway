@@ -332,3 +332,33 @@ browser's Stop button, which tears down several in-flight connections at once.
 `OTRemoveNotifier()` now precedes every `OTCloseProvider()`. Gateway's own
 `GWConn_Destroy()` had the same omission on its DNS provider and is fixed
 alongside.
+
+## 16. Closing a connection mid-handshake encrypted with keys that did not exist
+
+`MacTLS_Close()` sent a TLS 1.3 close_notify whenever the state was
+`kMacTLS_Connected` **or** `kMacTLS_Handshaking`:
+
+```c
+if (ctx->state == kMacTLS_Connected ||
+    ctx->state == kMacTLS_Handshaking) {
+    if (ctx->tls13_active) {
+        ... tls13_record_encrypt(&ctx->hs13.write_ctx, ...)
+```
+
+`tls13_active` is set the moment ServerHello selects TLS 1.3, which is well
+before the key schedule has produced the write keys. Closing a connection
+during its handshake therefore encrypted an alert with a zeroed record
+context — `key_len` 0, `cipher_suite` 0. Zero selects the AES-GCM branch, and
+`br_aes_ct_ctr_init()` derives its round count from the key length, so a
+zero-length key produces a nonsense schedule and the cipher walks off the end
+of it. On Mac OS 9 that surfaced as an "error type 3".
+
+Reaching it required nothing unusual: closing the browser, or following a link,
+while a page was still loading tears down connections whose handshakes are
+still in flight.
+
+The close_notify is now attempted only from `kMacTLS_Connected`, and only when
+the write context actually holds a key. `tls13_record_encrypt()` and
+`tls13_record_decrypt()` additionally refuse a context with `key_len == 0`
+rather than trusting their callers, since the failure mode is memory
+corruption rather than a wrong answer.

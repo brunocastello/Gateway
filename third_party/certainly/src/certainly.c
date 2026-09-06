@@ -828,10 +828,25 @@ void MacTLS_Close(MacTLS_Context *ctx)
 {
     if (ctx == NULL) return;
 
-    if (ctx->state == kMacTLS_Connected ||
-        ctx->state == kMacTLS_Handshaking) {
+    /*
+     * A close_notify can only be sent once there are keys to encrypt it with
+     * (Gateway patch - see PATCHES.md).
+     *
+     * This used to run for kMacTLS_Handshaking too. tls13_active is set the
+     * moment ServerHello selects TLS 1.3, which is well before the key
+     * schedule has produced the write keys, so tearing a connection down
+     * mid-handshake encrypted an alert with a zeroed record context: key_len
+     * 0 and cipher_suite 0. That takes the AES-GCM branch and hands
+     * br_aes_ct_ctr_init a zero-length key, which derives a nonsense round
+     * count and runs off the end of the key schedule.
+     *
+     * Closing a browser, or navigating away, tears down connections whose
+     * handshakes are still in flight -- so this was reachable simply by
+     * leaving a page while it was still loading.
+     */
+    if (ctx->state == kMacTLS_Connected) {
 
-        if (ctx->tls13_active) {
+        if (ctx->tls13_active && ctx->hs13.write_ctx.key_len != 0) {
             /*
              * TLS 1.3 close: send a close_notify alert.
              *
