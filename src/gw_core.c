@@ -111,7 +111,7 @@ int GW_MaxSessions(void)
      * parallel and the surplus was refused, which the log reported as
      * "proxy busy, dropped a connection".
      */
-    long n = GWConfig_Num("max_sessions", 8);
+    long n = GWConfig_Num("max_sessions", 12);
 
     if (n < 2) n = 2;
     if (n > GW_SESSION_LIMIT) n = GW_SESSION_LIMIT;

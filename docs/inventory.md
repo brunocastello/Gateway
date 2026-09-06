@@ -130,8 +130,8 @@ Where the 8 MB goes:
 |---|---|
 | HTTP session: request head, response head, rewritten request | 3 × 16 KB |
 | HTTP session: read scratch + pending client output | 16 KB + 32 KB |
-| HTTP sessions, 8 concurrent (`max_sessions`, clamped to 16) | ~880 KB |
-| Idle upstream connections kept for reuse, 4 | ~560 KB |
+| HTTP sessions, 12 concurrent (`max_sessions`, clamped to 16) | ~1.3 MB |
+| Idle upstream connections kept for reuse, 6 | ~840 KB |
 | Mail session: four line/queue buffers | 4 × 4 KB |
 | Mail sessions, 4 concurrent | 64 KB |
 | Token refresh: request + response | 16 KB |

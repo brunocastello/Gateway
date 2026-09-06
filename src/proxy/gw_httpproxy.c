@@ -54,7 +54,7 @@
  * fill: a session that waits a moment usually finds a connection waiting for
  * it instead, and pays nothing at all.
  */
-#define GW_CONNECT_LIMIT 2
+#define GW_CONNECT_LIMIT 3
 #define GW_CONNECT_WAIT  8          /* ticks before looking again */
 
 /*
@@ -70,9 +70,9 @@
  * the body has to be framed by Content-Length or by chunked, and a connection
  * is only kept when it was.
  */
-#define GW_POOL_SIZE    4
+#define GW_POOL_SIZE    6
 #define GW_POOL_IDLE    (45 * 60)   /* ticks: drop after 45 seconds idle */
-#define GW_IDLE_TIMEOUT (120 * 60)          /* ticks: two minutes */
+#define GW_IDLE_TIMEOUT (45 * 60)           /* ticks: 45 seconds */
 
 typedef enum {
     kHPFree = 0,
@@ -1095,6 +1095,22 @@ static void session_step(GWHttpSession *s)
     if (s->up.state != kGWStreamIdle) GWStream_Pump(&s->up);
 
     if (s->cli.state == kGWStreamError) s->state = kHPDone;
+
+    /*
+     * If the browser has gone before a single byte of the response was sent,
+     * there is nothing worth finishing. Clicking a link on a half-loaded page
+     * abandons a dozen requests at once, and holding their session slots --
+     * and their share of the upstream connections -- until each fetch
+     * completes is what leaves nothing for the page being navigated to.
+     *
+     * Only these states, deliberately: once a response has started, the write
+     * will fail on its own and end the session, and a client that merely
+     * half-closed still gets its answer.
+     */
+    if ((s->state == kHPConnect || s->state == kHPConnectWait ||
+         s->state == kHPRetryWait || s->state == kHPSendRequest) &&
+        GWStream_PeerGone(&s->cli))
+        s->state = kHPDone;
 
     switch (s->state) {
     case kHPRecvRequest:

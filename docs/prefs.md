@@ -21,7 +21,7 @@ as confusing as it sounds, so heed the warning.
 | Key | Default | Meaning |
 |---|---|---|
 | `show_window` | `1` | Open the log window at launch. `0` starts without one; the File menu is always present, so Gateway can be quit and the window brought back either way. Hiding the window records the choice here. |
-| `max_sessions` | `8` | Concurrent proxy connections, clamped to 16. Each costs roughly 110 KB of the 8 MB partition. Too few shows up in the log as "proxy busy, dropped a connection". |
+| `max_sessions` | `12` | Concurrent proxy connections, clamped to 16. Each costs roughly 110 KB of the 8 MB partition. Too few shows up in the log as "proxy busy, dropped a connection", and the browser then retries, which makes it worse. |
 
 ## Web proxy
 

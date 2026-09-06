@@ -754,6 +754,17 @@ void GWStream_Destroy(GWStream *s)
     s->state = kGWStreamIdle;
 }
 
+int GWStream_PeerGone(const GWStream *s)
+{
+    if (s == NULL) return 1;
+    if (s->state == kGWStreamError || s->state == kGWStreamClosed) return 1;
+    if (s->eof) return 1;
+    if (!s->tls && s->plain != NULL &&
+        (s->plain->remoteEOF || s->plain->state == kGWConnError))
+        return 1;
+    return 0;
+}
+
 int GWStream_TlsVersion(const GWStream *s)
 {
     if (s == NULL || !s->tls || s->sec == NULL) return 0;

@@ -156,6 +156,14 @@ long          GWStream_Read(GWStream *s, void *buf, size_t len);
 void          GWStream_Close(GWStream *s);
 void          GWStream_Destroy(GWStream *s);
 
+/*
+ * 1 when the far end has closed its side or the connection has failed.
+ *
+ * For a client connection this means the browser has gone -- navigated away,
+ * stopped, or quit -- and any work still being done on its behalf is wasted.
+ */
+int           GWStream_PeerGone(const GWStream *s);
+
 /* 0 when unknown or plain, otherwise 12 or 13. */
 int           GWStream_TlsVersion(const GWStream *s);
 const char   *GWStream_ErrorText(const GWStream *s);
