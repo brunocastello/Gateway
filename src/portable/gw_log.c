@@ -15,13 +15,14 @@ static int  sCount;
 static long sGeneration;
 
 /*
- * Optional copy of the log to a file, for handing a whole session's worth of
- * lines to someone rather than reading 200 of them off a screen. Off unless a
- * path is set. Each line is flushed as it is written: the sessions worth
- * capturing are often the ones that end in a crash, and a buffered tail would
- * be exactly the part that was lost.
+ * Optional second destination for every line, so a whole session can be handed
+ * to someone rather than read 200 lines at a time off a screen.
+ *
+ * It is a callback rather than a FILE * because this file is portable and host
+ * tested, while on Mac OS 9 the log has to be written through the File Manager
+ * like the preferences are. The platform supplies the sink; see gw_core.c.
  */
-static FILE *sFile;
+static GWLogSink sSink;
 
 void gw_log_reset(void)
 {
@@ -44,31 +45,12 @@ void gw_log(const char *fmt, ...)
     if (sCount < GW_LOG_LINES) sCount++;
     sGeneration++;
 
-    if (sFile != NULL) {
-        fputs(slot, sFile);
-        fputc('\n', sFile);
-        fflush(sFile);
-    }
+    if (sSink != NULL) sSink(slot);
 }
 
-int gw_log_to_file(const char *path)
+void gw_log_set_sink(GWLogSink sink)
 {
-    if (sFile != NULL) {
-        fclose(sFile);
-        sFile = NULL;
-    }
-    if (path == NULL || path[0] == '\0') return 1;
-
-    sFile = fopen(path, "a");
-    return sFile != NULL;
-}
-
-void gw_log_close_file(void)
-{
-    if (sFile != NULL) {
-        fclose(sFile);
-        sFile = NULL;
-    }
+    sSink = sink;
 }
 
 int gw_log_count(void)

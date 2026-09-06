@@ -32,12 +32,12 @@ const char *gw_log_line(int idx);
 long gw_log_generation(void);
 
 /*
- * Also append every line to `path`, which is created if absent and appended to
- * across runs. Pass NULL or "" to stop. Returns 0 if the file could not be
- * opened, in which case logging to the window carries on regardless.
+ * Called with every line as it is logged, for a platform that wants to keep a
+ * copy on disk. NULL to stop. The window's ring buffer is unaffected either
+ * way, so a sink that fails costs nothing else.
  */
-int  gw_log_to_file(const char *path);
-void gw_log_close_file(void);
+typedef void (*GWLogSink)(const char *line);
+void gw_log_set_sink(GWLogSink sink);
 
 #ifdef __cplusplus
 }

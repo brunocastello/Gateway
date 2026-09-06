@@ -12,6 +12,14 @@
 #include <stdio.h>
 #include <string.h>
 
+/*
+ * The Folder and File Managers, for the log file. These come from the vendored
+ * Apple Universal Interfaces, which this translation unit is already on by way
+ * of gw_net.h -- Multiversal has no Open Transport (CLAUDE.md rule 3).
+ */
+#include <Files.h>
+#include <Folders.h>
+
 #include "gw_config.h"
 #include "net/gw_net.h"
 #include "portable/gw_log.h"
@@ -119,50 +127,89 @@ int GW_MaxSessions(void)
 }
 
 /*
- * Mirror the log to a file when log_file asks for it.
+ * The log file lives at
  *
- * The value is either a switch or a path. "1" (or yes/on/true) puts the file
- * beside the preferences, which is the only location Gateway already knows how
- * to name; anything else is taken as a path and used as given. The window only
- * holds the last couple of hundred lines, and a slow page load is longer than
- * that, so this is how a whole session gets handed to someone.
+ *     System Folder : Application Support : Gateway : Gateway Log.txt
+ *
+ * Both folders are created if they are not there. Preferences is where a
+ * setting belongs, but a growing log is not a setting, and Application Support
+ * is where a third-party application is supposed to keep this sort of thing.
  */
+static short sLogRef;                   /* 0 when no file is open */
+
+/*
+ * Every line, as it is logged. Written and left unbuffered rather than
+ * accumulated: the sessions worth capturing tend to be the ones that end in a
+ * crash, and a buffered tail is exactly the part that would be lost. CR is the
+ * Mac OS line ending, so the file opens correctly in SimpleText.
+ */
+static void log_sink(const char *line)
+{
+    long count;
+
+    if (sLogRef == 0) return;
+
+    count = (long)strlen(line);
+    if (count > 0) FSWrite(sLogRef, &count, line);
+    count = 1;
+    FSWrite(sLogRef, &count, "\r");
+}
+
 static void start_file_log(void)
 {
     const char *want = GWConfig_Str("log_file", "0");
-    char        path[256];
-    const char *src;
-    size_t      n, cut;
+    OSErr       err;
+    short       vRefNum, refNum;
+    long        dirID, gwDir;
+    FSSpec      spec;
 
     if (want == NULL || want[0] == '\0' ||
         gw_stricmp(want, "0") == 0 || gw_stricmp(want, "no") == 0 ||
         gw_stricmp(want, "off") == 0 || gw_stricmp(want, "false") == 0)
         return;
 
-    if (gw_stricmp(want, "1") != 0 && gw_stricmp(want, "yes") != 0 &&
-        gw_stricmp(want, "on") != 0 && gw_stricmp(want, "true") != 0) {
-        if (!gw_log_to_file(want))
-            gw_log("could not open the log file %s", want);
-        else
-            gw_log("logging to %s", want);
+    err = FindFolder(kOnSystemDisk, kApplicationSupportFolderType,
+                     kCreateFolder, &vRefNum, &dirID);
+    if (err != noErr) {
+        gw_log("log file: no Application Support folder (%d)", (int)err);
         return;
     }
 
-    /* Beside the preferences: same folder, "Gateway Log.txt". */
-    src = GWConfig_Source();
-    if (src == NULL) src = "";
-    n = strlen(src);
-    for (cut = n; cut > 0; cut--)
-        if (src[cut - 1] == ':') break;
-    if (cut >= sizeof(path) - 20) cut = 0;
+    /* dupFNErr just means someone got here first, on an earlier run. */
+    err = DirCreate(vRefNum, dirID, "\pGateway", &gwDir);
+    if (err != noErr && err != dupFNErr) {
+        gw_log("log file: could not make the Gateway folder (%d)", (int)err);
+        return;
+    }
 
-    memcpy(path, src, cut);
-    strcpy(path + cut, "Gateway Log.txt");
+    err = FSMakeFSSpec(vRefNum, dirID, "\pGateway:Gateway Log.txt", &spec);
+    if (err == fnfErr)
+        err = FSpCreate(&spec, 'GT9A', 'TEXT', 0 /* smRoman: ASCII name */);
+    if (err != noErr) {
+        gw_log("log file: could not create it (%d)", (int)err);
+        return;
+    }
 
-    if (!gw_log_to_file(path))
-        gw_log("could not open the log file %s", path);
-    else
-        gw_log("logging to %s", path);
+    err = FSpOpenDF(&spec, fsWrPerm, &refNum);
+    if (err != noErr) {
+        gw_log("log file: could not open it (%d)", (int)err);
+        return;
+    }
+
+    /* Append, so runs accumulate instead of overwriting one another. */
+    SetFPos(refNum, fsFromLEOF, 0);
+    sLogRef = refNum;
+    gw_log_set_sink(log_sink);
+    gw_log("logging to Application Support:Gateway:Gateway Log.txt");
+}
+
+static void stop_file_log(void)
+{
+    gw_log_set_sink(NULL);
+    if (sLogRef != 0) {
+        FSClose(sLogRef);
+        sLogRef = 0;
+    }
 }
 
 int GW_MaxConnects(void)
@@ -285,6 +332,7 @@ int GW_Init(void)
 
 void GW_Shutdown(void)
 {
+    stop_file_log();
     if (sHttp) { GWListener_Close(sHttp); sHttp = NULL; }
     if (sWayback) { GWListener_Close(sWayback); sWayback = NULL; }
     if (sImap) { GWListener_Close(sImap); sImap = NULL; }
