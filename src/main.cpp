@@ -70,6 +70,13 @@ const short kAboutWidth  = 280;
 const short kAboutHeight = 230;
 
 const short kFontGeneva = 3;
+
+/*
+ * Platinum. Mac OS 9's window background is 0xDD grey, not white -- an About
+ * box painted white reads as a document window rather than part of the system.
+ * Matches iWordle's kColorWindowBG.
+ */
+const unsigned short kPlatinum = 0xDDDD;
 const short kLineHeight = 11;
 const short kTextLeft   = 6;
 const short kHeaderRows = 3;
@@ -209,6 +216,7 @@ public:
          * the window is brought back. */
         SetUpMenus();
         if (wantWindow) SetUpWindow();
+        UpdateWindowMenuItem();
 
         EnsureBundleBit();
         ClearFacelessFlag();
@@ -265,7 +273,7 @@ private:
         ToPascal("File", title);
         mFileMenu = NewMenu(kFileMenuID, title);
         if (mFileMenu != nullptr) {
-            ToPascal("Show Window/H", title);
+            ToPascal("Hide Window/H", title);
             AppendMenu(mFileMenu, title);
             ToPascal("(-", title);
             AppendMenu(mFileMenu, title);
@@ -298,14 +306,22 @@ private:
      */
     void DrawAboutContent(WindowPtr w)
     {
-        GrafPtr port = reinterpret_cast<GrafPtr>(w);
-        Rect    box = port->portRect;
-        Rect    iconRect;
-        Str255  fontName;
-        short   midX, charcoal;
+        GrafPtr  port = reinterpret_cast<GrafPtr>(w);
+        Rect     box = port->portRect;
+        Rect     iconRect;
+        Str255   fontName;
+        RGBColor platinum, black;
+        short    midX, charcoal;
 
         SetPort(port);
-        EraseRect(&box);
+
+        platinum.red = platinum.green = platinum.blue = kPlatinum;
+        black.red = black.green = black.blue = 0;
+
+        RGBBackColor(&platinum);
+        RGBForeColor(&platinum);
+        PaintRect(&box);
+        RGBForeColor(&black);
 
         midX = static_cast<short>(box.left + (box.right - box.left) / 2);
 
@@ -428,33 +444,41 @@ private:
         if (mWindow != nullptr) Redraw();
     }
 
+    /*
+     * The item names what the next click will do, so it has to follow the
+     * window rather than be set once at startup: "Hide Window" while one is
+     * showing, "Show Window" while none is.
+     *
+     * Plain text with no "/H" on the end. AppendMenu reads that as a
+     * command-key metacharacter when the item is created, but SetMenuItemText
+     * takes the string literally and would put the characters in the menu.
+     * The command key set at creation survives a text change.
+     */
+    void UpdateWindowMenuItem()
+    {
+        Str255 title;
+
+        if (mFileMenu == nullptr) return;
+        ToPascal(mWindow != nullptr ? "Hide Window" : "Show Window", title);
+        SetMenuItemText(mFileMenu, kHideItem, title);
+    }
+
     /* Put the window away, or bring it back. Either way Gateway keeps
      * proxying; only the display stops. */
     void ToggleWindow()
     {
-        Str255 title;
-        bool   showing;
+        bool showing;
 
         if (mWindow != nullptr) {
             DisposeWindow(mWindow);
             mWindow = nullptr;
             showing = false;
-            ToPascal("Show Window", title);
         } else {
             SetUpWindow();
             Redraw();
             showing = true;
-            ToPascal("Hide Window", title);
         }
-
-        /*
-         * Plain text, with no "/H" on the end. AppendMenu reads that as a
-         * command-key metacharacter when the item is created, but
-         * SetMenuItemText takes the string literally -- so passing it here
-         * would put the characters in the menu. The command key set at
-         * creation survives a text change.
-         */
-        if (mFileMenu != nullptr) SetMenuItemText(mFileMenu, kHideItem, title);
+        UpdateWindowMenuItem();
 
         /*
          * Remember the choice for next time, but change nothing else about

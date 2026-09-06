@@ -2,7 +2,14 @@ name: Host tests (portable code)
 
 on:
   push:
+    # Documentation-only changes do not need a PowerPC build.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   workflow_dispatch:
 
 jobs:

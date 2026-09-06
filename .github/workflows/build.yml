@@ -2,7 +2,14 @@ name: Build (Mac OS 9 PowerPC / Classic Toolbox)
 
 on:
   push:
+    # Documentation-only changes do not need a PowerPC build.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   workflow_dispatch:
 
 jobs:
@@ -100,8 +107,18 @@ jobs:
           cp package/Gateway.sit "release/Gateway-${GITHUB_REF_NAME}.sit"
           cp build/Gateway.dsk   "release/Gateway-${GITHUB_REF_NAME}.dsk"
 
-          gh release create "$GITHUB_REF_NAME" \
-            --title "Gateway $GITHUB_REF_NAME" \
-            --notes-file docs/release-notes.md \
-            "release/Gateway-${GITHUB_REF_NAME}.sit" \
-            "release/Gateway-${GITHUB_REF_NAME}.dsk"
+          # Idempotent: re-running a tag build refreshes the assets and the
+          # notes rather than failing because the release already exists.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --clobber \
+              "release/Gateway-${GITHUB_REF_NAME}.sit" \
+              "release/Gateway-${GITHUB_REF_NAME}.dsk"
+            gh release edit "$GITHUB_REF_NAME" \
+              --notes-file docs/release-notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "Gateway $GITHUB_REF_NAME" \
+              --notes-file docs/release-notes.md \
+              "release/Gateway-${GITHUB_REF_NAME}.sit" \
+              "release/Gateway-${GITHUB_REF_NAME}.dsk"
+          fi
