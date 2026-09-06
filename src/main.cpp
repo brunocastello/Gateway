@@ -225,7 +225,7 @@ public:
     GatewayApp()
         : mWindow(nullptr), mAppleMenu(nullptr), mFileMenu(nullptr),
           mDone(false), mRunning(false), mSeenGeneration(-1),
-          mScrollBack(0), mScroll(nullptr) {}
+          mScrollBack(0), mScroll(nullptr), mShownLines(0) {}
 
     bool Start()
     {
@@ -359,7 +359,7 @@ private:
         if (mScroll == nullptr) return;
 
         count = GW_LogCount();
-        rows = VisibleRows();
+        rows = (mShownLines > 0) ? mShownLines : VisibleRows();
         most = count - rows;
         if (most < 0) most = 0;
         if (mScrollBack > most) mScrollBack = most;
@@ -783,21 +783,38 @@ private:
         mSeenGeneration = GW_LogGeneration();
     }
 
+    /* How many rows a log line needs once wrapped to `cols` columns. */
+    static int RowsFor(const char *text, int cols)
+    {
+        int len = static_cast<int>(strlen(text));
+
+        if (cols < 1) return 1;
+        if (len < 1) return 1;
+        return (len + cols - 1) / cols;
+    }
+
     void DrawContents()
     {
         GrafPtr port = reinterpret_cast<GrafPtr>(mWindow);
         Rect    area = port->portRect;
+        Rect    textArea, grow;
         short   v;
-        int     count, first, i;
-
-        Rect textArea;
+        int     count, first, i, rows, used, cols, cw;
 
         SetPort(port);
         EraseRect(&area);
-        DrawGrowIcon(mWindow);
 
-        UpdateScroll();
-        if (mScroll != nullptr) Draw1Control(mScroll);
+        /*
+         * DrawGrowIcon draws the grow box *and* the lines that delimit where a
+         * window's scroll bars sit -- including one across the whole bottom
+         * edge, which on a window with no horizontal scroll bar is just a
+         * black line. Clipping to the corner leaves the grow box alone.
+         */
+        grow = area;
+        grow.left = static_cast<short>(grow.right - kScrollWidth);
+        grow.top  = static_cast<short>(grow.bottom - kScrollWidth);
+        ClipRect(&grow);
+        DrawGrowIcon(mWindow);
 
         /* Keep the log clear of the scroll bar rather than drawing under it. */
         textArea = area;
@@ -807,39 +824,71 @@ private:
         TextFont(4);           /* Monaco: the log needs a fixed pitch */
         TextSize(9);
 
-        {
-            short logBottom = static_cast<short>(area.bottom - 2);
-            int rows = (logBottom - kHeaderRows * kLineHeight) / kLineHeight;
-            int most;
+        cw = CharWidth('0');   /* Monaco is monospaced, so any glyph will do */
+        if (cw < 1) cw = 6;
+        cols = (textArea.right - kTextLeft - 2) / cw;
+        if (cols < 8) cols = 8;
 
-            if (rows < 1) rows = 1;
-            count = GW_LogCount();
+        rows = (area.bottom - 2) / kLineHeight;
+        if (rows < 1) rows = 1;
+        count = GW_LogCount();
 
-            most = count - rows;
-            if (most < 0) most = 0;
-            if (mScrollBack > most) mScrollBack = most;
+        /*
+         * Wrapped lines are taller than one row, so which line starts the page
+         * cannot be found by subtracting. Walk back from the newest line the
+         * scroll position asks for, adding up the rows each one needs, and
+         * stop when the window is full.
+         */
+        first = count - mScrollBack;
+        if (first > count) first = count;
+        if (first < 0) first = 0;
 
-            first = count - rows - mScrollBack;
-            if (first < 0) first = 0;
+        used = 0;
+        while (first > 0) {
+            const char *text = GW_LogLine(first - 1);
+            int need = (text == nullptr) ? 1 : RowsFor(text, cols);
 
-            v = static_cast<short>(kHeaderRows * kLineHeight);
-            for (i = first; i < count; i++) {
-                const char *text = GW_LogLine(i);
-                if (text == nullptr) break;
+            if (used + need > rows) break;
+            used += need;
+            first--;
+        }
+        mShownLines = count - mScrollBack - first;
+        if (mShownLines < 1) mShownLines = 1;
+
+        v = 0;
+        for (i = first; i < count; i++) {
+            const char *text = GW_LogLine(i);
+            int len, off;
+
+            if (text == nullptr) break;
+            len = static_cast<int>(strlen(text));
+            off = 0;
+
+            /* Break the line at the window edge instead of running under it. */
+            do {
+                int n = len - off;
+
+                if (n > cols) n = cols;
                 v = static_cast<short>(v + kLineHeight);
-                if (v > logBottom) break;
+                if (v > area.bottom - 2) { i = count; break; }
                 MoveTo(kTextLeft, v);
-                DrawCString(text);
-            }
+                if (n > 0) DrawText(const_cast<char *>(text), off, n);
+                off += (n > 0) ? n : 1;
+            } while (off < len);
         }
 
         ClipRect(&area);
+
+        UpdateScroll();
+        if (mScroll != nullptr) Draw1Control(mScroll);
     }
 
     /* How many lines back from the newest the log is scrolled. */
     int           mScrollBack;
 
     ControlHandle mScroll;
+    /* Log lines the last redraw actually fitted, wrapping included. */
+    int           mShownLines;
     WindowPtr     mWindow;
     MenuHandle    mAppleMenu;
     MenuHandle    mFileMenu;
