@@ -86,6 +86,14 @@ const short kFontGeneva = 3;
 const short kZoomDocProc = 8;
 
 /*
+ * Shown in the About window. Keep in step with the two vers resources in
+ * src/ui/gateway.r: Rez cannot see a C constant, so the only thing holding
+ * them together is changing them together. This one was missed at 0.2.0.
+ */
+#define GW_VERSION_STRING "Gateway 0.2"
+
+
+/*
  * Scroll bar geometry and part codes, by value. scrollBarProc is CDEF 16, and
  * the part codes are the classic ones: the names are in Multiversal but
  * spelling them out keeps this block readable next to kZoomDocProc.
@@ -428,7 +436,7 @@ private:
         TextFont(charcoal);
         TextSize(12);
         DrawCenteredCString(midX, static_cast<short>(box.top + 64),
-                            "Gateway 0.1");
+                            GW_VERSION_STRING);
 
         TextFont(kFontGeneva);
         TextSize(10);

@@ -34,7 +34,9 @@ data 'SIZE' (-1, "Gateway", purgeable) {
 };
 
 /*
- * vers (1): 0.2 development. Byte layout is major(BCD), minor(BCD), stage,
+ * vers (1): 0.2 development. GW_VERSION_STRING in src/main.cpp shows the
+ * same number in the About window and has to be changed with these.
+ * Byte layout is major(BCD), minor(BCD), stage,
  * prerelease, region, then two Pascal strings.
  */
 data 'vers' (1, purgeable) {
