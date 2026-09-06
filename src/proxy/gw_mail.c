@@ -795,9 +795,12 @@ static void session_step(GWMailSession *s)
             s->state = kMSUpGreet;
         } else if (s->up.state == kGWStreamError ||
                    s->up.state == kGWStreamClosed) {
-            mail_fail(s,
-                      mail_error_text(s, "Gateway could not reach the mail server"),
-                      GWStream_ErrorText(&s->up));
+            {
+                char why[160];
+                mail_fail(s,
+                          mail_error_text(s, "Gateway could not reach the mail server"),
+                          GWStream_Describe(&s->up, why, sizeof(why)));
+            }
         }
         break;
 
@@ -809,8 +812,11 @@ static void session_step(GWMailSession *s)
             s->state = kMSUpEhlo;
         } else if (s->up.state == kGWStreamError ||
                    s->up.state == kGWStreamClosed) {
-            mail_fail(s, "421 4.4.1 TLS handshake with the mail server failed\r\n",
-                      GWStream_ErrorText(&s->up));
+            {
+                char why[160];
+                mail_fail(s, "421 4.4.1 TLS handshake with the mail server failed\r\n",
+                          GWStream_Describe(&s->up, why, sizeof(why)));
+            }
         }
         break;
 

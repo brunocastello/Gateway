@@ -601,10 +601,13 @@ static void session_step(GWHttpSession *s)
             s->state = kHPSendRequest;
         } else if (s->up.state == kGWStreamError ||
                    s->up.state == kGWStreamClosed) {
-            session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                            "Connection: close\r\n\r\n"
-                            "Gateway: could not reach the origin server.\r\n",
-                         GWStream_ErrorText(&s->up));
+            {
+                char why[160];
+                session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                "Connection: close\r\n\r\n"
+                                "Gateway: could not reach the origin server.\r\n",
+                             GWStream_Describe(&s->up, why, sizeof(why)));
+            }
         }
         break;
 

@@ -127,6 +127,27 @@ int          MacTLS_GetBearSSLError(const MacTLS_Context *ctx);
  * before the handshake completes (state != kMacTLS_Connected). */
 MacTLS_Version MacTLS_GetVersion(const MacTLS_Context *ctx);
 
+/*
+ * How far the connection got before it stopped. A failure reported only as
+ * "connect failed" cannot be acted on; knowing whether the name resolved, and
+ * to what, separates a DNS problem from a routing or firewall one.
+ */
+typedef enum {
+    kMacTLS_PhaseIdle = 0,
+    kMacTLS_PhaseResolving,
+    kMacTLS_PhaseConnecting,
+    kMacTLS_PhaseConnected,
+    kMacTLS_PhaseClosing,
+    kMacTLS_PhaseClosed,
+    kMacTLS_PhaseFailed
+} MacTLS_Phase;
+
+MacTLS_Phase MacTLS_GetPhase(const MacTLS_Context *ctx);
+
+/* The first address DNS returned, in host byte order, or 0 if the lookup has
+ * not completed. */
+uint32_t MacTLS_GetResolvedAddress(const MacTLS_Context *ctx);
+
 /* ── Configuration ── */
 MacTLS_Config *MacTLS_ConfigCreate(void);
 void           MacTLS_ConfigFree(MacTLS_Config *cfg);

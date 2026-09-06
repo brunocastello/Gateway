@@ -148,3 +148,29 @@ a bare "connect failed".
 safe whatever the caller does with its own buffer afterwards. Gateway also
 keeps its own copies at both call sites, since relying on a library not to
 retain a pointer is exactly the assumption that broke here.
+
+## 7. The endpoint was bound after being switched to asynchronous mode
+
+`ot_setup_endpoint()` installed the notifier, called `OTSetAsynchronous()` and
+`OTSetNonBlocking()`, and only then called `OTBind()`. On an asynchronous
+endpoint `OTBind` returns immediately and reports completion later as
+`T_BINDCOMPLETE` — an event the notifier does not handle. Nothing therefore
+guaranteed the endpoint was bound by the time `OTConnect()` ran after DNS
+resolution, and `OTConnect` on an unbound endpoint fails with
+`kOTOutStateErr`. The code worked whenever the DNS lookup happened to take
+longer than the bind, which is most of the time and not something to depend on.
+
+The bind now happens first, while the endpoint is still synchronous, so it
+blocks until it has actually completed. This is the order Gateway's own
+listener and connection code has always used.
+
+## 8. Diagnostics for a connection that fails before the handshake
+
+`MacTLS_GetPhase()` and `MacTLS_GetResolvedAddress()` report how far a
+connection got and what the name resolved to. Combined with the existing
+`MacTLS_GetOTError()`, a failure can be logged as
+
+    connect failed [connecting TCP, OT -3259, 20.190.173.69]
+
+rather than a bare "connect failed", which separates a name that will not
+resolve from an address that will not accept a connection.

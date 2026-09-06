@@ -107,6 +107,31 @@ static OSStatus ot_setup_endpoint(OTTransport *t)
     );
     if (err != noErr) return err;
 
+    /*
+     * Bind first, while the endpoint is still synchronous, so OTBind blocks
+     * until it has actually completed.
+     *
+     * Gateway patch (see PATCHES.md). This used to switch the endpoint to
+     * asynchronous mode and then bind, which makes OTBind return immediately
+     * and report completion later as T_BINDCOMPLETE -- an event the notifier
+     * ignores. Nothing then guaranteed the endpoint was bound by the time
+     * OTConnect ran after DNS resolution, and OTConnect on an unbound
+     * endpoint fails with kOTOutStateErr. It happened to work whenever the
+     * lookup was slower than the bind, which is most of the time and none of
+     * the time you want to depend on.
+     *
+     * All zeros means "any local address, any port" -- bind(INADDR_ANY, 0).
+     */
+    OTInitInetAddress(&localAddr, 0, kOTAnyInetAddress);
+    OTMemzero(&bindReq, sizeof(bindReq));
+    bindReq.addr.maxlen = sizeof(localAddr);
+    bindReq.addr.len    = sizeof(localAddr);
+    bindReq.addr.buf    = (unsigned char *)&localAddr;
+    bindReq.qlen        = 0;  /* not a listening socket */
+
+    err = OTBind(t->endpoint, &bindReq, NULL);
+    if (err != noErr) return err;
+
     /* Install our notifier so we get async event callbacks */
     err = OTInstallNotifier(t->endpoint, ot_notifier, t);
     if (err != noErr) return err;
@@ -116,24 +141,7 @@ static OSStatus ot_setup_endpoint(OTTransport *t)
     if (err != noErr) return err;
 
     /* Don't block on incomplete operations */
-    err = OTSetNonBlocking(t->endpoint);
-    if (err != noErr) return err;
-
-    /*
-     * Bind to a local address. We pass all zeros, meaning
-     * "pick any available local port." This is like calling
-     * bind() with INADDR_ANY and port 0 on BSD sockets.
-     */
-    OTInitInetAddress(&localAddr, 0, 0);
-    bindReq.addr.maxlen = sizeof(localAddr);
-    bindReq.addr.len    = sizeof(localAddr);
-    bindReq.addr.buf    = (unsigned char *)&localAddr;
-    bindReq.qlen        = 0;  /* not a listening socket */
-
-    err = OTBind(t->endpoint, &bindReq, NULL);
-    /* OTBind in async mode returns immediately — but for client
-       sockets with qlen=0, it typically completes synchronously */
-    return err;
+    return OTSetNonBlocking(t->endpoint);
 }
 
 /*

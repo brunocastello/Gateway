@@ -1086,6 +1086,28 @@ OSStatus MacTLS_GetOTError(const MacTLS_Context *ctx)
     return noErr;
 }
 
+MacTLS_Phase MacTLS_GetPhase(const MacTLS_Context *ctx)
+{
+    if (ctx == NULL || ctx->transport == NULL) return kMacTLS_PhaseIdle;
+
+    switch (ctx->transport->state) {
+    case kOTTransport_ResolvingDNS: return kMacTLS_PhaseResolving;
+    case kOTTransport_Connecting:   return kMacTLS_PhaseConnecting;
+    case kOTTransport_Connected:    return kMacTLS_PhaseConnected;
+    case kOTTransport_Closing:      return kMacTLS_PhaseClosing;
+    case kOTTransport_Closed:       return kMacTLS_PhaseClosed;
+    case kOTTransport_Error:        return kMacTLS_PhaseFailed;
+    default:                        return kMacTLS_PhaseIdle;
+    }
+}
+
+uint32_t MacTLS_GetResolvedAddress(const MacTLS_Context *ctx)
+{
+    if (ctx == NULL || ctx->transport == NULL) return 0;
+    if (!ctx->transport->dnsComplete) return 0;
+    return (uint32_t)ctx->transport->hostInfo.addrs[0];
+}
+
 int MacTLS_GetBearSSLError(const MacTLS_Context *ctx)
 {
     /*

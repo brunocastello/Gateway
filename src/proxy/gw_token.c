@@ -189,7 +189,8 @@ void GWToken_Poll(void)
             t->step = kStSend;
         } else if (t->up.state == kGWStreamError ||
                    t->up.state == kGWStreamClosed) {
-            token_fail(t, GWStream_ErrorText(&t->up));
+            char why[160];
+            token_fail(t, GWStream_Describe(&t->up, why, sizeof(why)));
         }
         break;
 

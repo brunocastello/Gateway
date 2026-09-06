@@ -749,6 +749,45 @@ int GWStream_TlsVersion(const GWStream *s)
     }
 }
 
+const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
+{
+    const char *phase = "idle";
+    OSStatus    otErr = noErr;
+    UInt32      addr = 0;
+
+    if (cap == 0) return out;
+
+    if (s != NULL && s->tls && s->sec != NULL) {
+        switch (MacTLS_GetPhase(s->sec)) {
+        case kMacTLS_PhaseResolving:  phase = "resolving DNS"; break;
+        case kMacTLS_PhaseConnecting: phase = "connecting TCP"; break;
+        case kMacTLS_PhaseConnected:  phase = "connected";      break;
+        case kMacTLS_PhaseClosing:    phase = "closing";        break;
+        case kMacTLS_PhaseClosed:     phase = "closed";         break;
+        case kMacTLS_PhaseFailed:     phase = "failed";         break;
+        default:                      phase = "idle";           break;
+        }
+        otErr = MacTLS_GetOTError(s->sec);
+        addr  = (UInt32)MacTLS_GetResolvedAddress(s->sec);
+    } else if (s != NULL && s->plain != NULL) {
+        otErr = s->plain->err;
+        addr  = s->plain->remote.fHost;
+    }
+
+    if (addr != 0) {
+        snprintf(out, cap, "%s [%s, OT %d, %lu.%lu.%lu.%lu]",
+                 GWStream_ErrorText(s), phase, (int)otErr,
+                 (unsigned long)((addr >> 24) & 0xFF),
+                 (unsigned long)((addr >> 16) & 0xFF),
+                 (unsigned long)((addr >> 8) & 0xFF),
+                 (unsigned long)(addr & 0xFF));
+    } else {
+        snprintf(out, cap, "%s [%s, OT %d, name unresolved]",
+                 GWStream_ErrorText(s), phase, (int)otErr);
+    }
+    return out;
+}
+
 const char *GWStream_ErrorText(const GWStream *s)
 {
     if (s == NULL) return "no stream";

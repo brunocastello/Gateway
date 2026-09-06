@@ -160,4 +160,12 @@ void          GWStream_Destroy(GWStream *s);
 int           GWStream_TlsVersion(const GWStream *s);
 const char   *GWStream_ErrorText(const GWStream *s);
 
+/*
+ * A failure line with enough in it to act on: what went wrong, how far the
+ * connection got, the Open Transport error number, and the address DNS
+ * produced. Writes into out and returns it, so it can be passed straight to a
+ * logging call.
+ */
+const char   *GWStream_Describe(const GWStream *s, char *out, size_t cap);
+
 #endif /* GW_NET_H */
