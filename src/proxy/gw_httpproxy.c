@@ -608,6 +608,14 @@ static void step_recv_head(GWHttpSession *s)
         }
     }
 
+    /*
+     * redirect_should_follow() can finish the session outright -- a snapshot
+     * outside the tolerance answers the client itself. Without this the
+     * error page it queued would be overwritten by the relay below, and the
+     * session would carry on reading from an upstream that has been closed.
+     */
+    if (s->state != kHPRecvHead) return;
+
     if (gw_http_is_redirect(res.status) && res.has_location)
         gw_log("#%ld passing %d to the client: %.60s",
                s->id, res.status, res.location);

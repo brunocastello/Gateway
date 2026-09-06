@@ -373,7 +373,22 @@ void GWConn_Close(GWConn *c)
 void GWConn_Destroy(GWConn *c)
 {
     if (c == NULL) return;
-    if (c->svc != NULL) OTCloseProvider(c->svc);
+
+    /*
+     * Take the notifiers off before closing anything, and before the memory
+     * they point at goes back to the heap.
+     *
+     * The notifier's context is this struct. A connection being destroyed
+     * while a lookup or a connect is still outstanding -- which is what a
+     * browser's Stop button produces, several at once -- can still have
+     * T_DNRSTRINGTOADDRCOMPLETE or T_DISCONNECT delivered to it. Writing
+     * those flags into freed memory corrupts the Memory Manager's free list,
+     * and the crash then lands somewhere else entirely, long afterwards.
+     */
+    if (c->svc != NULL) {
+        OTRemoveNotifier(c->svc);
+        OTCloseProvider(c->svc);
+    }
     if (c->ep != NULL) {
         OTRemoveNotifier(c->ep);
         OTCloseProvider(c->ep);

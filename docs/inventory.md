@@ -319,6 +319,12 @@ the Resource Manager returns the **existing** refNum and the matching
   stack-local `InetAddress` to `OTConnect`, so it dialled whatever had reused
   that frame. Anything handed to an async OT call must live at least as long as
   the transport. See `third_party/certainly/PATCHES.md` §6 and §9.
+* **Remove a notifier before closing its provider.** The notifier's context is
+  usually the struct about to be freed, and Open Transport can still deliver an
+  event to a provider that is being closed with an operation outstanding. The
+  resulting write into freed memory corrupts the heap and crashes somewhere
+  else entirely. Both Gateway and Certainly had this; see
+  `third_party/certainly/PATCHES.md` §15.
 * **`T_DISCONNECT` carries no reason in the notifier.** Its `result` argument is
   always 0; the reason is in the `TDiscon` from `OTRcvDisconnect()`, which must
   be called anyway or the endpoint fails every later call with `kOTLookErr`.

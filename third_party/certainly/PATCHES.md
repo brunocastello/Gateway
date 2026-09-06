@@ -309,3 +309,26 @@ anchors covering the CAs behind the major CDNs, the free-certificate issuers,
 and the roots Microsoft and Google chain to. The generator's output was checked
 against the previous file: Amazon Root CA 1's DN, modulus and exponent are
 byte-for-byte identical, and the EC anchors round-trip.
+
+## 15. Notifiers were left installed on providers being closed
+
+`ot_transport_destroy()` closed both the endpoint and the internet services
+provider without removing their notifiers first, then freed the `OTTransport`
+they were installed with as their context:
+
+```c
+if (t->inetSvc != NULL) OTCloseProvider(t->inetSvc);
+if (t->endpoint != NULL) OTCloseProvider(t->endpoint);
+DisposePtr((Ptr)t);
+```
+
+A transport destroyed while a DNS lookup or a connect is still outstanding can
+have `T_DNRSTRINGTOADDRCOMPLETE` or `T_DISCONNECT` delivered to it afterwards.
+The notifier then writes its flags into memory that has gone back to the heap,
+corrupting the Memory Manager's free list — and the crash lands somewhere
+unrelated, some time later. It surfaced as an "error type 3" after pressing a
+browser's Stop button, which tears down several in-flight connections at once.
+
+`OTRemoveNotifier()` now precedes every `OTCloseProvider()`. Gateway's own
+`GWConn_Destroy()` had the same omission on its DNS provider and is fixed
+alongside.

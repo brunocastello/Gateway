@@ -485,11 +485,24 @@ void ot_transport_destroy(OTTransport *t)
 {
     if (t == NULL) return;
 
+    /*
+     * Remove the notifiers before closing, and before this struct -- which is
+     * the context they were installed with -- is handed back to the heap
+     * (Gateway patch, see PATCHES.md).
+     *
+     * Neither provider had its notifier removed here. A transport torn down
+     * with a lookup or a connect still outstanding could have an event
+     * delivered afterwards, writing into freed memory and corrupting the
+     * Memory Manager's free list. It shows up as a crash somewhere unrelated,
+     * some time later.
+     */
     if (t->inetSvc != NULL) {
+        OTRemoveNotifier(t->inetSvc);
         OTCloseProvider(t->inetSvc);
     }
 
     if (t->endpoint != NULL) {
+        OTRemoveNotifier(t->endpoint);
         OTCloseProvider(t->endpoint);
     }
     DisposePtr((Ptr)t);
