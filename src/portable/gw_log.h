@@ -12,7 +12,9 @@
 extern "C" {
 #endif
 
-#define GW_LOG_LINES 64
+/* Deep enough that a page load's worth of activity can be scrolled back
+ * through afterwards; 200 lines costs 25 KB. */
+#define GW_LOG_LINES 200
 #define GW_LOG_WIDTH 128
 
 void gw_log_reset(void);

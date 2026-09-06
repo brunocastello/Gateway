@@ -30,6 +30,7 @@
 #include <cstring>
 
 #include "gw_core.h"
+#include "portable/gw_log.h"   /* GW_LOG_LINES, for scroll limits */
 
 namespace {
 
@@ -197,7 +198,8 @@ class GatewayApp {
 public:
     GatewayApp()
         : mWindow(nullptr), mAppleMenu(nullptr), mFileMenu(nullptr),
-          mDone(false), mRunning(false), mSeenGeneration(-1) {}
+          mDone(false), mRunning(false), mSeenGeneration(-1),
+          mScrollBack(0) {}
 
     bool Start()
     {
@@ -291,7 +293,7 @@ private:
 
         SetRect(&bounds, 20, 60, 20 + kWinWidth, 60 + kWinHeight);
         ToPascal("Gateway", title);
-        mWindow = NewWindow(nullptr, &bounds, title, true, documentProc,
+        mWindow = NewWindow(nullptr, &bounds, title, true, zoomDocProc,
                             reinterpret_cast<WindowPtr>(-1L), true, 0);
         if (mWindow == nullptr) return;
 
@@ -502,7 +504,24 @@ private:
         case keyDown:
         case autoKey: {
             char ch = static_cast<char>(event.message & charCodeMask);
-            if (event.modifiers & cmdKey) HandleMenu(MenuKey(ch));
+
+            if (event.modifiers & cmdKey) {
+                HandleMenu(MenuKey(ch));
+                break;
+            }
+
+            /* The log scrolls from the keyboard: the Control Manager is not
+             * in the Multiversal Interfaces, so there are no scroll bars to
+             * hang this off. */
+            switch (ch) {
+            case 0x1E: Scroll(1);                  break;  /* up arrow    */
+            case 0x1F: Scroll(-1);                 break;  /* down arrow  */
+            case 0x0B: Scroll(VisibleRows() - 1);  break;  /* page up     */
+            case 0x0C: Scroll(-(VisibleRows() - 1)); break; /* page down  */
+            case 0x01: Scroll(GW_LOG_LINES);       break;  /* home        */
+            case 0x04: Scroll(-GW_LOG_LINES);      break;  /* end         */
+            default:   break;
+            }
             break;
         }
 
@@ -549,6 +568,33 @@ private:
             if (TrackGoAway(win, event.where)) mDone = true;
             break;
 
+        case inGrow: {
+            Rect limit;
+            long size;
+
+            SetRect(&limit, 260, 120,
+                    static_cast<short>(qd.screenBits.bounds.right),
+                    static_cast<short>(qd.screenBits.bounds.bottom));
+            size = GrowWindow(win, event.where, &limit);
+            if (size != 0) {
+                /* GrowWindow packs height above width, and HiWord/LoWord are
+                 * 68K trap glue InterfaceLib does not export to PowerPC. */
+                SizeWindow(win, static_cast<short>(size & 0xFFFF),
+                           static_cast<short>((size >> 16) & 0xFFFF), true);
+                Redraw();
+            }
+            break;
+        }
+
+        case inZoomIn:
+        case inZoomOut:
+            if (TrackBox(win, event.where, part)) {
+                SetPort(reinterpret_cast<GrafPtr>(win));
+                ZoomWindow(win, part, true);
+                Redraw();
+            }
+            break;
+
         case inContent:
             if (win != FrontWindow()) {
                 SelectWindow(win);
@@ -591,6 +637,32 @@ private:
         HiliteMenu(0);
     }
 
+    int VisibleRows() const
+    {
+        Rect area;
+        int  rows;
+
+        if (mWindow == nullptr) return 1;
+        area = reinterpret_cast<GrafPtr>(mWindow)->portRect;
+        rows = (area.bottom - 2 - kHeaderRows * kLineHeight) / kLineHeight;
+        return rows > 1 ? rows : 1;
+    }
+
+    /* Move the view through the log. Positive is towards older lines. */
+    void Scroll(int lines)
+    {
+        int count = GW_LogCount();
+        int rows = VisibleRows();
+        int most = count - rows;
+
+        if (most < 0) most = 0;
+
+        mScrollBack += lines;
+        if (mScrollBack > most) mScrollBack = most;
+        if (mScrollBack < 0) mScrollBack = 0;
+        Redraw();
+    }
+
     void Redraw()
     {
         if (mWindow == nullptr) return;
@@ -609,6 +681,7 @@ private:
 
         SetPort(port);
         EraseRect(&area);
+        DrawGrowIcon(mWindow);
 
         TextFont(4);           /* Monaco: the log needs a fixed pitch */
         TextSize(9);
@@ -632,8 +705,17 @@ private:
         {
             short logBottom = static_cast<short>(area.bottom - 2);
             int rows = (logBottom - kHeaderRows * kLineHeight) / kLineHeight;
+            int most;
+
+            if (rows < 1) rows = 1;
             count = GW_LogCount();
-            first = (count > rows) ? count - rows : 0;
+
+            most = count - rows;
+            if (most < 0) most = 0;
+            if (mScrollBack > most) mScrollBack = most;
+
+            first = count - rows - mScrollBack;
+            if (first < 0) first = 0;
 
             v = static_cast<short>(kHeaderRows * kLineHeight);
             for (i = first; i < count; i++) {
@@ -646,6 +728,9 @@ private:
             }
         }
     }
+
+    /* How many lines back from the newest the log is scrolled. */
+    int           mScrollBack;
 
     WindowPtr     mWindow;
     MenuHandle    mAppleMenu;
