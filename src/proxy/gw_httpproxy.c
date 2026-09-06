@@ -80,6 +80,7 @@ typedef struct {
 } GWHttpSession;
 
 static GWHttpSession *sSessions;
+static int            sSessionCount;
 static long           sNextId;
 
 /* ------------------------------------------------------------------ */
@@ -679,8 +680,11 @@ static void session_step(GWHttpSession *s)
 void GWProxy_Init(void)
 {
     if (sSessions != NULL) return;
+
+    sSessionCount = GW_MaxSessions();
     sSessions = (GWHttpSession *)NewPtrClear(
-        (Size)(sizeof(GWHttpSession) * GW_MAX_SESSIONS));
+        (Size)(sizeof(GWHttpSession) * sSessionCount));
+    if (sSessions == NULL) sSessionCount = 0;
 }
 
 void GWProxy_Shutdown(void)
@@ -688,10 +692,11 @@ void GWProxy_Shutdown(void)
     int i;
 
     if (sSessions == NULL) return;
-    for (i = 0; i < GW_MAX_SESSIONS; i++)
+    for (i = 0; i < sSessionCount; i++)
         if (sSessions[i].state != kHPFree) session_reset(&sSessions[i]);
     DisposePtr((Ptr)sSessions);
     sSessions = NULL;
+    sSessionCount = 0;
 }
 
 int GWProxy_Accept(GWConn *c)
@@ -700,7 +705,7 @@ int GWProxy_Accept(GWConn *c)
 
     if (sSessions == NULL) return 0;
 
-    for (i = 0; i < GW_MAX_SESSIONS; i++) {
+    for (i = 0; i < sSessionCount; i++) {
         GWHttpSession *s = &sSessions[i];
         if (s->state != kHPFree) continue;
 
@@ -724,7 +729,7 @@ void GWProxy_Poll(void)
     int i;
 
     if (sSessions == NULL) return;
-    for (i = 0; i < GW_MAX_SESSIONS; i++) session_step(&sSessions[i]);
+    for (i = 0; i < sSessionCount; i++) session_step(&sSessions[i]);
 }
 
 int GWProxy_ActiveCount(void)
@@ -732,7 +737,7 @@ int GWProxy_ActiveCount(void)
     int i, n = 0;
 
     if (sSessions == NULL) return 0;
-    for (i = 0; i < GW_MAX_SESSIONS; i++)
+    for (i = 0; i < sSessionCount; i++)
         if (sSessions[i].state != kHPFree) n++;
     return n;
 }

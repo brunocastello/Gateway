@@ -10,8 +10,13 @@
 
 #include "../net/gw_net.h"
 
-/* CLAUDE.md rule 6: start with four concurrent splices. */
-#define GW_MAX_SESSIONS 4
+/*
+ * How many splices run at once is a preference, not a constant: see
+ * GW_MaxSessions() in gw_core.h. CLAUDE.md rule 6 said to start at four, and
+ * four turned out to be too few -- a single page of a video site opens more
+ * than that in parallel and the surplus was refused, which showed up in the
+ * log as "proxy busy, dropped a connection".
+ */
 
 void GWProxy_Init(void);
 void GWProxy_Shutdown(void);

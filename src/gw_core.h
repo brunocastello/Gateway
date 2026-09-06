@@ -42,6 +42,16 @@ int         GW_RedirectPolicy(void);
 long        GW_MaxBodyBytes(void);
 
 /*
+ * Hard ceiling on concurrent HTTP splices. The max_sessions setting is
+ * clamped to this, because each session costs roughly 110 KB and the
+ * application partition is 8 MB (docs/inventory.md).
+ */
+#define GW_SESSION_LIMIT 16
+
+/* How many splices to run at once, from max_sessions. */
+int         GW_MaxSessions(void);
+
+/*
  * Read the prefs before the Toolbox side decides what to put on screen.
  * Separate from GW_Init because the window has to be created knowing this.
  */

@@ -130,7 +130,7 @@ Where the 8 MB goes:
 |---|---|
 | HTTP session: request head, response head, rewritten request | 3 × 16 KB |
 | HTTP session: read scratch + pending client output | 16 KB + 32 KB |
-| HTTP sessions, 4 concurrent | ~448 KB |
+| HTTP sessions, 8 concurrent (`max_sessions`, clamped to 16) | ~880 KB |
 | Mail session: four line/queue buffers | 4 × 4 KB |
 | Mail sessions, 4 concurrent | 64 KB |
 | Token refresh: request + response | 16 KB |
@@ -294,11 +294,12 @@ the Resource Manager returns the **existing** refNum and the matching
   `third_party/certainly/PATCHES.md` §12. Any host requiring a group outside
   those two will still fail; the ClientHello carries a share for both so no
   HelloRetryRequest is needed for either.
-* **Streaming media does not work.** A Flash video that plays through a
-  conventional proxy stalls through Gateway. Three things in the HTTP path are
-  implicated — `Content-Length` is stripped from every response, redirects are
-  followed internally so the browser never sees them, and bodies are capped at
-  2 MiB. Written up with the evidence in `docs/issue-flash-video.md`.
+* ~~**Streaming media does not work.**~~ Fixed. `Content-Length` is forwarded
+  when the body is untouched, redirects are passed to the client unless it
+  could not follow them itself, and the 2 MiB body cap is gone. See
+  `docs/issue-flash-video.md` for the sequence, including the way the two old
+  bugs together left a truncated copy in the browser cache that survived the
+  fix.
 * **HTTP/1.1 keep-alive to the client** is not implemented and will not be:
   the client hop is always `Connection: close`, which is what makes an
   EOF-delimited body legal and keeps the state machine small.

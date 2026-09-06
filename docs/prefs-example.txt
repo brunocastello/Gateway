@@ -47,6 +47,12 @@ follow_redirects = auto
 # here only if you want downloads deliberately cut short.
 max_body_mb    = 0
 
+# How many proxy connections run at once. A page of a video site opens more
+# than four in parallel, and the surplus is refused -- the log says "proxy
+# busy, dropped a connection" when that happens. Each costs roughly 110 KB of
+# the 8 MB partition; the value is clamped to 16.
+max_sessions   = 8
+
 # The forward proxy. Point Classilla at this address and port, and turn on
 # network.http.proxy.use-http-proxy-for-https so https:// URLs come here too.
 http_port      = 8765

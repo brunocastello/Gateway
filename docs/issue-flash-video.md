@@ -141,6 +141,38 @@ One hypothesis was disproved on the way. A test now covers it: a relative
 `Location` resolves against the origin including its **port**, so `:8080` was
 never being lost on a redirect. The old log simply never printed it.
 
+## Confirmed on hardware, and the sting in the tail
+
+The video plays. But on the first run after the fix it stopped after fifteen
+seconds, and the log said why:
+
+```
+#15 <- 302 93.245.69.158 54 bytes
+#15 passing 302 to the client: ../assets/m7k9UMcHbr0.flv
+#17 GET 93.245.69.158:8080/assets/m7k9UMcHbr0.flv
+#17 <- 304 93.245.69.158 no length
+```
+
+A **304**. The video was never fetched at all — the browser was replaying a
+copy from its own cache, and that copy had been written by the previous build.
+
+The two old bugs had combined to poison it. The 2 MiB ceiling truncated the
+file, and stripping `Content-Length` meant the browser had no way to know the
+body was short, so it stored the fragment as if it were complete. Fifteen
+seconds of 360p FLV is about 1.9 MB, which is the ceiling almost exactly.
+
+**Clearing the browser cache is part of the fix.** Nothing in Gateway can undo
+a bad cache entry: a conditional request is answered by the origin, and `304`
+means the client already has what it asked for.
+
+Worth noting that this cannot recur. With `Content-Length` now forwarded, a
+truncated body no longer matches the announced length, and a browser will
+discard it rather than cache it.
+
+The same log also settled the concurrency question — `proxy busy, dropped a
+connection` appears during the page load — so `max_sessions` now defaults to 8
+rather than 4.
+
 ## If it still stalls
 
 The log will now distinguish the remaining possibilities:
@@ -158,9 +190,6 @@ The log will now distinguish the remaining possibilities:
 
 ## Fixes still to evaluate, if needed
 
-- **Raise `GW_MAX_SESSIONS`** past 4 if the log shows connections being
-  dropped. Each session costs roughly 109 KB, so the memory budget in
-  `docs/inventory.md` has room for six or eight.
 - **Buffer to synthesise a length** if the origin sends none and the player
   refuses to start without one. Expensive, and a last resort.
 

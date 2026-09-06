@@ -55,6 +55,21 @@ long GW_MaxBodyBytes(void)
     return mb * 1024L * 1024L;
 }
 
+int GW_MaxSessions(void)
+{
+    /*
+     * Four, the figure CLAUDE.md rule 6 suggested starting from, turned out
+     * to be too few: one page of a video site opens more than that in
+     * parallel and the surplus was refused, which the log reported as
+     * "proxy busy, dropped a connection".
+     */
+    long n = GWConfig_Num("max_sessions", 8);
+
+    if (n < 2) n = 2;
+    if (n > GW_SESSION_LIMIT) n = GW_SESSION_LIMIT;
+    return (int)n;
+}
+
 int GW_ShowWindowPref(void)
 {
     return GWConfig_Num("show_window", 1) != 0;
@@ -92,7 +107,7 @@ int GW_Init(void)
     sPopPort  = (int)GWConfig_Num("pop_port", 1995);
     sSmtpPort = (int)GWConfig_Num("smtp_port", 1587);
 
-    sHttp = GWListener_Open((UInt16)sHttpPort, GW_MAX_SESSIONS);
+    sHttp = GWListener_Open((UInt16)sHttpPort, (OTQLen)GW_MaxSessions());
     sImap = GWListener_Open((UInt16)sImapPort, 2);
     sPop  = GWListener_Open((UInt16)sPopPort, 2);
     sSmtp = GWListener_Open((UInt16)sSmtpPort, 2);
