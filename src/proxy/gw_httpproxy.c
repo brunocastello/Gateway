@@ -39,7 +39,23 @@
  * than handing the browser a broken image.
  */
 #define GW_WB_RETRIES   3
-#define GW_WB_BACKOFF   40          /* ticks; multiplied by the attempt */
+#define GW_WB_BACKOFF   60          /* ticks; multiplied by the attempt */
+
+/*
+ * How many upstream connections may be *opening* at once.
+ *
+ * This is the lever that stops the archive refusing us. Eight sessions
+ * starting together each wanted their own connection, which is precisely the
+ * burst that trips its rate limiter -- and every refusal then became a retry,
+ * making the next burst worse.
+ *
+ * Established connections are not the problem, only new ones, so the cap is on
+ * opening rather than on total. Holding it low also gives the pool time to
+ * fill: a session that waits a moment usually finds a connection waiting for
+ * it instead, and pays nothing at all.
+ */
+#define GW_CONNECT_LIMIT 2
+#define GW_CONNECT_WAIT  8          /* ticks before looking again */
 
 /*
  * Idle upstream connections, kept for the next request to the same host.
@@ -68,6 +84,7 @@ typedef enum {
     kHPTunnelConnect,
     kHPTunnel,
     kHPRetryWait,
+    kHPConnectWait,
     kHPFlushAndClose,
     kHPDone
 } GWHttpState;
@@ -133,6 +150,17 @@ static GWUpstreamSlot sPool[GW_POOL_SIZE];
 static GWHttpSession *sSessions;
 static int            sSessionCount;
 static long           sNextId;
+
+/* How many sessions are part-way through opening a connection. */
+static int connecting_count(void)
+{
+    int i, n = 0;
+
+    if (sSessions == NULL) return 0;
+    for (i = 0; i < sSessionCount; i++)
+        if (sSessions[i].state == kHPConnect) n++;
+    return n;
+}
 
 /* ------------------------------------------------------------------ */
 /* Idle upstream connections                                           */
@@ -458,6 +486,19 @@ static void session_start_upstream(GWHttpSession *s)
         return;
     }
     s->upPooled = 0;
+
+    /*
+     * Nothing idle to reuse, so this needs a new connection -- and those are
+     * rationed. Wait rather than joining a burst; by the time we look again
+     * there is often one back in the pool.
+     */
+    if (connecting_count() >= GW_CONNECT_LIMIT) {
+        s->retryAt = GWNet_Ticks() + GW_CONNECT_WAIT;
+        s->state = kHPConnectWait;
+        return;
+    }
+
+    gw_log("#%ld opening a connection to %s", s->id, s->upHost);
 
     if (s->req.url.tls)
         ok = GWStream_ConnectTLS(&s->up, s->upHost, s->upPort);
@@ -1078,6 +1119,13 @@ static void session_step(GWHttpSession *s)
                                 "Gateway: could not reach the origin server.\r\n",
                              GWStream_Describe(&s->up, why, sizeof(why)));
             }
+        }
+        break;
+
+    case kHPConnectWait:
+        if (GWNet_Ticks() >= s->retryAt) {
+            s->lastActivity = GWNet_Ticks();
+            session_start_upstream(s);
         }
         break;
 
