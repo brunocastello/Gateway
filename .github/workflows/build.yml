@@ -55,6 +55,11 @@ jobs:
           echo "--- Multiversal headers available to src/main.cpp ---"
           ls "$TOOLCHAIN/powerpc-apple-macos/include" | tr '\n' ' '
           echo
+          echo "--- Control Manager: which header, if any, declares it ---"
+          grep -l "NewControl\|scrollBarProc\|TrackControl" \
+            "$TOOLCHAIN/powerpc-apple-macos/include"/*.h 2>/dev/null || \
+            echo "(no header declares the Control Manager)"
+          echo
 
           mkdir -p build
           cd build

@@ -87,7 +87,7 @@ const short kZoomDocProc = 8;
 const unsigned short kPlatinum = 0xDDDD;
 const short kLineHeight = 11;
 const short kTextLeft   = 6;
-const short kHeaderRows = 3;
+const short kHeaderRows = 0;
 
 /* Build a Pascal string without relying on the compiler's "\p" literals. */
 void ToPascal(const char *src, Str255 dst)
@@ -682,7 +682,6 @@ private:
     {
         GrafPtr port = reinterpret_cast<GrafPtr>(mWindow);
         Rect    area = port->portRect;
-        char    line[160];
         short   v;
         int     count, first, i;
 
@@ -692,22 +691,6 @@ private:
 
         TextFont(4);           /* Monaco: the log needs a fixed pitch */
         TextSize(9);
-
-        v = kLineHeight;
-        MoveTo(kTextLeft, v);
-        std::snprintf(line, sizeof(line),
-                      "proxy :%d  imap :%d  pop :%d  smtp :%d  splices %d",
-                      GW_HttpPort(), GW_ImapPort(), GW_PopPort(),
-                      GW_SmtpPort(), GW_ActiveSessions());
-        DrawCString(line);
-
-        v = static_cast<short>(v + kLineHeight);
-        MoveTo(kTextLeft, v);
-        DrawCString(GW_StatusLine());
-
-        v = static_cast<short>(v + 4);
-        MoveTo(kTextLeft, v);
-        LineTo(static_cast<short>(area.right - kTextLeft), v);
 
         {
             short logBottom = static_cast<short>(area.bottom - 2);
