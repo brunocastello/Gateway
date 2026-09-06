@@ -14,7 +14,6 @@
  */
 
 #include <AppleEvents.h>
-#include <Controls.h>
 #include <Devices.h>
 #include <Events.h>
 #include <Fonts.h>
@@ -153,9 +152,9 @@ extern GatewayApp *gApp;
 class GatewayApp {
 public:
     GatewayApp()
-        : mWindow(nullptr), mQuitButton(nullptr), mAppleMenu(nullptr),
-          mFileMenu(nullptr), mDone(false), mRunning(false),
-          mFaceless(false), mSeenGeneration(-1) {}
+        : mWindow(nullptr), mAppleMenu(nullptr), mFileMenu(nullptr),
+          mDone(false), mRunning(false), mFaceless(false),
+          mSeenGeneration(-1) {}
 
     bool Start()
     {
@@ -266,27 +265,75 @@ private:
         if (mWindow == nullptr) return;
 
         SetPort(reinterpret_cast<GrafPtr>(mWindow));
+    }
 
-        /* A Quit button, so the window is enough on its own -- the menu bar
-         * is not the only way out. */
-        SetRect(&bounds,
+    /*
+     * The Quit button is drawn rather than made from a Control Manager
+     * push button: the Multiversal Interfaces have no Controls.h, and one
+     * rounded rectangle with a label is not worth an interface dependency.
+     */
+    Rect QuitButtonRect() const
+    {
+        Rect r;
+        SetRect(&r,
                 static_cast<short>(kWinWidth - kButtonMargin - kButtonWidth),
                 static_cast<short>(kWinHeight - kButtonMargin - kButtonHeight),
                 static_cast<short>(kWinWidth - kButtonMargin),
                 static_cast<short>(kWinHeight - kButtonMargin));
-        ToPascal("Quit", title);
-        mQuitButton = NewControl(mWindow, &bounds, title, true, 0, 0, 1,
-                                 pushButProc, 0);
+        return r;
+    }
+
+    void DrawQuitButton()
+    {
+        Rect  r = QuitButtonRect();
+        short width;
+
+        PenNormal();
+        EraseRoundRect(&r, 10, 10);
+        FrameRoundRect(&r, 10, 10);
+
+        TextFont(0);                    /* the system font, as a button wants */
+        TextSize(12);
+        width = TextWidth(const_cast<char *>("Quit"), 0, 4);
+        MoveTo(static_cast<short>(r.left + ((r.right - r.left) - width) / 2),
+               static_cast<short>(r.top + 14));
+        DrawCString("Quit");
+    }
+
+    /*
+     * Track a press the way the Control Manager would: highlight while the
+     * mouse is held inside, and act only if it is released there. The proxy
+     * is still pumped throughout, so holding the button down does not stall a
+     * transfer.
+     */
+    void TrackQuitButton()
+    {
+        Rect    r = QuitButtonRect();
+        Boolean inside = true;
+
+        InvertRoundRect(&r, 10, 10);
+        while (StillDown()) {
+            Point   p;
+            Boolean now;
+
+            GetMouse(&p);
+            now = PtInRect(p, &r);
+            if (now != inside) {
+                InvertRoundRect(&r, 10, 10);
+                inside = now;
+            }
+            GW_Poll();
+        }
+        if (inside) {
+            InvertRoundRect(&r, 10, 10);
+            mDone = true;
+        }
     }
 
     /* Take the window down without quitting: Gateway keeps proxying. */
     void HideWindow()
     {
         if (mWindow == nullptr) return;
-        if (mQuitButton != nullptr) {
-            DisposeControl(mQuitButton);
-            mQuitButton = nullptr;
-        }
         DisposeWindow(mWindow);
         mWindow = nullptr;
     }
@@ -353,15 +400,13 @@ private:
                 SelectWindow(win);
                 break;
             }
-            if (win == mWindow && mQuitButton != nullptr) {
+            if (win == mWindow) {
                 Point local = event.where;
-                ControlHandle hit = nullptr;
+                Rect  button = QuitButtonRect();
 
                 SetPort(reinterpret_cast<GrafPtr>(mWindow));
                 GlobalToLocal(&local);
-                if (FindControl(local, win, &hit) != 0 && hit == mQuitButton) {
-                    if (TrackControl(hit, local, nullptr) != 0) mDone = true;
-                }
+                if (PtInRect(local, &button)) TrackQuitButton();
             }
             break;
 
@@ -439,7 +484,7 @@ private:
         MoveTo(kTextLeft, v);
         LineTo(static_cast<short>(area.right - kTextLeft), v);
 
-        DrawControls(mWindow);
+        DrawQuitButton();
 
         {
             short logBottom =
@@ -462,7 +507,6 @@ private:
     }
 
     WindowPtr     mWindow;
-    ControlHandle mQuitButton;
     MenuHandle    mAppleMenu;
     MenuHandle    mFileMenu;
     bool          mDone;
