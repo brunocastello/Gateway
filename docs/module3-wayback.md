@@ -234,7 +234,9 @@ checkboxes session-only, matching the reference.
 
 ### Why this is a web page and not a Gateway window
 
-Settled, so it does not get relitigated:
+**Decided: Gateway gets no settings UI for this module.** The web page is the
+only way to change these values. Do not add a dialog, a preferences window or
+menu items for them. The reasoning, so it does not get relitigated:
 
 - **It has to reach the clients.** The classic Windows machines use this proxy
   across the LAN. A window on the OS 9 Mac cannot be reached from a Windows 98
@@ -251,10 +253,10 @@ Settled, so it does not get relitigated:
   three checkboxes would meet the same problem, to produce something less
   capable than the page.
 
-What the window *should* do is report, not edit. One line in the existing
-status area — `wayback :8888  2001-12-31 ±730d` — answers "which era am I in?"
-without opening a browser, and costs nothing: `GW_SetStatus()` is already
-there.
+The one thing the existing window may do is *report*: a single line in the
+status area it already has — `wayback :8888  2001-12-31 ±730d` — so "which era
+am I in?" can be answered without opening a browser. That is a read-only
+display through `GW_SetStatus()`, not an interface, and it is optional.
 
 Serve the same page on a Gateway-specific host as well as on
 `web.archive.org`. It is the same handler, existing bookmarks keep working, and
