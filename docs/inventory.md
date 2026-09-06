@@ -294,6 +294,11 @@ the Resource Manager returns the **existing** refNum and the matching
   `third_party/certainly/PATCHES.md` §12. Any host requiring a group outside
   those two will still fail; the ClientHello carries a share for both so no
   HelloRetryRequest is needed for either.
+* **Streaming media does not work.** A Flash video that plays through a
+  conventional proxy stalls through Gateway. Three things in the HTTP path are
+  implicated — `Content-Length` is stripped from every response, redirects are
+  followed internally so the browser never sees them, and bodies are capped at
+  2 MiB. Written up with the evidence in `docs/issue-flash-video.md`.
 * **HTTP/1.1 keep-alive to the client** is not implemented and will not be:
   the client hop is always `Connection: close`, which is what makes an
   EOF-delimited body legal and keeps the state machine small.
