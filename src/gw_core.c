@@ -118,6 +118,53 @@ int GW_MaxSessions(void)
     return (int)n;
 }
 
+/*
+ * Mirror the log to a file when log_file asks for it.
+ *
+ * The value is either a switch or a path. "1" (or yes/on/true) puts the file
+ * beside the preferences, which is the only location Gateway already knows how
+ * to name; anything else is taken as a path and used as given. The window only
+ * holds the last couple of hundred lines, and a slow page load is longer than
+ * that, so this is how a whole session gets handed to someone.
+ */
+static void start_file_log(void)
+{
+    const char *want = GWConfig_Str("log_file", "0");
+    char        path[256];
+    const char *src;
+    size_t      n, cut;
+
+    if (want == NULL || want[0] == '\0' ||
+        gw_stricmp(want, "0") == 0 || gw_stricmp(want, "no") == 0 ||
+        gw_stricmp(want, "off") == 0 || gw_stricmp(want, "false") == 0)
+        return;
+
+    if (gw_stricmp(want, "1") != 0 && gw_stricmp(want, "yes") != 0 &&
+        gw_stricmp(want, "on") != 0 && gw_stricmp(want, "true") != 0) {
+        if (!gw_log_to_file(want))
+            gw_log("could not open the log file %s", want);
+        else
+            gw_log("logging to %s", want);
+        return;
+    }
+
+    /* Beside the preferences: same folder, "Gateway Log.txt". */
+    src = GWConfig_Source();
+    if (src == NULL) src = "";
+    n = strlen(src);
+    for (cut = n; cut > 0; cut--)
+        if (src[cut - 1] == ':') break;
+    if (cut >= sizeof(path) - 20) cut = 0;
+
+    memcpy(path, src, cut);
+    strcpy(path + cut, "Gateway Log.txt");
+
+    if (!gw_log_to_file(path))
+        gw_log("could not open the log file %s", path);
+    else
+        gw_log("logging to %s", path);
+}
+
 int GW_MaxConnects(void)
 {
     /*
@@ -175,6 +222,7 @@ int GW_Init(void)
     /* Already loaded by GW_LoadSettings(), which the UI calls first so it
      * knows whether to open a window. */
     gw_log("settings: %s", GWConfig_Source());
+    start_file_log();
 
     MacTLS_Init();
     GWProxy_Init();

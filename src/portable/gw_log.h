@@ -31,6 +31,14 @@ const char *gw_log_line(int idx);
 /* Bumped on every append so the UI knows when to redraw. */
 long gw_log_generation(void);
 
+/*
+ * Also append every line to `path`, which is created if absent and appended to
+ * across runs. Pass NULL or "" to stop. Returns 0 if the file could not be
+ * opened, in which case logging to the window carries on regardless.
+ */
+int  gw_log_to_file(const char *path);
+void gw_log_close_file(void);
+
 #ifdef __cplusplus
 }
 #endif

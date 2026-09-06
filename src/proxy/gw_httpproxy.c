@@ -876,13 +876,25 @@ static void step_recv_head(GWHttpSession *s)
              * the exact snapshot, so this is the common case on the Wayback
              * port -- and keeping the connection here halves the handshakes
              * for a page.
+             *
+             * Consume the head before asking whether anything is left over.
+             * This used to test s->uheadLen while it still held the whole
+             * response head, which is never zero, so the connection was
+             * dropped every time and every asset paid for a fresh TLS
+             * handshake. Only bytes *past* the head disqualify reuse: they
+             * would belong to a response nobody asked for.
              */
+            s->uheadLen -= res.head_len;
+            if (s->uheadLen > 0)
+                memmove(s->uhead, s->uhead + res.head_len, s->uheadLen);
+
             if (!res.connection_close && res.has_content_length &&
                 res.content_length == 0 && s->uheadLen == 0)
                 pool_put(&s->up, s->upHost, s->upPort, s->upTls);
             else
                 GWStream_Destroy(&s->up);
 
+            s->uheadLen = 0;            /* the next response starts clean */
             session_start_upstream(s);
             return;
         }

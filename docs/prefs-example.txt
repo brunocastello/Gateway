@@ -9,6 +9,7 @@
 show_window     = 1
 max_sessions    = 12
 max_connects    = 8
+log_file        = 0
 
 
 # ------------------------------------------------------------- Web proxy

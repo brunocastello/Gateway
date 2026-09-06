@@ -14,6 +14,15 @@ static int  sHead;      /* index of the next slot to write */
 static int  sCount;
 static long sGeneration;
 
+/*
+ * Optional copy of the log to a file, for handing a whole session's worth of
+ * lines to someone rather than reading 200 of them off a screen. Off unless a
+ * path is set. Each line is flushed as it is written: the sessions worth
+ * capturing are often the ones that end in a crash, and a buffered tail would
+ * be exactly the part that was lost.
+ */
+static FILE *sFile;
+
 void gw_log_reset(void)
 {
     sHead = 0;
@@ -34,6 +43,32 @@ void gw_log(const char *fmt, ...)
     sHead = (sHead + 1) % GW_LOG_LINES;
     if (sCount < GW_LOG_LINES) sCount++;
     sGeneration++;
+
+    if (sFile != NULL) {
+        fputs(slot, sFile);
+        fputc('\n', sFile);
+        fflush(sFile);
+    }
+}
+
+int gw_log_to_file(const char *path)
+{
+    if (sFile != NULL) {
+        fclose(sFile);
+        sFile = NULL;
+    }
+    if (path == NULL || path[0] == '\0') return 1;
+
+    sFile = fopen(path, "a");
+    return sFile != NULL;
+}
+
+void gw_log_close_file(void)
+{
+    if (sFile != NULL) {
+        fclose(sFile);
+        sFile = NULL;
+    }
 }
 
 int gw_log_count(void)

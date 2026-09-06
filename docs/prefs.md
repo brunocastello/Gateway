@@ -22,6 +22,7 @@ as confusing as it sounds, so heed the warning.
 |---|---|---|
 | `show_window` | `1` | Open the log window at launch. `0` starts without one; the File menu is always present, so Gateway can be quit and the window brought back either way. Hiding the window records the choice here. |
 | `max_sessions` | `12` | Concurrent proxy connections, clamped to 16. Each costs roughly 110 KB of the 8 MB partition. When they are all busy Gateway stops accepting, so surplus connections wait in the listen backlog rather than being refused. |
+| `log_file` | `0` | Mirror the log window to a file. `1` writes "Gateway Log.txt" beside this preferences file; any other value is used as a path. Lines are appended across runs and flushed as they are written, so the tail survives a crash. The window keeps only the last 200 lines, which one slow page load can exceed, so this is the way to capture a whole session. |
 | `max_connects` | `8` | How many upstream connections may be *opening* at once for ordinary live-web sessions, clamped to 8. |
 | `wayback_connects` | `1` | The same cap for sessions served from the Internet Archive, counted separately so neither starves the other. It is low because a burst of new connections from one address is exactly what the archive's rate limiter refuses, logged as `connect failed [failed, OT 61, ...]`. Gateway runs a single cooperative thread, so concurrent TLS handshakes do not overlap anyway -- they take turns on one CPU -- and the connection pool recovers the throughput, since a reused connection skips the handshake entirely. |
 
