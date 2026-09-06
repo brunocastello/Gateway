@@ -255,12 +255,17 @@ drifting.
   undecoded.
 * **Untested on hardware beyond the HTTPS path.** The `CONNECT` tunnel and
   both mail splices have not faced a real client yet.
-* **Asynchronous OT calls do not copy their arguments.** `OTInetStringToAddress`
-  reads the hostname when the resolver runs, not when the call is made, so the
-  buffer has to outlive the request. Certainly held the caller's pointer, which
-  worked only for string literals; anything coming from the prefs cache
-  resolved garbage. Fixed in the library and guarded at Gateway's call sites.
-  See `third_party/certainly/PATCHES.md` §6.
+* **Asynchronous OT calls do not copy their arguments.** This bit twice, and it
+  is the single most important thing to know when touching this code.
+  `OTInetStringToAddress` reads the hostname when the resolver runs, and
+  `OTConnect` reads the address when it sends the SYN — both long after the
+  call returns. Certainly passed the caller's hostname pointer and, worse, a
+  stack-local `InetAddress` to `OTConnect`, so it dialled whatever had reused
+  that frame. Anything handed to an async OT call must live at least as long as
+  the transport. See `third_party/certainly/PATCHES.md` §6 and §9.
+* **`T_DISCONNECT` carries no reason in the notifier.** Its `result` argument is
+  always 0; the reason is in the `TDiscon` from `OTRcvDisconnect()`, which must
+  be called anyway or the endpoint fails every later call with `kOTLookErr`.
 * **email-oauth2-proxy stores its tokens encrypted** (Fernet, keyed from the
   account password with PBKDF2-HMAC-SHA256 over `token_salt` /
   `token_iterations`). A `refresh_token` beginning `gAAAAA` is ciphertext, and

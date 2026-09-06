@@ -174,3 +174,53 @@ connection got and what the name resolved to. Combined with the existing
 
 rather than a bare "connect failed", which separates a name that will not
 resolve from an address that will not accept a connection.
+
+## 9. OTConnect was given a stack address it read after the frame was gone
+
+The same class of bug as §6, and the one that actually stopped Gateway from
+reaching the OAuth token endpoint. `ot_transport_pump()` built the connect
+request in locals:
+
+```c
+InetAddress remoteAddr;
+TCall       sndCall;
+
+OTInitInetAddress(&remoteAddr, t->port, t->hostInfo.addrs[0]);
+sndCall.addr.buf = (unsigned char *)&remoteAddr;
+t->lastError = OTConnect(t->endpoint, &sndCall, NULL);
+```
+
+The endpoint is asynchronous, so `OTConnect` returns `kOTNoDataErr`
+immediately and Open Transport reads the address later, when it actually sends
+the SYN. By then `ot_transport_pump()` has returned and that stack frame has
+been reused by whatever ran next, so OT connected to whatever happened to be
+sitting there. Whether it worked came down to how much stack churn followed the
+call, which is why it was survivable on some paths and reliably fatal on
+others.
+
+`remoteAddr` and `sndCall` now live in `OTTransport`, next to the hostname
+fixed in §6. Both are the same mistake: an asynchronous Open Transport call
+does not copy its arguments.
+
+The symptom was a bare `connect failed` with an Open Transport error of 0,
+because a SYN to a nonsense address produces `T_DISCONNECT` — see §10.
+
+## 10. T_DISCONNECT was never consumed, and its reason was thrown away
+
+The notifier recorded `t->lastError = result` for `T_DISCONNECT`, but that
+argument is always 0 for this event: the reason lives in the `TDiscon` that
+`OTRcvDisconnect()` fills in. Every connection refused or reset therefore
+reported "no error", which is why the first round of diagnostics came back
+empty-handed.
+
+Worse, `OTRcvDisconnect()` is not optional. Until the event is consumed the
+endpoint stays in a state where every subsequent call fails with
+`kOTLookErr`. `ot_consume_disconnect()` now does both jobs wherever
+`disconnectReceived` is handled.
+
+## 11. Only the first resolved address was ever tried
+
+`hostInfo.addrs[0]` was used and the rest ignored, so a single refused or
+unreachable address failed the whole connection. Large services rotate through
+many: `login.microsoftonline.com` returns eight. `ot_try_next_address()` now
+walks the list on `T_DISCONNECT` before giving up.

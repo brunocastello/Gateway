@@ -82,6 +82,66 @@ static pascal void ot_notifier(void *context, OTEventCode event,
 }
 
 /*
+ * Consume a pending T_DISCONNECT and record why the peer went away.
+ *
+ * The notifier's `result` argument is 0 for T_DISCONNECT -- the reason lives
+ * in the TDiscon that OTRcvDisconnect() fills in. Calling it is not optional
+ * either: until the event is consumed, every later call on the endpoint fails
+ * with kOTLookErr (Gateway patch - see PATCHES.md).
+ */
+static void ot_consume_disconnect(OTTransport *t)
+{
+    TDiscon discon;
+
+    if (t->endpoint == NULL) return;
+
+    OTMemzero(&discon, sizeof(discon));
+    discon.udata.maxlen = 0;
+    discon.udata.len    = 0;
+    discon.udata.buf    = NULL;
+
+    if (OTRcvDisconnect(t->endpoint, &discon) == noErr && discon.reason != 0)
+        t->lastError = discon.reason;
+}
+
+/*
+ * Issue OTConnect for hostInfo.addrs[t->addrIndex].
+ * Returns true when the attempt started.
+ */
+static Boolean ot_connect_current(OTTransport *t)
+{
+    OTInitInetAddress(&t->remoteAddr, t->port,
+                      t->hostInfo.addrs[t->addrIndex]);
+    OTMemzero(&t->sndCall, sizeof(t->sndCall));
+    t->sndCall.addr.maxlen = sizeof(t->remoteAddr);
+    t->sndCall.addr.len    = sizeof(t->remoteAddr);
+    t->sndCall.addr.buf    = (unsigned char *)&t->remoteAddr;
+
+    t->connectComplete = false;
+    t->disconnectReceived = false;
+
+    t->lastError = OTConnect(t->endpoint, &t->sndCall, NULL);
+    /* kOTNoDataErr means "started, not finished yet" — that is success here. */
+    return (t->lastError == noErr || t->lastError == kOTNoDataErr);
+}
+
+/*
+ * A refused or unreachable address is not the end of the story: a resolver
+ * commonly hands back several, and large services rotate through them. Move on
+ * to the next one rather than failing the whole connection (Gateway patch -
+ * see PATCHES.md).
+ */
+static Boolean ot_try_next_address(OTTransport *t)
+{
+    while (t->addrIndex + 1 < kMaxHostAddrs) {
+        t->addrIndex++;
+        if (t->hostInfo.addrs[t->addrIndex] == 0) return false;
+        if (ot_connect_current(t)) return true;
+    }
+    return false;
+}
+
+/*
  * Set up a TCP endpoint.
  *
  * OTOpenEndpointInContext creates an endpoint bound to a "configuration."
@@ -258,6 +318,7 @@ OTTransportState ot_transport_pump(OTTransport *t)
             break;
         }
         if (t->disconnectReceived) {
+            ot_consume_disconnect(t);
             t->state = kOTTransport_Error;
             break;
         }
@@ -279,20 +340,11 @@ OTTransportState ot_transport_pump(OTTransport *t)
              * completes successfully.
              */
             {
-                InetAddress remoteAddr;
-                TCall       sndCall;
-
-                OTInitInetAddress(&remoteAddr, t->port,
-                                  t->hostInfo.addrs[0]);
-                OTMemzero(&sndCall, sizeof(sndCall));
-                sndCall.addr.maxlen = sizeof(remoteAddr);
-                sndCall.addr.len    = sizeof(remoteAddr);
-                sndCall.addr.buf    = (unsigned char *)&remoteAddr;
-
-                t->lastError = OTConnect(t->endpoint, &sndCall, NULL);
-                if (t->lastError != noErr &&
-                    t->lastError != kOTNoDataErr) {
-                    /* kOTNoDataErr means "started, not done yet" — good */
+                /* t->remoteAddr and t->sndCall live in the transport, never on
+                 * the stack: this call is asynchronous and OT dereferences
+                 * them after we have returned. */
+                t->addrIndex = 0;
+                if (!ot_connect_current(t)) {
                     t->state = kOTTransport_Error;
                     break;
                 }
@@ -308,6 +360,9 @@ OTTransportState ot_transport_pump(OTTransport *t)
             break;
         }
         if (t->disconnectReceived) {
+            ot_consume_disconnect(t);
+            /* That address refused us; the resolver may have given others. */
+            if (ot_try_next_address(t)) break;
             t->state = kOTTransport_Error;
             break;
         }
@@ -318,6 +373,7 @@ OTTransportState ot_transport_pump(OTTransport *t)
 
     case kOTTransport_Connected:
         if (t->disconnectReceived) {
+            ot_consume_disconnect(t);
             t->state = kOTTransport_Error;
             break;
         }

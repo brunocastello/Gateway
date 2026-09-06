@@ -54,6 +54,20 @@ typedef struct {
      */
     char            host[256];
 
+    /*
+     * The address and call structure OTConnect() is given. Like the hostname
+     * above, these must outlive the call: OTConnect on an asynchronous
+     * endpoint returns immediately and Open Transport reads the address later,
+     * when it actually sends the SYN. They used to be locals in
+     * ot_transport_pump(), so the frame was gone by then (Gateway patch - see
+     * PATCHES.md).
+     */
+    InetAddress     remoteAddr;
+    TCall           sndCall;
+
+    /* Which of hostInfo.addrs we are currently trying. */
+    int             addrIndex;
+
     /* State tracking */
     OTTransportState state;
     volatile OSStatus lastError;
