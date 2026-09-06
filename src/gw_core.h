@@ -28,6 +28,9 @@ long        GW_LogGeneration(void);
 
 /* The Phase 1 debug line: negotiated TLS version and last HTTP status. */
 void        GW_SetStatus(const char *fmt, ...);
+
+/* Append a line to the log the window shows. */
+void        GW_Log(const char *fmt, ...);
 const char *GW_StatusLine(void);
 
 int         GW_ActiveSessions(void);
@@ -44,6 +47,9 @@ void        GW_LoadSettings(void);
  * show_window setting; defaults to showing.
  */
 int         GW_ShowWindowPref(void);
+
+/* Remember the choice, so the next launch starts the way this one ended. */
+void        GW_SetShowWindowPref(int show);
 int         GW_HttpPort(void);
 int         GW_ImapPort(void);
 int         GW_PopPort(void);

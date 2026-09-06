@@ -47,6 +47,21 @@ const short kQuitItem  = 3;
 const short kFlagHasBundle    = 0x2000;
 const short kFlagHasBeenInited = 0x0100;
 
+/*
+ * SIZE resource flag. A background-only application has no menu bar and no
+ * windows, and the Process Manager keeps it out of the Application menu --
+ * which is what keeps it out of a dock such as A-Dock.
+ */
+const short kOnlyBackgroundFlag = 0x0400;
+
+/*
+ * The application's own resource file, captured before anything else can
+ * change the current one. Gateway edits its SIZE resource through this and
+ * never closes it: the Resource Manager hands back the map that is already
+ * open, so closing it would take the application's own resources with it.
+ */
+short gAppResFile = 0;
+
 const short kWinWidth   = 520;
 const short kWinHeight  = 340;
 
@@ -116,8 +131,93 @@ void EnsureBundleBit()
 
     finder.fdFlags |= kFlagHasBundle;
     finder.fdFlags &= ~kFlagHasBeenInited;
-    if (FSpSetFInfo(&spec, &finder) == noErr)
-        GW_SetStatus("icon registered - rebuild the desktop to see it");
+    FSpSetFInfo(&spec, &finder);
+}
+
+/* True when the Process Manager launched us as a background-only process. */
+bool RunningFaceless()
+{
+    ProcessSerialNumber psn;
+    ProcessInfoRec      info;
+    FSSpec              spec;
+
+    psn.highLongOfPSN = 0;
+    psn.lowLongOfPSN  = kCurrentProcess;
+
+    std::memset(&info, 0, sizeof(info));
+    info.processInfoLength = sizeof(info);
+    info.processName       = nullptr;
+    info.processAppSpec    = &spec;
+
+    if (GetProcessInformation(&psn, &info) != noErr) return false;
+    return (info.processMode & modeOnlyBackground) != 0;
+}
+
+/*
+ * Set or clear onlyBackground in our own SIZE resource.
+ *
+ * Whether an application shows up in the Application menu is decided by the
+ * Process Manager when it launches, so this cannot take effect until the next
+ * launch -- which is how classic applications have always handled it.
+ *
+ * The edit goes through the resource map the Process Manager already opened
+ * for us. Reopening the file is what broke this the first time: the Resource
+ * Manager returns the existing refNum rather than a second one, so closing it
+ * closed the application's own resources. Nothing here closes anything, and a
+ * read-only fork simply fails the write and is reported.
+ *
+ * SIZE(0) is what the Finder writes after someone edits the memory settings
+ * in Get Info, and it takes precedence over SIZE(-1); both are updated when
+ * both are present.
+ */
+bool SetFacelessFlag(bool on, OSErr *errOut)
+{
+    const short ids[2] = { 0, -1 };
+    short saved = CurResFile();
+    bool  changed = false;
+
+    *errOut = noErr;
+    if (gAppResFile == 0) return false;
+
+    UseResFile(gAppResFile);
+    for (int i = 0; i < 2; i++) {
+        Handle h = Get1Resource('SIZE', ids[i]);
+        short  flags, want;
+
+        if (h == nullptr || GetHandleSize(h) < 2) continue;
+
+        flags = *reinterpret_cast<short *>(*h);
+        want = on ? static_cast<short>(flags | kOnlyBackgroundFlag)
+                  : static_cast<short>(flags & ~kOnlyBackgroundFlag);
+        if (want == flags) continue;
+
+        *reinterpret_cast<short *>(*h) = want;
+        ChangedResource(h);
+        if (ResError() != noErr) { *errOut = ResError(); continue; }
+
+        WriteResource(h);
+        if (ResError() != noErr) { *errOut = ResError(); continue; }
+
+        changed = true;
+    }
+    if (changed) UpdateResFile(gAppResFile);
+    UseResFile(saved);
+    return changed;
+}
+
+/* Bring the SIZE resource into line with the setting, and say so only when
+ * something actually changed and the user needs to act on it. */
+void ApplyFacelessSetting(bool showWindow)
+{
+    OSErr err = noErr;
+
+    if (SetFacelessFlag(!showWindow, &err)) {
+        GW_Log(showWindow
+                    ? "relaunch to show Gateway in the Application menu"
+                    : "relaunch to run Gateway without a window");
+    } else if (err != noErr) {
+        GW_Log("could not update Gateway's SIZE resource (%d)", (int)err);
+    }
 }
 
 class GatewayApp;
@@ -129,7 +229,8 @@ class GatewayApp {
 public:
     GatewayApp()
         : mWindow(nullptr), mAppleMenu(nullptr), mFileMenu(nullptr),
-          mDone(false), mRunning(false), mSeenGeneration(-1) {}
+          mDone(false), mRunning(false), mFaceless(false),
+          mSeenGeneration(-1) {}
 
     bool Start()
     {
@@ -137,18 +238,31 @@ public:
 
         GW_LoadSettings();
         wantWindow = GW_ShowWindowPref() != 0;
+        mFaceless = RunningFaceless();
 
         mRunning = GW_Init() != 0;
 
-        /* Nowhere to report a problem without a window, so if the core will
-         * not start, show one regardless of the setting. */
-        if (!mRunning) wantWindow = true;
+        /*
+         * A faceless process has no menu bar and no windows -- that is what
+         * keeps it out of the Application menu and out of A-Dock. It is also
+         * the only state Gateway cannot report a failure from, so if the core
+         * will not start, come up visible regardless.
+         */
+        if (!mRunning && !mFaceless) wantWindow = true;
 
-        /* The menu bar stays either way: it is how Gateway is quit. */
-        SetUpMenus();
-        if (wantWindow) SetUpWindow();
+        if (!mFaceless) {
+            SetUpMenus();               /* the menu bar is how Gateway quits */
+            if (wantWindow) SetUpWindow();
+        }
 
         EnsureBundleBit();
+        ApplyFacelessSetting(wantWindow);
+
+        if (mFaceless) {
+            GW_SetStatus("running without a window");
+            if (wantWindow)
+                GW_Log("prefs ask for a window: quit and relaunch to get one");
+        }
 
         gApp = this;
         AEInstallEventHandler(kCoreEventClass, kAEQuitApplication,
@@ -370,17 +484,26 @@ private:
     void ToggleWindow()
     {
         Str255 title;
+        bool   showing;
 
         if (mWindow != nullptr) {
             DisposeWindow(mWindow);
             mWindow = nullptr;
+            showing = false;
             ToPascal("Show Window/H", title);
         } else {
             SetUpWindow();
             Redraw();
+            showing = true;
             ToPascal("Hide Window/H", title);
         }
         if (mFileMenu != nullptr) SetMenuItemText(mFileMenu, kHideItem, title);
+
+        /* Remember the choice, and line the SIZE resource up with it so the
+         * next launch starts the way this one ended. */
+        GW_SetShowWindowPref(showing ? 1 : 0);
+        ApplyFacelessSetting(showing);
+        if (mWindow != nullptr) Redraw();
     }
 
     void HandleEvent(EventRecord &event)
@@ -543,6 +666,7 @@ private:
     MenuHandle    mFileMenu;
     bool          mDone;
     bool          mRunning;
+    bool          mFaceless;
     long          mSeenGeneration;
 };
 
@@ -572,6 +696,10 @@ pascal OSErr HandleQuitEvent(const AppleEvent *event, AppleEvent *reply,
 
 int main()
 {
+    /* Before anything can change the current resource file: Gateway edits its
+     * own SIZE resource through this refNum and must never close it. */
+    gAppResFile = CurResFile();
+
     InitGraf(&qd.thePort);
     InitFonts();
     InitWindows();

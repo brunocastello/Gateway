@@ -238,6 +238,23 @@ compiler. `.github/workflows/host-tests.yml` runs those tests **and** greps the
 directory for platform includes, so the rule fails the build rather than
 drifting.
 
+## 8a. Faceless operation
+
+Whether an application appears in the Application menu — and therefore in a
+dock such as A-Dock — is decided by the Process Manager from the `SIZE`
+resource at launch. There is no runtime call for it, so `show_window` is
+applied by editing Gateway's own `SIZE` resource, taking effect at the next
+launch.
+
+That edit goes through the resource map the Process Manager already opened.
+Reopening the file with `FSpOpenResFile` is what broke it the first time: the
+Resource Manager returns the **existing** refNum rather than a second one, so
+the matching `CloseResFile` closed the application's own resources and the
+next resource access killed the process. Nothing in `SetFacelessFlag()` closes
+anything, `gAppResFile` is captured before anything else can change the
+current resource file, and a read-only fork simply fails the write and is
+reported to the log.
+
 ## 9. Known gaps
 
 * ~~**SMTP STARTTLS on port 587.**~~ Closed. Certainly gained
@@ -271,8 +288,11 @@ drifting.
 * **Content codings.** Gateway sends `Accept-Encoding: identity` upstream. An
   origin that ignores that and gzips anyway will have its bytes passed through
   undecoded.
-* **Untested on hardware beyond the HTTPS path.** The `CONNECT` tunnel and
-  both mail splices have not faced a real client yet.
+* **The `CONNECT` tunnel is unverified.** Module 1 shape 3 is implemented and
+  reachable, but there is no git client for Mac OS 9 to point at it, so
+  nothing has ever opened a tunnel through it in anger. Phase 3's "raw
+  CONNECT verification for git" stays open for that reason rather than for
+  want of code.
 * **Asynchronous OT calls do not copy their arguments.** This bit twice, and it
   is the single most important thing to know when touching this code.
   `OTInetStringToAddress` reads the hostname when the resolver runs, and

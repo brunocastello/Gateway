@@ -49,13 +49,18 @@ local_password = change-me
 #
 # Note the SMTP host: personal Outlook.com / Hotmail accounts use
 # smtp-mail.outlook.com, not smtp.office365.com.
-imap_host          = outlook.office365.com
+# The hostnames come from the provider setting below, so these are only
+# needed to override it.
 imap_upstream_port = 993
-pop_host           = outlook.office365.com
 pop_upstream_port  = 995
-smtp_host          = smtp-mail.outlook.com
 smtp_upstream_port = 587
 smtp_starttls      = 1
+
+# ---------------------------------------------------------------- Provider
+# outlook (the default) or gmail. This one line supplies the OAuth endpoint,
+# the scope and the three mail hostnames; anything set explicitly below still
+# wins over it.
+provider            = outlook
 
 # ------------------------------------------------------------------- OAuth
 # Consent happens out of band on a modern machine; Gateway only ever exchanges
@@ -64,11 +69,10 @@ oauth_user          = bfcastello@hotmail.com
 oauth_client_id     = 00000000-0000-0000-0000-000000000000
 # oauth_client_secret is only needed for confidential clients.
 oauth_client_secret =
-oauth_host          = login.microsoftonline.com
-oauth_path          = /common/oauth2/v2.0/token
-# The scope must name every protocol you intend to use. A token issued without
+# The scope comes from the provider setting too. Set it here only to override:
+# it must name every protocol you intend to use, since a token issued without
 # POP.AccessAsUser.All is refused by the POP server even though it is valid.
-oauth_scope         = offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/POP.AccessAsUser.All https://outlook.office.com/SMTP.Send
+# oauth_scope       = ...
 # Gateway rewrites this line itself. Providers hand back a fresh refresh token
 # each time the old one is spent, and the old one's lifetime does not extend,
 # so an unsaved rotation is an account that stops working a few weeks later.
@@ -86,10 +90,17 @@ refresh_token       = paste-your-refresh-token-here
 #
 # That prints the real token, along with the client_id and scope to copy.
 
-# For Gmail instead:
-#   imap_host      = imap.gmail.com
-#   pop_host       = pop.gmail.com
-#   smtp_host      = smtp.gmail.com
-#   oauth_host     = oauth2.googleapis.com
-#   oauth_path     = /token
-#   oauth_scope    = https://mail.google.com/
+# ------------------------------------------------------------------- Gmail
+# Set provider = gmail above and Gateway uses imap.gmail.com, pop.gmail.com,
+# smtp.gmail.com, oauth2.googleapis.com/token and the https://mail.google.com/
+# scope. Two differences from Outlook worth knowing:
+#
+#   - Google's "desktop app" OAuth clients are issued with a client secret.
+#     It is not really secret, but the token endpoint insists on it, so put it
+#     in oauth_client_secret.
+#   - IMAP and POP have to be turned on for the account in Gmail's settings,
+#     under Forwarding and POP/IMAP.
+#
+# Getting the refresh token is the same out-of-band exercise: run
+# email-oauth2-proxy against the account once, then extract it with
+# tools/extract-refresh-token.py.

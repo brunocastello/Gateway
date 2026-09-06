@@ -64,6 +64,12 @@ HTTPMail protocol. SSL stays **off** on every port; Gateway is the one that
 speaks TLS. Authentication is **on** for SMTP. The password you type is checked
 against `local_password` in Gateway's prefs and never leaves the machine.
 
+`provider = outlook` (the default) or `provider = gmail` in the prefs file
+supplies the OAuth endpoint, the scope and all three mail hostnames; anything
+set explicitly still overrides it. Gmail additionally needs
+`oauth_client_secret` — Google issues one even for desktop clients — and IMAP
+or POP enabled on the account under Forwarding and POP/IMAP.
+
 OAuth consent happens out of band on a modern computer. Gateway only ever
 exchanges a refresh token — dropped into its prefs file — for a short-lived
 access token, and reuses that token until it expires.

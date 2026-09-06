@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "portable/gw_prefs.h"
+#include "portable/gw_util.h"
 #include "portable/gw_log.h"
 
 #define GW_PREFS_MAX 8192
@@ -84,6 +85,59 @@ int GWConfig_Loaded(void)
 }
 
 /*
+ * Per-provider defaults.
+ *
+ * Every one of these can still be set explicitly in the prefs file; the table
+ * only supplies what was left out. It exists because the difference between
+ * one mail provider and another is six hostnames and a scope, and getting one
+ * of them wrong produces a failure that looks like a bad password.
+ */
+typedef struct {
+    const char *key;
+    const char *outlook;
+    const char *gmail;
+} GWProviderDefault;
+
+static const GWProviderDefault kProviderDefaults[] = {
+    { "oauth_host",  "login.microsoftonline.com",  "oauth2.googleapis.com" },
+    { "oauth_path",  "/common/oauth2/v2.0/token",  "/token" },
+    { "oauth_scope",
+      "offline_access https://outlook.office.com/IMAP.AccessAsUser.All "
+      "https://outlook.office.com/POP.AccessAsUser.All "
+      "https://outlook.office.com/SMTP.Send",
+      "https://mail.google.com/" },
+    { "imap_host",   "outlook.office365.com",      "imap.gmail.com" },
+    { "pop_host",    "outlook.office365.com",      "pop.gmail.com" },
+    { "smtp_host",   "smtp-mail.outlook.com",      "smtp.gmail.com" },
+    { NULL, NULL, NULL }
+};
+
+/* The default for key under the configured provider, or NULL if there is
+ * none. Never consults the provider setting itself, which would recurse. */
+static const char *gw_provider_default(const char *key)
+{
+    char provider[32];
+    int  gmail, i;
+
+    if (!sLoaded) return NULL;
+    if (gw_stricmp(key, "provider") == 0) return NULL;
+
+    if (!gw_prefs_get(sText, (size_t)sLen, "provider",
+                      provider, sizeof(provider)))
+        provider[0] = '\0';
+
+    gmail = (gw_stricmp(provider, "gmail") == 0 ||
+             gw_stricmp(provider, "google") == 0);
+
+    for (i = 0; kProviderDefaults[i].key != NULL; i++) {
+        if (gw_stricmp(kProviderDefaults[i].key, key) == 0)
+            return gmail ? kProviderDefaults[i].gmail
+                         : kProviderDefaults[i].outlook;
+    }
+    return NULL;
+}
+
+/*
  * Callers routinely hold two or three settings at once (host, user, token),
  * so hand out a small rotation of buffers rather than one shared slot.
  *
@@ -107,6 +161,11 @@ const char *GWConfig_Str(const char *key, const char *def)
 
     if (gw_prefs_get(sText, (size_t)sLen, key, slot, GW_CFG_VALUE))
         return slot;
+
+    {
+        const char *fallback = gw_provider_default(key);
+        if (fallback != NULL) return fallback;
+    }
     return def;
 }
 

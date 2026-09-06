@@ -36,6 +36,11 @@ int GW_ShowWindowPref(void)
     return GWConfig_Num("show_window", 1) != 0;
 }
 
+void GW_SetShowWindowPref(int show)
+{
+    GWConfig_Set("show_window", show ? "1" : "0");
+}
+
 int GW_Init(void)
 {
     OSStatus err;
@@ -73,6 +78,7 @@ int GW_Init(void)
         return 0;
     }
 
+    gw_log("provider: %s", GWConfig_Str("provider", "outlook"));
     gw_log("mail upstream: imap %s:%ld, pop %s:%ld",
            GWConfig_Str("imap_host", "outlook.office365.com"),
            GWConfig_Num("imap_upstream_port", 993),
@@ -153,6 +159,17 @@ int         GW_SmtpPort(void)        { return sSmtpPort; }
 int GW_ActiveSessions(void)
 {
     return GWProxy_ActiveCount() + GWMail_ActiveCount();
+}
+
+void GW_Log(const char *fmt, ...)
+{
+    char    line[GW_LOG_WIDTH];
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    gw_log("%s", line);
 }
 
 void GW_SetStatus(const char *fmt, ...)
