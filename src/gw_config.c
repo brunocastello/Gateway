@@ -219,6 +219,13 @@ int GWConfig_Set(const char *key, const char *value)
     return 1;
 }
 
+int GWConfig_GetNth(const char *key, int n, char *out, size_t cap)
+{
+    if (cap) out[0] = '\0';
+    if (!sLoaded) return 0;
+    return gw_prefs_get_nth(sText, (size_t)sLen, key, n, out, cap);
+}
+
 long GWConfig_Num(const char *key, long def)
 {
     if (!sLoaded) return def;

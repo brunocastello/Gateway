@@ -115,6 +115,7 @@ add_library(gw_portable STATIC
     src/portable/gw_oauth.c
     src/portable/gw_prefs.c
     src/portable/gw_log.c
+    src/portable/gw_wayback.c
 )
 target_include_directories(gw_portable PUBLIC src/portable)
 target_compile_options(gw_portable PRIVATE -Wall -Wextra -Wno-unused-parameter)

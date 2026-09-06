@@ -18,6 +18,7 @@
 #include "gw_prefs.h"
 #include "gw_url.h"
 #include "gw_util.h"
+#include "gw_wayback.h"
 
 static int sFailures;
 static int sChecks;
@@ -225,7 +226,7 @@ static void test_response(void)
         check(res.status == 200, "status");
         check(res.chunked == 1, "chunked detected");
 
-        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 0);
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 0, 0);
         out[n] = '\0';
         check(strstr(out, "HTTP/1.1 200 OK\r\n") == out, "status line survives");
         check(strstr(out, "Transfer-Encoding") == NULL,
@@ -252,7 +253,7 @@ static void test_response(void)
               "media response parses");
         check(!res.chunked, "media response is not chunked");
 
-        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 1);
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 1, 0);
         out[n] = '\0';
         check(strstr(out, "Content-Length: 15728640\r\n") != NULL,
               "Content-Length survives when the body is untouched");
@@ -261,10 +262,29 @@ static void test_response(void)
         check(strstr(out, "keep-alive") == NULL,
               "Connection is still dropped");
 
-        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 0);
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 0, 0);
         out[n] = '\0';
         check(strstr(out, "Content-Length") == NULL,
               "Content-Length is dropped when de-chunking would change it");
+    }
+
+    /* Stripping the charset parameter, for browsers that choke on it. */
+    {
+        static const char r[] =
+            "HTTP/1.0 200 OK\r\n"
+            "Content-Type: text/html; charset=utf-8\r\n\r\n";
+        gw_http_parse_response(r, sizeof(r) - 1, &res);
+
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 1, 0);
+        out[n] = '\0';
+        check(strstr(out, "charset=utf-8") != NULL,
+              "the charset is kept when encoding is allowed");
+
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 1, 1);
+        out[n] = '\0';
+        check(strstr(out, "Content-Type: text/html\r\n") != NULL,
+              "the charset parameter is cut off");
+        check(strstr(out, "charset") == NULL, "and nothing of it remains");
     }
 
     /* Which redirects Gateway follows itself. */
@@ -651,6 +671,233 @@ static void test_prefs(void)
     }
 }
 
+static void test_glob(void)
+{
+    puts("gw_glob_match");
+
+    check(gw_glob_match("frogfind.com", "frogfind.com"), "exact match");
+    check(!gw_glob_match("frogfind.com", "frogfind.org"), "different TLD");
+    check(gw_glob_match("FrogFind.com", "frogfind.com"), "case-insensitive");
+
+    check(gw_glob_match("*.frogfind.com", "www.frogfind.com"), "leading star");
+    check(gw_glob_match("*.frogfind.com", "a.b.frogfind.com"),
+          "star spans dots");
+    check(!gw_glob_match("*.frogfind.com", "frogfind.com"),
+          "leading star needs a label, as the shell does");
+    check(!gw_glob_match("*.frogfind.com", "evil-frogfind.com"),
+          "star does not match across the dot boundary it anchors");
+
+    check(gw_glob_match("*", "anything.at.all"), "bare star matches all");
+    check(gw_glob_match("*", ""), "bare star matches empty");
+    check(gw_glob_match("68k.news", "68k.news"), "digits and dots");
+    check(gw_glob_match("?8k.news", "68k.news"), "question mark matches one");
+    check(!gw_glob_match("?8k.news", "168k.news"),
+          "question mark matches exactly one");
+
+    /* The pattern that would send the live web to the archive if it misfired. */
+    check(!gw_glob_match("*.macos9lives.com", "macos9lives.com.evil.test"),
+          "a suffix pattern does not match a prefix of a longer host");
+    check(gw_glob_match("*.nina.chat", "escargot.nina.chat"), "real entry");
+
+    check(gw_glob_match("a*b*c", "abc"), "several stars, minimal");
+    check(gw_glob_match("a*b*c", "axxbyyc"), "several stars, spread out");
+    check(!gw_glob_match("a*b*c", "axxbyy"), "several stars, missing tail");
+}
+
+static void test_wayback(void)
+{
+    char stamp[GW_WB_STAMP];
+    char original[GW_MAX_PATH];
+    char out[GW_MAX_PATH];
+    GWUrl origin;
+
+    puts("gw_wayback");
+
+    /* Building the archive request. */
+    check(gw_url_split("http://www.example.com/page.html", 32, &origin),
+          "origin URL parses");
+    check(gw_wayback_path("20011231", &origin, out, sizeof(out)) > 0,
+          "archive path builds");
+    check_str(out, "/web/20011231id_/http://www.example.com/page.html",
+              "archive path uses the id_ modifier");
+
+    check(gw_url_split("http://93.245.69.158:8080/watch?v=x", 35, &origin),
+          "origin with a port parses");
+    gw_wayback_path("2001", &origin, out, sizeof(out));
+    check_str(out, "/web/2001id_/http://93.245.69.158:8080/watch?v=x",
+              "a non-default port is kept in the archived URL");
+
+    /* Taking an archive URL apart, rooted and absolute. */
+    {
+        static const char rooted[] =
+            "/web/20011231120000/http://www.example.com/page.html";
+        check(gw_wayback_parse(rooted, sizeof(rooted) - 1, stamp, sizeof(stamp),
+                               original, sizeof(original)),
+              "rooted archive URL parses");
+        check_str(stamp, "20011231120000", "snapshot timestamp");
+        check_str(original, "http://www.example.com/page.html",
+                  "original URL recovered");
+    }
+    {
+        static const char absolute[] =
+            "https://web.archive.org/web/19970822000000id_/http://a.test/";
+        check(gw_wayback_parse(absolute, sizeof(absolute) - 1, stamp,
+                               sizeof(stamp), original, sizeof(original)),
+              "absolute archive URL parses");
+        check_str(stamp, "19970822000000", "modifier is not part of the stamp");
+        check_str(original, "http://a.test/", "original URL recovered");
+    }
+    {
+        static const char plain[] = "http://www.example.com/not-an-archive";
+        check(!gw_wayback_parse(plain, sizeof(plain) - 1, stamp, sizeof(stamp),
+                                original, sizeof(original)),
+              "an ordinary URL is not mistaken for an archive one");
+    }
+
+    /* Dates. */
+    check(gw_wayback_daynum("19700101") == 0, "the epoch is day zero");
+    check(gw_wayback_daynum("19700102") == 1, "the next day");
+    check(gw_wayback_daynum("20011231") - gw_wayback_daynum("20011201") == 30,
+          "December has 31 days");
+    check(gw_wayback_daynum("20000301") - gw_wayback_daynum("20000201") == 29,
+          "2000 was a leap year");
+    check(gw_wayback_daynum("19000301") - gw_wayback_daynum("19000201") == 28,
+          "1900 was not");
+    check(gw_wayback_daynum("2001") == gw_wayback_daynum("20010101"),
+          "a bare year means the first of January");
+    check(gw_wayback_daynum("200106") == gw_wayback_daynum("20010601"),
+          "a bare month means the first");
+    check(gw_wayback_daynum("20011231120000") == gw_wayback_daynum("20011231"),
+          "the time of day is ignored");
+    check(gw_wayback_daynum("nonsense") == -1, "rubbish is rejected");
+
+    /* Tolerance: only newer snapshots are refused. */
+    check(gw_wayback_in_tolerance("20011231", "20011231000000", 730),
+          "the exact date is in range");
+    check(gw_wayback_in_tolerance("20011231", "19970822000000", 730),
+          "an older snapshot is always accepted");
+    check(gw_wayback_in_tolerance("20011231", "20021231000000", 730),
+          "a year newer is inside a 730-day tolerance");
+    check(!gw_wayback_in_tolerance("20011231", "20051231000000", 730),
+          "four years newer is outside it");
+    check(gw_wayback_in_tolerance("20011231", "20251231000000", 0),
+          "a tolerance of zero accepts anything");
+
+    /* GeoCities. */
+    check(gw_wayback_geocities_host("www.geocities.com", out, sizeof(out)),
+          "geocities is rewritten");
+    check_str(out, "www.oocities.org", "geocities becomes oocities");
+    check(gw_wayback_geocities_host("SoHo.geocities.com", out, sizeof(out)),
+          "a geocities neighbourhood is rewritten");
+    check_str(out, "SoHo.oocities.org", "the subdomain is preserved");
+    check(!gw_wayback_geocities_host("www.example.com", out, sizeof(out)),
+          "other hosts are left alone");
+
+    /* The settings form. */
+    {
+        GWWaybackSettings set;
+        char target[GW_MAX_PATH];
+        static const char q[] =
+            "date=20011231&dateTolerance=730&targetUrl=frogfind.com"
+            "&gcFix=on&quickImages=on&ctEncoding=on";
+
+        memset(&set, 0, sizeof(set));
+        check(gw_wayback_apply_query(q, sizeof(q) - 1, &set,
+                                     target, sizeof(target)),
+              "targetUrl asks for a redirect");
+        check_str(set.date, "20011231", "date applied");
+        check(set.tolerance == 730, "tolerance applied");
+        check(set.geocities && set.quick_images && set.ct_encoding,
+              "checkboxes that are present read as on");
+        check_str(target, "http://frogfind.com",
+                  "a bare hostname gets a scheme");
+    }
+    {
+        /* Unchecked boxes are absent, not "off". */
+        GWWaybackSettings set;
+        char target[GW_MAX_PATH];
+        static const char q[] = "date=1997&dateTolerance=0";
+
+        memset(&set, 0, sizeof(set));
+        set.geocities = set.quick_images = set.ct_encoding = 1;
+        check(!gw_wayback_apply_query(q, sizeof(q) - 1, &set,
+                                      target, sizeof(target)),
+              "no targetUrl means no redirect");
+        check(!set.geocities && !set.quick_images && !set.ct_encoding,
+              "an absent checkbox reads as off");
+        check_str(set.date, "1997", "a bare year is kept as given");
+    }
+    {
+        /* An escaped URL must survive intact. */
+        GWWaybackSettings set;
+        char target[GW_MAX_PATH];
+        static const char q[] =
+            "targetUrl=http%3A%2F%2Fa.test%2Fx%3Fy%3D1%26z%3D2";
+
+        memset(&set, 0, sizeof(set));
+        check(gw_wayback_apply_query(q, sizeof(q) - 1, &set,
+                                     target, sizeof(target)),
+              "escaped targetUrl parses");
+        check_str(target, "http://a.test/x?y=1&z=2",
+                  "percent-escapes are decoded");
+    }
+
+    /* The page itself has to render into a sane amount of space. */
+    {
+        GWWaybackSettings set;
+        static char page[4096];
+        size_t n;
+
+        memset(&set, 0, sizeof(set));
+        strcpy(set.date, "20011231");
+        set.tolerance = 730;
+        set.geocities = 1;
+
+        n = gw_wayback_settings_page(&set, page, sizeof(page));
+        check(n > 0, "settings page renders");
+        check(strstr(page, "name=\"date\"") != NULL, "date field present");
+        check(strstr(page, "name=\"dateTolerance\"") != NULL,
+              "tolerance field present");
+        check(strstr(page, "name=\"targetUrl\"") != NULL,
+              "targetUrl field present");
+        check(strstr(page, "value=\"20011231\"") != NULL,
+              "the current date is filled in");
+        check(strstr(page, "name=\"gcFix\" checked") != NULL,
+              "an enabled checkbox renders checked");
+        check(strstr(page, "name=\"quickImages\"> ") != NULL,
+              "a disabled checkbox renders unchecked");
+        check(strstr(page, "method=\"get\" action=\"/\"") != NULL,
+              "the form is a GET to /, so it can be bookmarked");
+        check(strstr(page, "<script") == NULL, "no script for period browsers");
+    }
+}
+
+static void test_query(void)
+{
+    char v[128];
+    static const char q[] = "a=1&bee=two+words&c=&d=%2Fslash%2F&flag";
+
+    puts("gw_url query");
+
+    check(gw_url_query_get(q, sizeof(q) - 1, "a", v, sizeof(v)) &&
+          strcmp(v, "1") == 0, "first field");
+    check(gw_url_query_get(q, sizeof(q) - 1, "bee", v, sizeof(v)) &&
+          strcmp(v, "two words") == 0, "plus decodes to a space");
+    check(gw_url_query_get(q, sizeof(q) - 1, "c", v, sizeof(v)) &&
+          v[0] == '\0', "an empty value is still present");
+    check(gw_url_query_get(q, sizeof(q) - 1, "d", v, sizeof(v)) &&
+          strcmp(v, "/slash/") == 0, "percent escapes decode");
+    check(!gw_url_query_get(q, sizeof(q) - 1, "missing", v, sizeof(v)),
+          "an absent field reports absent");
+
+    check(gw_url_query_has(q, sizeof(q) - 1, "flag"),
+          "a bare name with no '=' counts as present");
+    check(!gw_url_query_has(q, sizeof(q) - 1, "fla"),
+          "a prefix of a field name does not match");
+    check(!gw_url_query_has(q, sizeof(q) - 1, "ee"),
+          "a suffix of a field name does not match");
+}
+
 int main(void)
 {
     test_util();
@@ -662,6 +909,9 @@ int main(void)
     test_mailcmd();
     test_oauth();
     test_prefs();
+    test_glob();
+    test_query();
+    test_wayback();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;

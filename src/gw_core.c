@@ -21,6 +21,9 @@
 #include "proxy/gw_token.h"
 
 static GWListener *sHttp;
+static GWListener *sWayback;
+static int         sWaybackPort;
+static GWWaybackSettings sWaybackSet;
 static GWListener *sImap;
 static GWListener *sPop;
 static GWListener *sSmtp;
@@ -53,6 +56,46 @@ long GW_MaxBodyBytes(void)
 
     if (mb <= 0) return 0;
     return mb * 1024L * 1024L;
+}
+
+int GW_WaybackPort(void) { return sWaybackPort; }
+
+GWWaybackSettings *GW_WaybackSettings(void) { return &sWaybackSet; }
+
+int GW_WaybackServesSettings(void)
+{
+    return GWConfig_Num("wayback_settings", 1) != 0;
+}
+
+void GW_WaybackSave(void)
+{
+    char value[32];
+
+    GWConfig_Set("wayback_date", sWaybackSet.date);
+    snprintf(value, sizeof(value), "%ld", sWaybackSet.tolerance);
+    GWConfig_Set("wayback_tolerance", value);
+    gw_log("wayback: era set to %s +%ld days",
+           sWaybackSet.date, sWaybackSet.tolerance);
+    GW_SetStatus("wayback :%d  %s  +%ldd", sWaybackPort,
+                 sWaybackSet.date, sWaybackSet.tolerance);
+}
+
+int GW_WaybackHostIsLive(const char *host)
+{
+    char pattern[256];
+    int  i;
+
+    /*
+     * The allow-list is the same key repeated, one pattern per line, which
+     * reads far better than one enormous value for the thirty-odd entries
+     * this typically holds.
+     */
+    for (i = 0; i < 128; i++) {
+        if (!GWConfig_GetNth("wayback_live", i, pattern, sizeof(pattern)))
+            break;
+        if (gw_glob_match(pattern, host)) return 1;
+    }
+    return 0;
 }
 
 int GW_MaxSessions(void)
@@ -107,7 +150,25 @@ int GW_Init(void)
     sPopPort  = (int)GWConfig_Num("pop_port", 1995);
     sSmtpPort = (int)GWConfig_Num("smtp_port", 1587);
 
+    /* Module 3's settings start from prefs and are then edited, at runtime,
+     * only through the settings page. */
+    gw_copy_n(sWaybackSet.date, sizeof(sWaybackSet.date),
+              GWConfig_Str("wayback_date", "20011231"),
+              strlen(GWConfig_Str("wayback_date", "20011231")));
+    sWaybackSet.tolerance    = GWConfig_Num("wayback_tolerance", 730);
+    sWaybackSet.geocities    = GWConfig_Num("wayback_geocities", 1) != 0;
+    sWaybackSet.quick_images = GWConfig_Num("wayback_quick_images", 1) != 0;
+    sWaybackSet.ct_encoding  = GWConfig_Num("wayback_ct_encoding", 1) != 0;
+    sWaybackPort = (int)GWConfig_Num("wayback_port", 8888);
+
     sHttp = GWListener_Open((UInt16)sHttpPort, (OTQLen)GW_MaxSessions());
+    if (sWaybackPort > 0) {
+        sWayback = GWListener_Open((UInt16)sWaybackPort,
+                                   (OTQLen)GW_MaxSessions());
+        if (sWayback != NULL)
+            gw_log("wayback: serving %s +%ld days", sWaybackSet.date,
+                   sWaybackSet.tolerance);
+    }
     sImap = GWListener_Open((UInt16)sImapPort, 2);
     sPop  = GWListener_Open((UInt16)sPopPort, 2);
     sSmtp = GWListener_Open((UInt16)sSmtpPort, 2);
@@ -135,6 +196,7 @@ int GW_Init(void)
 void GW_Shutdown(void)
 {
     if (sHttp) { GWListener_Close(sHttp); sHttp = NULL; }
+    if (sWayback) { GWListener_Close(sWayback); sWayback = NULL; }
     if (sImap) { GWListener_Close(sImap); sImap = NULL; }
     if (sPop)  { GWListener_Close(sPop);  sPop  = NULL; }
     if (sSmtp) { GWListener_Close(sSmtp); sSmtp = NULL; }
@@ -152,8 +214,16 @@ void GW_Poll(void)
 
     if (sHttp != NULL) {
         c = GWListener_Poll(sHttp);
-        if (c != NULL && !GWProxy_Accept(c)) {
+        if (c != NULL && !GWProxy_Accept(c, 0)) {
             gw_log("proxy busy, dropped a connection");
+            GWConn_Destroy(c);
+        }
+    }
+
+    if (sWayback != NULL) {
+        c = GWListener_Poll(sWayback);
+        if (c != NULL && !GWProxy_Accept(c, 1)) {
+            gw_log("proxy busy, dropped a wayback connection");
             GWConn_Destroy(c);
         }
     }

@@ -24,6 +24,15 @@ extern "C" {
 int gw_prefs_get(const char *text, size_t len, const char *key,
                  char *out, size_t cap);
 
+/*
+ * The nth occurrence of a key, counting from 0. Prefs are one setting per
+ * line, but a list -- the Wayback allow-list, say -- reads far better as the
+ * same key repeated than as one enormous space-separated value. Returns 1 when
+ * that occurrence exists with a non-empty value.
+ */
+int gw_prefs_get_nth(const char *text, size_t len, const char *key, int n,
+                     char *out, size_t cap);
+
 /* Same, but parses the value as a decimal number. Returns def when absent. */
 long gw_prefs_get_num(const char *text, size_t len, const char *key, long def);
 

@@ -28,11 +28,12 @@ static void gw_prefs_line(const char *text, size_t len, size_t off,
         *next = len;
 }
 
-int gw_prefs_get(const char *text, size_t len, const char *key,
-                 char *out, size_t cap)
+int gw_prefs_get_nth(const char *text, size_t len, const char *key, int n,
+                     char *out, size_t cap)
 {
     size_t off = 0;
     size_t klen = strlen(key);
+    int    seen = 0;
 
     if (cap) out[0] = '\0';
 
@@ -53,20 +54,28 @@ int gw_prefs_get(const char *text, size_t len, const char *key,
                 while (kend > i && (text[kend - 1] == ' ' ||
                                     text[kend - 1] == '\t')) kend--;
                 if (kend - i == klen && gw_strnicmp(text + i, key, klen) == 0) {
-                    vs = ke + 1;
-                    while (vs < line_end && (text[vs] == ' ' ||
-                                             text[vs] == '\t')) vs++;
-                    while (line_end > vs && (text[line_end - 1] == ' ' ||
-                                             text[line_end - 1] == '\t'))
-                        line_end--;
-                    gw_copy_n(out, cap, text + vs, line_end - vs);
-                    return out[0] != '\0';
+                    if (seen++ == n) {
+                        size_t end = line_end;
+                        vs = ke + 1;
+                        while (vs < end && (text[vs] == ' ' ||
+                                            text[vs] == '\t')) vs++;
+                        while (end > vs && (text[end - 1] == ' ' ||
+                                            text[end - 1] == '\t')) end--;
+                        gw_copy_n(out, cap, text + vs, end - vs);
+                        return out[0] != '\0';
+                    }
                 }
             }
         }
         off = next;
     }
     return 0;
+}
+
+int gw_prefs_get(const char *text, size_t len, const char *key,
+                 char *out, size_t cap)
+{
+    return gw_prefs_get_nth(text, len, key, 0, out, cap);
 }
 
 long gw_prefs_get_num(const char *text, size_t len, const char *key, long def)

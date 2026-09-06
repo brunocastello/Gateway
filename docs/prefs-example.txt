@@ -57,6 +57,47 @@ max_sessions   = 8
 # network.http.proxy.use-http-proxy-for-https so https:// URLs come here too.
 http_port      = 8765
 
+# ---------------------------------------------------- Module 3: the archive
+# A second proxy port that serves the web as it was, from the Internet
+# Archive. Point old browsers here and the live-web port stays available on
+# 8765 at the same time -- a browser chooses its era by which proxy it uses.
+#
+# 0 disables the listener and the module with it.
+wayback_port         = 8888
+
+# The era. YYYYMMDD, YYYYMM or YYYY. The settings page rewrites this line, so
+# whatever you last chose in the browser is what comes back after a restart.
+wayback_date         = 20011231
+
+# How many days NEWER than wayback_date a snapshot may be before Gateway
+# refuses it. Older snapshots are always accepted: the archive returning 1999
+# for a 2001 request means that is the best it has. 0 accepts anything.
+wayback_tolerance    = 730
+
+wayback_geocities    = 1    # send geocities.com to its successor, oocities.org
+wayback_ct_encoding  = 1    # 0 strips "; charset=..." from Content-Type
+wayback_settings     = 1    # serve the settings page on web.archive.org
+
+# quick_images exists for settings-page compatibility and does nothing here.
+# It tells the reference proxy to rewrite asset URLs in the HTML; Gateway
+# fetches with the archive's id_ modifier, which returns the original bytes
+# with nothing to rewrite. See docs/module3-wayback.md.
+wayback_quick_images = 1
+
+# Hosts to fetch live instead of from the archive. Repeat the key, one pattern
+# per line; '*' and '?' work and matching is case-insensitive. This is what
+# keeps the modern sites you actually use out of 2001.
+wayback_live = frogfind.com
+wayback_live = *.frogfind.com
+wayback_live = 68k.news
+wayback_live = *.68k.news
+wayback_live = macintoshgarden.org
+wayback_live = *.macintoshgarden.org
+wayback_live = macos9lives.com
+wayback_live = *.macos9lives.com
+wayback_live = *.cornica.org
+wayback_live = lite.cnn.com
+
 # ---------------------------------------------------------------- Module 2
 # Ports Outlook Express 5 connects to. SSL stays OFF in Outlook Express for
 # all of them; Gateway is the one that speaks TLS.

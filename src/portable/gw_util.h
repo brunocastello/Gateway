@@ -49,6 +49,17 @@ long gw_parse_dec(const char *s, size_t len);
 /* Offset of the next line in a header block, given the current offset. */
 size_t gw_next_line(const char *buf, size_t len, size_t off);
 
+/*
+ * Shell-style glob match, case-insensitive: '*' matches any run of characters
+ * including none, '?' matches exactly one. Used against hostnames, so both
+ * sides are short and the recursion is shallow.
+ *
+ * Getting this wrong sends a live site to the archive or an archived one to
+ * the live web, and both look like the site itself is broken -- hence the
+ * unusually thorough tests.
+ */
+int gw_glob_match(const char *pattern, const char *text);
+
 #ifdef __cplusplus
 }
 #endif

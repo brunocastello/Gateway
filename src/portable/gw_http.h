@@ -94,8 +94,14 @@ int gw_http_parse_response(const char *buf, size_t len, GWResponse *res);
  *
  * Returns bytes written, or 0 on overflow.
  */
+/*
+ * strip_charset drops the "; charset=..." parameter from Content-Type. Some
+ * period browsers choke on it; the Wayback settings page exposes this as
+ * "Encoding in Content-Type".
+ */
 size_t gw_http_filter_response(const char *head, size_t head_len,
-                               char *out, size_t cap, int keep_length);
+                               char *out, size_t cap,
+                               int keep_length, int strip_charset);
 
 /*
  * What to do about a redirect the origin sent.

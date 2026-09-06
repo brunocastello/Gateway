@@ -10,6 +10,8 @@
 #ifndef GW_CORE_H
 #define GW_CORE_H
 
+#include "portable/gw_wayback.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -50,6 +52,26 @@ long        GW_MaxBodyBytes(void);
 
 /* How many splices to run at once, from max_sessions. */
 int         GW_MaxSessions(void);
+
+/* ---- Module 3: the Wayback listener ---------------------------------- */
+
+int         GW_WaybackPort(void);
+
+/*
+ * The one set of Wayback settings, shared by every client. Deliberately
+ * global: the workflow is to set an era from the settings page, browse, then
+ * set it again -- see docs/module3-wayback.md section 7a.
+ */
+GWWaybackSettings *GW_WaybackSettings(void);
+
+/* Persist date and tolerance; the checkboxes stay session-only. */
+void        GW_WaybackSave(void);
+
+/* 1 when the host is on the allow-list and should be fetched live. */
+int         GW_WaybackHostIsLive(const char *host);
+
+/* 1 when the settings page should answer on the Wayback listener. */
+int         GW_WaybackServesSettings(void);
 
 /*
  * Read the prefs before the Toolbox side decides what to put on screen.

@@ -42,6 +42,26 @@ int gw_url_split_authority(const char *s, size_t len, unsigned short defport,
                            char *host, size_t host_cap, unsigned short *port);
 
 /*
+ * Percent-decode a URL component in place into out. '+' becomes a space, which
+ * is what a GET form sends. Returns the decoded length.
+ */
+size_t gw_url_decode(const char *src, size_t len, char *out, size_t cap);
+
+/*
+ * Look up a field in an application/x-www-form-urlencoded query string, the
+ * part after '?'. The value is percent-decoded. Returns 1 when the field is
+ * present, even with an empty value.
+ */
+int gw_url_query_get(const char *query, size_t len, const char *name,
+                     char *out, size_t cap);
+
+/*
+ * Whether a field appears at all. Checkboxes on a GET form arrive as "name=on"
+ * and are simply absent when unchecked, so presence is the whole signal.
+ */
+int gw_url_query_has(const char *query, size_t len, const char *name);
+
+/*
  * Resolve a Location header against the request it answered. Handles absolute
  * URIs, absolute paths ("/x") and relative paths ("x"). Returns 1 on success.
  */

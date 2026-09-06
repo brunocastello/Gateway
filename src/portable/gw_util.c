@@ -117,3 +117,29 @@ long gw_parse_dec(const char *s, size_t len)
     }
     return any ? v : -1;
 }
+
+int gw_glob_match(const char *pattern, const char *text)
+{
+    while (*pattern != '\0') {
+        if (*pattern == '*') {
+            pattern++;
+            if (*pattern == '\0') return 1;     /* trailing * takes the rest */
+
+            /* Try every split point, shortest tail first. */
+            while (*text != '\0') {
+                if (gw_glob_match(pattern, text)) return 1;
+                text++;
+            }
+            return gw_glob_match(pattern, text); /* and the empty tail */
+        }
+
+        if (*text == '\0') return 0;
+        if (*pattern != '?' &&
+            gw_lower((unsigned char)*pattern) != gw_lower((unsigned char)*text))
+            return 0;
+
+        pattern++;
+        text++;
+    }
+    return *text == '\0';
+}

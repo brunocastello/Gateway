@@ -251,7 +251,8 @@ int gw_http_parse_response(const char *buf, size_t len, GWResponse *res)
 }
 
 size_t gw_http_filter_response(const char *head, size_t head_len,
-                               char *out, size_t cap, int keep_length)
+                               char *out, size_t cap,
+                               int keep_length, int strip_charset)
 {
     size_t used = 0;
     size_t off = 0;
@@ -271,7 +272,23 @@ size_t gw_http_filter_response(const char *head, size_t head_len,
                 is_named(head + off, line_end - off, "Content-Length"));
 
         if (off == 0 || !drop) {
-            if (!append(out, cap, &used, head + off, line_end - off)) return 0;
+            size_t emit = line_end - off;
+
+            /* Cut "text/html; charset=utf-8" back to "text/html". */
+            if (strip_charset && off != 0 &&
+                is_named(head + off, emit, "Content-Type")) {
+                size_t k;
+                for (k = 0; k < emit; k++) {
+                    if (head[off + k] == ';') {
+                        while (k > 0 && (head[off + k - 1] == ' ' ||
+                                         head[off + k - 1] == '\t')) k--;
+                        emit = k;
+                        break;
+                    }
+                }
+            }
+
+            if (!append(out, cap, &used, head + off, emit)) return 0;
             if (!appends(out, cap, &used, "\r\n")) return 0;
         }
         off = eol < head_len ? eol + 1 : head_len;

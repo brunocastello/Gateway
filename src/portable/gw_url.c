@@ -102,3 +102,85 @@ int gw_url_resolve(const GWUrl *base, const char *loc, size_t loc_len,
     }
     return 1;
 }
+
+static int hexdigit(int ch)
+{
+    if (ch >= '0' && ch <= '9') return ch - '0';
+    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+    if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+    return -1;
+}
+
+size_t gw_url_decode(const char *src, size_t len, char *out, size_t cap)
+{
+    size_t i, o = 0;
+
+    if (cap == 0) return 0;
+
+    for (i = 0; i < len && o + 1 < cap; i++) {
+        if (src[i] == '+') {
+            out[o++] = ' ';
+        } else if (src[i] == '%' && i + 2 < len) {
+            int hi = hexdigit((unsigned char)src[i + 1]);
+            int lo = hexdigit((unsigned char)src[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out[o++] = (char)((hi << 4) | lo);
+                i += 2;
+            } else {
+                out[o++] = src[i];
+            }
+        } else {
+            out[o++] = src[i];
+        }
+    }
+    out[o] = '\0';
+    return o;
+}
+
+/* Locate "name=" in the query, returning the offset of its value. */
+static long query_find(const char *query, size_t len, const char *name,
+                       size_t *val_len)
+{
+    size_t nlen = strlen(name);
+    size_t off = 0;
+
+    while (off < len) {
+        size_t end = off;
+        size_t eq;
+
+        while (end < len && query[end] != '&') end++;
+
+        eq = off;
+        while (eq < end && query[eq] != '=') eq++;
+
+        if (eq - off == nlen && gw_strnicmp(query + off, name, nlen) == 0) {
+            if (eq < end) {
+                *val_len = end - eq - 1;
+                return (long)(eq + 1);
+            }
+            *val_len = 0;               /* bare "name" with no '=' */
+            return (long)end;
+        }
+        off = end < len ? end + 1 : len;
+    }
+    return -1;
+}
+
+int gw_url_query_get(const char *query, size_t len, const char *name,
+                     char *out, size_t cap)
+{
+    size_t val_len = 0;
+    long   at = query_find(query, len, name, &val_len);
+
+    if (cap) out[0] = '\0';
+    if (at < 0) return 0;
+
+    gw_url_decode(query + at, val_len, out, cap);
+    return 1;
+}
+
+int gw_url_query_has(const char *query, size_t len, const char *name)
+{
+    size_t val_len = 0;
+    return query_find(query, len, name, &val_len) >= 0;
+}

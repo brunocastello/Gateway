@@ -21,6 +21,8 @@
 #ifndef GW_CONFIG_H
 #define GW_CONFIG_H
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,6 +34,10 @@ int         GWConfig_Loaded(void);
 
 const char *GWConfig_Str(const char *key, const char *def);
 long        GWConfig_Num(const char *key, long def);
+
+/* The nth occurrence of a repeated key, counting from 0. Returns 1 when it
+ * exists. Used for list-shaped settings such as the Wayback allow-list. */
+int         GWConfig_GetNth(const char *key, int n, char *out, size_t cap);
 
 /*
  * Rewrite one setting and save the file, keeping every other line, its

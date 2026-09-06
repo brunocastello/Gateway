@@ -24,6 +24,8 @@
 #include "../portable/gw_http.h"
 #include "../portable/gw_log.h"
 #include "../portable/gw_url.h"
+#include "../portable/gw_util.h"
+#include "../portable/gw_wayback.h"
 
 #define GW_HEAD_MAX     16384L
 #define GW_RAW_MAX      16384L
@@ -54,6 +56,8 @@ typedef struct {
     GWRequest     req;
     GWUrl         target;
     GWUrl         redirectTo;               /* resolved before deciding to follow */
+    int           wayback;                  /* arrived on the archive listener */
+    GWUrl         waybackOrigin;            /* what the client actually asked for */
     int           redirects;
 
     char         *chead;                    /* client request head           */
@@ -167,6 +171,129 @@ static int session_queue(GWHttpSession *s, const char *data, size_t len)
     return 1;
 }
 
+/* Answer with something Gateway generated, then close. */
+static void session_serve(GWHttpSession *s, const char *type,
+                          const char *body, size_t body_len)
+{
+    int n = snprintf(s->out, (size_t)GW_OUT_MAX,
+                     "HTTP/1.0 200 OK\r\n"
+                     "Content-Type: %s\r\n"
+                     "Content-Length: %lu\r\n"
+                     "Connection: close\r\n\r\n",
+                     type, (unsigned long)body_len);
+
+    if (n < 0 || (size_t)n + body_len >= (size_t)GW_OUT_MAX) {
+        s->state = kHPDone;
+        return;
+    }
+    memcpy(s->out + n, body, body_len);
+    s->outLen = (size_t)n + body_len;
+    s->outSent = 0;
+    s->state = kHPFlushAndClose;
+}
+
+static void session_redirect(GWHttpSession *s, const char *url)
+{
+    int n = snprintf(s->out, (size_t)GW_OUT_MAX,
+                     "HTTP/1.0 302 Found\r\n"
+                     "Location: %s\r\n"
+                     "Content-Length: 0\r\n"
+                     "Connection: close\r\n\r\n", url);
+
+    if (n < 0 || (size_t)n >= (size_t)GW_OUT_MAX) {
+        s->state = kHPDone;
+        return;
+    }
+    s->outLen = (size_t)n;
+    s->outSent = 0;
+    s->state = kHPFlushAndClose;
+}
+
+/*
+ * The settings page, which is the only way to change the era. Served on the
+ * archive's own hostname so existing bookmarks work, and on "gateway" so the
+ * feature does not depend on shadowing a real host.
+ */
+static int wayback_settings(GWHttpSession *s)
+{
+    GWWaybackSettings *set = GW_WaybackSettings();
+    static char page[4096];
+    static char target[GW_MAX_PATH];
+    const char *query = strchr(s->req.url.path, '?');
+    size_t n;
+
+    if (query != NULL) {
+        query++;
+        if (gw_wayback_apply_query(query, strlen(query), set,
+                                   target, sizeof(target))) {
+            GW_WaybackSave();
+            gw_log("#%ld wayback: %s, going to %.40s",
+                   s->id, set->date, target);
+            session_redirect(s, target);
+            return 1;
+        }
+        GW_WaybackSave();
+    }
+
+    n = gw_wayback_settings_page(set, page, sizeof(page));
+    if (n == 0) {
+        session_fail(s, "HTTP/1.0 500 Internal Server Error\r\n"
+                        "Connection: close\r\n\r\n",
+                     "settings page would not fit");
+        return 1;
+    }
+    session_serve(s, "text/html", page, n);
+    return 1;
+}
+
+/*
+ * Point a request at the archive, unless it is for the settings page or for a
+ * host on the allow-list. Returns 1 when the session is already finished.
+ */
+static int wayback_prepare(GWHttpSession *s)
+{
+    GWWaybackSettings *set = GW_WaybackSettings();
+    static char path[GW_MAX_PATH];
+    char host[GW_MAX_HOST];
+
+    if (GW_WaybackServesSettings() &&
+        (gw_stricmp(s->req.url.host, GW_WB_HOST) == 0 ||
+         gw_stricmp(s->req.url.host, "gateway") == 0))
+        return wayback_settings(s);
+
+    if (GW_WaybackHostIsLive(s->req.url.host)) {
+        gw_log("#%ld live: %s", s->id, s->req.url.host);
+        return 0;
+    }
+
+    /* GeoCities is not in the archive so much as at its successor. */
+    if (set->geocities &&
+        gw_wayback_geocities_host(s->req.url.host, host, sizeof(host))) {
+        gw_copy_n(s->req.url.host, sizeof(s->req.url.host), host, strlen(host));
+        s->req.url.tls = 1;
+        s->req.url.port = 443;
+        s->target = s->req.url;
+        gw_log("#%ld geocities -> %s", s->id, host);
+        return 0;
+    }
+
+    s->waybackOrigin = s->req.url;
+    if (gw_wayback_path(set->date, &s->waybackOrigin, path, sizeof(path)) == 0) {
+        session_fail(s, "HTTP/1.0 414 URI Too Long\r\n"
+                        "Connection: close\r\n\r\n",
+                     "archived URL would not fit");
+        return 1;
+    }
+
+    s->req.url.tls = 1;
+    s->req.url.port = 443;
+    gw_copy_n(s->req.url.host, sizeof(s->req.url.host),
+              GW_WB_HOST, strlen(GW_WB_HOST));
+    gw_copy_n(s->req.url.path, sizeof(s->req.url.path), path, strlen(path));
+    s->target = s->req.url;
+    return 0;
+}
+
 static void session_start_upstream(GWHttpSession *s)
 {
     int ok;
@@ -237,6 +364,11 @@ static void step_recv_request(GWHttpSession *s)
            s->req.shape == kGWShapeConnect ? " (CONNECT)" : "");
 
     s->target = s->req.url;
+
+    /* Module 3's only entry point on the request side. */
+    if (s->wayback && s->req.shape != kGWShapeConnect) {
+        if (wayback_prepare(s)) return;
+    }
 
     if (s->req.shape == kGWShapeConnect) {
         if (!GWStream_ConnectPlain(&s->up, s->req.url.host, s->req.url.port)) {
@@ -317,6 +449,59 @@ static void step_send_request(GWHttpSession *s)
     s->state = kHPRecvHead;
 }
 
+static void session_fail(GWHttpSession *s, const char *statusLine,
+                         const char *reason);
+
+/*
+ * Whether to chase this redirect ourselves.
+ *
+ * Normally only when the client could not: plaintext to TLS. The archive is
+ * the exception. Asking for /web/<date>/<url> gets a redirect to the exact
+ * snapshot, and handing that back to the browser would send it to an
+ * archive.org address -- which arrives here again and gets archived a second
+ * time. So Gateway follows that hop itself, and rebuilds the target with the
+ * id_ modifier the archive's own Location leaves off.
+ */
+static int redirect_should_follow(GWHttpSession *s, const GWResponse *res)
+{
+    static char stamp[GW_WB_STAMP];
+    static char original[GW_MAX_PATH];
+    static char rebuilt[GW_MAX_PATH];
+
+    if (s->wayback &&
+        gw_stricmp(s->target.host, GW_WB_HOST) == 0 &&
+        gw_wayback_parse(res->location, strlen(res->location),
+                         stamp, sizeof(stamp),
+                         original, sizeof(original))) {
+        GWWaybackSettings *set = GW_WaybackSettings();
+        int n;
+
+        if (!gw_wayback_in_tolerance(set->date, stamp, set->tolerance)) {
+            gw_log("#%ld snapshot %.8s is outside +%ld days of %s",
+                   s->id, stamp, set->tolerance, set->date);
+            session_fail(s, "HTTP/1.0 404 Not Found\r\n"
+                            "Content-Type: text/html\r\n"
+                            "Connection: close\r\n\r\n"
+                            "<html><body><p>No snapshot of this page near the "
+                            "date Gateway is set to.</p></body></html>\r\n",
+                         "snapshot outside the tolerance");
+            return 0;
+        }
+
+        n = snprintf(rebuilt, sizeof(rebuilt), "/web/%sid_/%s",
+                     stamp, original);
+        if (n > 0 && (size_t)n < sizeof(rebuilt)) {
+            s->redirectTo = s->target;      /* stays on web.archive.org */
+            gw_copy_n(s->redirectTo.path, sizeof(s->redirectTo.path),
+                      rebuilt, (size_t)n);
+            return 1;
+        }
+    }
+
+    return gw_http_should_follow((GWRedirectPolicy)GW_RedirectPolicy(),
+                                 s->target.tls, s->redirectTo.tls);
+}
+
 static void step_recv_head(GWHttpSession *s)
 {
     /* Static rather than automatic: GWResponse carries a 4 KB Location, and
@@ -382,8 +567,7 @@ static void step_recv_head(GWHttpSession *s)
         s->req.shape != kGWShapeConnect &&
         gw_url_resolve(&s->target, res.location, strlen(res.location),
                        &s->redirectTo) &&
-        gw_http_should_follow((GWRedirectPolicy)GW_RedirectPolicy(),
-                              s->target.tls, s->redirectTo.tls)) {
+        redirect_should_follow(s, &res)) {
         if (s->redirects >= GW_MAX_REDIRECT) {
             session_fail(s, "HTTP/1.0 508 Loop Detected\r\n"
                             "Connection: close\r\n\r\n"
@@ -419,9 +603,10 @@ static void step_recv_head(GWHttpSession *s)
     {
         /* Keep the length whenever the body passes through untouched. It is
          * only wrong to forward when de-chunking changes it. */
-        size_t filtered = gw_http_filter_response(s->uhead, res.head_len,
-                                                  s->out, (size_t)GW_OUT_MAX,
-                                                  !res.chunked);
+        size_t filtered = gw_http_filter_response(
+            s->uhead, res.head_len, s->out, (size_t)GW_OUT_MAX,
+            !res.chunked,
+            s->wayback && !GW_WaybackSettings()->ct_encoding);
         if (filtered == 0) {
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
@@ -699,7 +884,7 @@ void GWProxy_Shutdown(void)
     sSessionCount = 0;
 }
 
-int GWProxy_Accept(GWConn *c)
+int GWProxy_Accept(GWConn *c, int wayback)
 {
     int i;
 
@@ -715,6 +900,7 @@ int GWProxy_Accept(GWConn *c)
             return 0;
         }
         GWStream_Adopt(&s->cli, c);
+        s->wayback = wayback;
         s->bodyCap = GW_MaxBodyBytes();
         s->id = ++sNextId;
         s->state = kHPRecvRequest;

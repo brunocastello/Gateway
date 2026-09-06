@@ -21,9 +21,18 @@
 void GWProxy_Init(void);
 void GWProxy_Shutdown(void);
 
-/* Take ownership of an accepted client connection. Returns 0 when every slot
- * is busy, in which case the caller must dispose of the connection. */
-int  GWProxy_Accept(GWConn *c);
+/*
+ * Take ownership of an accepted client connection. Returns 0 when every slot
+ * is busy, in which case the caller must dispose of the connection.
+ *
+ * wayback says which listener it arrived on. That flag is the whole of
+ * Module 3's entry point: a session marked with it has its requests rewritten
+ * to the Internet Archive, and one without it is an ordinary live-web proxy
+ * session. Gateway's own outbound connections -- the OAuth refresh, the mail
+ * upstreams -- never come through here at all, which is what keeps them off
+ * the archive. See docs/module3-wayback.md section 6.
+ */
+int  GWProxy_Accept(GWConn *c, int wayback);
 
 /* One cooperative slice across all live sessions. */
 void GWProxy_Poll(void);
