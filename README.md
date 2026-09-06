@@ -31,6 +31,7 @@ and stays on the same machine; only the modern side crosses the network.
 | IMAP, POP3 and SMTP splices | working, verified end to end against Outlook.com |
 | OAuth refresh, including rotated tokens | working |
 | Gmail as a provider | implemented, not yet tried against a live account |
+| Wayback proxy (Module 3) | designed only — see `docs/module3-wayback.md` |
 
 ## Module 1 — HTTP proxy on `:8765`
 
@@ -153,6 +154,9 @@ third_party/certainly Certainly + BearSSL, vendored (see PATCHES.md)
 third_party/InterfacesAndLibraries
                       Apple's Universal Interfaces, for the Open Transport files
 docs/inventory.md     Phase 0: toolchain shape, memory budget, known gaps
+docs/porting.md       what it would take to run this on Windows or Mac OS X
+docs/module3-wayback.md
+                      design for the Internet Archive proxy, not yet built
 ```
 
 The one structural rule worth knowing before editing anything:

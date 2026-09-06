@@ -255,7 +255,16 @@ proxy has no business owning a window.
 
 ---
 
-## 6. Order of work
+## 6. Module 3 comes along for free
+
+Module 3 (`docs/module3-wayback.md`) is designed to live entirely in
+`src/portable/` plus a listener and two hooks. A Windows or Mac OS X build
+therefore inherits the Wayback proxy without any additional platform work —
+which matters, since the intent is for the classic Windows build to carry it
+too. Build it once, on whichever platform is convenient, and the host test
+suite proves it everywhere.
+
+## 7. Order of work
 
 1. Extract `gw_transport.h` from `gw_net.h` and make the Mac build use it. No
    behaviour change, and it can be verified on hardware before anything moves.

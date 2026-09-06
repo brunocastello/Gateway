@@ -35,6 +35,17 @@
 * Outlook Express 5 setup (Incoming IMAP `:1993` SSL off; Outgoing SMTP `:1587` SSL off, auth on).
 * Local password checked against Gateway prefs; refresh tokens read from a local file (out-of-band OAuth bootstrap). Gate9 only handles token refresh via Certainly and upstream IMAPS (`outlook.office365.com:993` with `AUTHENTICATE XOAUTH2`) / SMTPS (`smtp.office365.com:587` STARTTLS or 465).
 
+### Module 3 — Wayback Proxy (`:8888`, designed, not built)
+* Serve archived pages from the Internet Archive at a configured date, with a
+  glob allow-list of hosts that pass through to the live web.
+* Its own listener (`wayback_port`), not a mode on `:8765`, so the live web and
+  the archive are both available at once and a browser chooses between them by
+  proxy setting alone.
+* Design, decisions and prior verification: **`docs/module3-wayback.md`**.
+* Compatible by design with the settings URL of `richardg867/WaybackProxy`, so
+  existing bookmarks keep working. That project is GPL-3 and Gateway is MIT, so
+  the implementation must be independent of its source.
+
 ---
 
 ## Non-Goals
