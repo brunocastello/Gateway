@@ -73,6 +73,13 @@ const short kAboutHeight = 230;
 const short kFontGeneva = 3;
 
 /*
+ * A document window with both a zoom box and a grow box: WDEF 0, variant 8.
+ * Multiversal's enum stops at movableDBoxProc and rDocProc, so the standard
+ * procID goes in by value, as the Monaco font ID above does.
+ */
+const short kZoomDocProc = 8;
+
+/*
  * Platinum. Mac OS 9's window background is 0xDD grey, not white -- an About
  * box painted white reads as a document window rather than part of the system.
  * Matches iWordle's kColorWindowBG.
@@ -293,7 +300,7 @@ private:
 
         SetRect(&bounds, 20, 60, 20 + kWinWidth, 60 + kWinHeight);
         ToPascal("Gateway", title);
-        mWindow = NewWindow(nullptr, &bounds, title, true, zoomDocProc,
+        mWindow = NewWindow(nullptr, &bounds, title, true, kZoomDocProc,
                             reinterpret_cast<WindowPtr>(-1L), true, 0);
         if (mWindow == nullptr) return;
 
