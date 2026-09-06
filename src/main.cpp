@@ -48,17 +48,16 @@ const short kFlagHasBundle    = 0x2000;
 const short kFlagHasBeenInited = 0x0100;
 
 /*
- * SIZE resource flag. A background-only application is kept out of the
- * Application menu by the Process Manager -- and out of any dock, since a
- * dock has nothing else to go on.
- *
- * Gateway only ever CLEARS this bit, never sets it. See ClearFacelessFlag().
+ * SIZE resource flag. The Process Manager reads it at launch and keeps the
+ * application out of the Application menu -- and out of any dock, which has
+ * nothing else to go on. Gateway only ever CLEARS this bit, never sets it;
+ * see ClearFacelessFlag().
  */
 const short kOnlyBackgroundFlag = 0x0400;
 
 /*
  * The application's own resource file, captured before anything else can
- * change the current one. Gateway reads its SIZE resource through this and
+ * change the current one. Gateway edits its SIZE resource through this and
  * never closes it: the Resource Manager hands back the map that is already
  * open, so closing it would take the application's own resources with it.
  */
@@ -137,19 +136,21 @@ void EnsureBundleBit()
 }
 
 /*
- * Clear onlyBackground if some earlier version left it set.
+ * Clear onlyBackground if an earlier version left it set.
  *
- * Gateway used to set this bit when the window was hidden, which produced a
+ * Gateway used to set this bit when the window was hidden. That produced a
  * running application with no window, no menu bar and no Application menu
  * entry -- nothing to quit it with short of restarting the machine. Hiding a
- * window must never be the thing that makes an application unreachable, so
- * nothing sets it any more and this repairs a file that still carries it.
+ * window must never be what makes an application unreachable, so nothing sets
+ * it any more and this repairs a file that still carries it.
  *
  * The edit goes through the resource map the Process Manager already opened,
- * and closes nothing. A read-only fork simply fails the write.
+ * and closes nothing: the Resource Manager hands back the map that is already
+ * open, so closing it would take the application's own resources with it. A
+ * read-only fork simply fails the write.
  *
- * SIZE(0) is what the Finder writes after someone edits the memory settings
- * in Get Info and takes precedence over SIZE(-1); both are checked.
+ * SIZE(0) is what the Finder writes after someone edits the memory settings in
+ * Get Info and takes precedence over SIZE(-1); both are checked.
  */
 void ClearFacelessFlag()
 {
@@ -180,10 +181,453 @@ void ClearFacelessFlag()
     UseResFile(saved);
 }
 
+class GatewayApp;
+extern GatewayApp *gApp;
+pascal OSErr HandleQuitEvent(const AppleEvent *event, AppleEvent *reply,
+                             long refcon);
+
+class GatewayApp {
+public:
+    GatewayApp()
+        : mWindow(nullptr), mAppleMenu(nullptr), mFileMenu(nullptr),
+          mDone(false), mRunning(false), mSeenGeneration(-1) {}
+
+    bool Start()
+    {
+        bool wantWindow;
+
+        GW_LoadSettings();
+        wantWindow = GW_ShowWindowPref() != 0;
+
+        mRunning = GW_Init() != 0;
+
+        /* Nowhere to report a problem without a window, so come up visible if
+         * the core will not start. */
+        if (!mRunning) wantWindow = true;
+
+        /* The menu bar is always present: it is how Gateway is quit, and how
+         * the window is brought back. */
+        SetUpMenus();
+        if (wantWindow) SetUpWindow();
+
+        EnsureBundleBit();
+        ClearFacelessFlag();
+
+        gApp = this;
+        AEInstallEventHandler(kCoreEventClass, kAEQuitApplication,
+                              NewAEEventHandlerUPP(HandleQuitEvent), 0, false);
+        return true;
+    }
+
+    void Run()
+    {
+        while (!mDone) {
+            EventRecord event;
+            long sleep = (GW_ActiveSessions() > 0) ? 1L : 10L;
+
+            if (WaitNextEvent(everyEvent, &event, sleep, nullptr))
+                HandleEvent(event);
+
+            /* One cooperative slice per pass; every OT and TLS step inside
+             * yields rather than spinning (CLAUDE.md rule 6). */
+            GW_Poll();
+
+            if (mWindow != nullptr && GW_LogGeneration() != mSeenGeneration)
+                Redraw();
+        }
+    }
+
+    void Stop()
+    {
+        GW_Shutdown();
+        if (mWindow != nullptr) DisposeWindow(mWindow);
+    }
+
+    void Quit() { mDone = true; }
+
+private:
+    void SetUpMenus()
+    {
+        Str255 title;
+        char   appleTitle[2] = { '\024', '\0' };    /* the Apple glyph */
+
+        ToPascal(appleTitle, title);
+        mAppleMenu = NewMenu(kAppleMenuID, title);
+        if (mAppleMenu != nullptr) {
+            ToPascal("About Gateway...", title);
+            AppendMenu(mAppleMenu, title);
+            ToPascal("(-", title);
+            AppendMenu(mAppleMenu, title);
+            AppendResMenu(mAppleMenu, 'DRVR');
+            InsertMenu(mAppleMenu, 0);
+        }
+
+        ToPascal("File", title);
+        mFileMenu = NewMenu(kFileMenuID, title);
+        if (mFileMenu != nullptr) {
+            ToPascal("Show Window/H", title);
+            AppendMenu(mFileMenu, title);
+            ToPascal("(-", title);
+            AppendMenu(mFileMenu, title);
+            ToPascal("Quit/Q", title);
+            AppendMenu(mFileMenu, title);
+            InsertMenu(mFileMenu, 0);
+        }
+        DrawMenuBar();
+    }
+
+    void SetUpWindow()
+    {
+        Rect   bounds;
+        Str255 title;
+
+        SetRect(&bounds, 20, 60, 20 + kWinWidth, 60 + kWinHeight);
+        ToPascal("Gateway", title);
+        mWindow = NewWindow(nullptr, &bounds, title, true, documentProc,
+                            reinterpret_cast<WindowPtr>(-1L), true, 0);
+        if (mWindow == nullptr) return;
+
+        SetPort(reinterpret_cast<GrafPtr>(mWindow));
+    }
+
+    /*
+     * About Gateway, laid out the way iWordle's is: the application icon,
+     * then alternating Charcoal and Geneva lines for name, author and
+     * credits. A real title bar with a close box and no OK button, which is
+     * the Mac OS 9 convention -- SimpleText's About box does the same.
+     */
+    void DrawAboutContent(WindowPtr w)
+    {
+        GrafPtr port = reinterpret_cast<GrafPtr>(w);
+        Rect    box = port->portRect;
+        Rect    iconRect;
+        Str255  fontName;
+        short   midX, charcoal;
+
+        SetPort(port);
+        EraseRect(&box);
+
+        midX = static_cast<short>(box.left + (box.right - box.left) / 2);
+
+        SetRect(&iconRect, static_cast<short>(midX - 16),
+                static_cast<short>(box.top + 14),
+                static_cast<short>(midX + 16),
+                static_cast<short>(box.top + 46));
+        PlotIconID(&iconRect, atNone, ttNone, 128);
+
+        /* Charcoal is a later TrueType face rather than a fixed classic font
+         * ID, so it has to be looked up by name; GetFNum falls back to the
+         * system font when it is not installed. */
+        ToPascal("Charcoal", fontName);
+        GetFNum(fontName, &charcoal);
+
+        TextFace(normal);
+
+        TextFont(charcoal);
+        TextSize(12);
+        DrawCenteredCString(midX, static_cast<short>(box.top + 64),
+                            "Gateway 0.1");
+
+        TextFont(kFontGeneva);
+        TextSize(10);
+        DrawCenteredCString(midX, static_cast<short>(box.top + 84),
+                            "A TLS 1.3 gateway for Mac OS 9");
+
+        TextFont(charcoal);
+        TextSize(12);
+        DrawCenteredCString(midX, static_cast<short>(box.top + 112),
+                            "Bruno Castello");
+
+        TextFont(kFontGeneva);
+        TextSize(10);
+        DrawCenteredCString(midX, static_cast<short>(box.top + 132),
+                            "bfcastello@hotmail.com");
+
+        TextFont(charcoal);
+        TextSize(12);
+        DrawCenteredCString(midX, static_cast<short>(box.top + 160),
+                            "Engineer: Claude Opus 5");
+
+        TextFont(kFontGeneva);
+        TextSize(10);
+        DrawCenteredCString(midX, static_cast<short>(box.top + 188),
+                            "\xA9 Castello Designs, 2026");
+        DrawCenteredCString(midX, static_cast<short>(box.top + 208),
+                            "Built with Retro68");
+    }
+
+    void ShowAbout()
+    {
+        Rect        bounds;
+        Str255      title;
+        WindowPtr   about;
+        Boolean     done = false;
+        EventRecord event;
+        short       left, top;
+
+        left = static_cast<short>((qd.screenBits.bounds.right -
+                                   qd.screenBits.bounds.left - kAboutWidth) / 2);
+        top = static_cast<short>((qd.screenBits.bounds.bottom -
+                                  qd.screenBits.bounds.top - kAboutHeight) / 3);
+        SetRect(&bounds, left, top,
+                static_cast<short>(left + kAboutWidth),
+                static_cast<short>(top + kAboutHeight));
+
+        ToPascal("About Gateway", title);
+        about = NewCWindow(nullptr, &bounds, title, true, noGrowDocProc,
+                           reinterpret_cast<WindowPtr>(-1L), true, 0);
+        if (about == nullptr) return;
+
+        SelectWindow(about);
+
+        while (!done && !mDone) {
+            WaitNextEvent(everyEvent, &event, 5, nullptr);
+
+            switch (event.what) {
+            case updateEvt:
+                if (reinterpret_cast<WindowPtr>(event.message) == about) {
+                    BeginUpdate(about);
+                    DrawAboutContent(about);
+                    EndUpdate(about);
+                } else {
+                    HandleEvent(event);
+                }
+                break;
+
+            case keyDown:
+            case autoKey: {
+                char c = static_cast<char>(event.message & charCodeMask);
+                if (c == '\r' || c == 3 || c == 27) done = true;
+                break;
+            }
+
+            case mouseDown: {
+                WindowPtr win;
+                short part = FindWindow(event.where, &win);
+
+                if (win != about) break;        /* About stays in front */
+                if (part == inGoAway) {
+                    if (TrackGoAway(about, event.where)) done = true;
+                } else if (part == inDrag) {
+                    Rect limit = qd.screenBits.bounds;
+                    InsetRect(&limit, 4, 4);
+                    DragWindow(about, event.where, &limit);
+                }
+                break;
+            }
+
+            default:
+                break;
+            }
+
+            /* The proxy keeps running while the box is open. */
+            GW_Poll();
+        }
+
+        DisposeWindow(about);
+        if (mWindow != nullptr) Redraw();
+    }
+
+    /* Put the window away, or bring it back. Either way Gateway keeps
+     * proxying; only the display stops. */
+    void ToggleWindow()
+    {
+        Str255 title;
+        bool   showing;
+
+        if (mWindow != nullptr) {
+            DisposeWindow(mWindow);
+            mWindow = nullptr;
+            showing = false;
+            ToPascal("Show Window/H", title);
+        } else {
+            SetUpWindow();
+            Redraw();
+            showing = true;
+            ToPascal("Hide Window/H", title);
+        }
+        if (mFileMenu != nullptr) SetMenuItemText(mFileMenu, kHideItem, title);
+
+        /*
+         * Remember the choice for next time, but change nothing else about
+         * this session. The menu bar stays exactly where it is, so Quit and
+         * Show Window are always one click away -- hiding a window must never
+         * be the thing that makes an application unreachable.
+         *
+         * Going faceless is a launch-time decision, applied in Start().
+         */
+        GW_SetShowWindowPref(showing ? 1 : 0);
+        if (!showing)
+            GW_Log("window hidden; Gateway keeps running");
+        if (mWindow != nullptr) Redraw();
+    }
+
+    void HandleEvent(EventRecord &event)
+    {
+        switch (event.what) {
+        case mouseDown:
+            HandleMouseDown(event);
+            break;
+
+        case keyDown:
+        case autoKey: {
+            char ch = static_cast<char>(event.message & charCodeMask);
+            if (event.modifiers & cmdKey) HandleMenu(MenuKey(ch));
+            break;
+        }
+
+        case updateEvt: {
+            WindowPtr win = reinterpret_cast<WindowPtr>(event.message);
+            BeginUpdate(win);
+            if (win == mWindow) DrawContents();
+            EndUpdate(win);
+            break;
+        }
+
+        case kHighLevelEvent:
+            AEProcessAppleEvent(&event);
+            break;
+
+        case activateEvt:
+        default:
+            break;
+        }
+    }
+
+    void HandleMouseDown(EventRecord &event)
+    {
+        WindowPtr win;
+        short     part = FindWindow(event.where, &win);
+
+        switch (part) {
+        case inMenuBar:
+            HandleMenu(MenuSelect(event.where));
+            break;
+
+        case inSysWindow:
+            SystemClick(&event, win);
+            break;
+
+        case inDrag: {
+            Rect limit = qd.screenBits.bounds;
+            InsetRect(&limit, 4, 4);
+            DragWindow(win, event.where, &limit);
+            break;
+        }
+
+        case inGoAway:
+            if (TrackGoAway(win, event.where)) mDone = true;
+            break;
+
+        case inContent:
+            if (win != FrontWindow()) {
+                SelectWindow(win);
+                break;
+            }
+            break;
+
+        default:
+            break;
+        }
+    }
+
+    void HandleMenu(long selection)
+    {
+        /* MenuSelect packs the menu ID in the high word and the item in the
+         * low one. HiWord/LoWord are 68K trap glue that InterfaceLib does not
+         * export to PowerPC, so unpack it by hand. */
+        short menu = static_cast<short>((selection >> 16) & 0xFFFF);
+        short item = static_cast<short>(selection & 0xFFFF);
+
+        switch (menu) {
+        case kAppleMenuID:
+            if (item == kAboutItem) {
+                ShowAbout();
+            } else if (mAppleMenu != nullptr) {
+                Str255 name;
+                GetMenuItemText(mAppleMenu, item, name);
+                OpenDeskAcc(name);
+            }
+            break;
+
+        case kFileMenuID:
+            if (item == kHideItem) ToggleWindow();
+            else if (item == kQuitItem) mDone = true;
+            break;
+
+        default:
+            break;
+        }
+        HiliteMenu(0);
+    }
+
+    void Redraw()
+    {
+        if (mWindow == nullptr) return;
+        SetPort(reinterpret_cast<GrafPtr>(mWindow));
+        DrawContents();
+        mSeenGeneration = GW_LogGeneration();
+    }
+
+    void DrawContents()
+    {
+        GrafPtr port = reinterpret_cast<GrafPtr>(mWindow);
+        Rect    area = port->portRect;
+        char    line[160];
+        short   v;
+        int     count, first, i;
+
+        SetPort(port);
+        EraseRect(&area);
+
+        TextFont(4);           /* Monaco: the log needs a fixed pitch */
+        TextSize(9);
+
+        v = kLineHeight;
+        MoveTo(kTextLeft, v);
+        std::snprintf(line, sizeof(line),
+                      "proxy :%d  imap :%d  pop :%d  smtp :%d  splices %d",
+                      GW_HttpPort(), GW_ImapPort(), GW_PopPort(),
+                      GW_SmtpPort(), GW_ActiveSessions());
+        DrawCString(line);
+
+        v = static_cast<short>(v + kLineHeight);
+        MoveTo(kTextLeft, v);
+        DrawCString(GW_StatusLine());
+
+        v = static_cast<short>(v + 4);
+        MoveTo(kTextLeft, v);
+        LineTo(static_cast<short>(area.right - kTextLeft), v);
+
+        {
+            short logBottom = static_cast<short>(area.bottom - 2);
+            int rows = (logBottom - kHeaderRows * kLineHeight) / kLineHeight;
+            count = GW_LogCount();
+            first = (count > rows) ? count - rows : 0;
+
+            v = static_cast<short>(kHeaderRows * kLineHeight);
+            for (i = first; i < count; i++) {
+                const char *text = GW_LogLine(i);
+                if (text == nullptr) break;
+                v = static_cast<short>(v + kLineHeight);
+                if (v > logBottom) break;
+                MoveTo(kTextLeft, v);
+                DrawCString(text);
+            }
+        }
+    }
+
+    WindowPtr     mWindow;
+    MenuHandle    mAppleMenu;
+    MenuHandle    mFileMenu;
+    bool          mDone;
+    bool          mRunning;
+    long          mSeenGeneration;
+};
+
 /*
- * A background-only Gateway has no menu bar and no window, so the Quit Apple
- * event is the only way to stop it short of restarting: the Finder sends it at
- * shutdown, and AppleScript can send it on demand.
+ * The Quit Apple event: the Finder sends it at shutdown and restart, and
+ * AppleScript can send it on demand.
  *
  * The handler cannot capture, so it reaches the application through a file
  * scope pointer. That is a plain pointer with no constructor, which is what
