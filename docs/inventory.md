@@ -247,6 +247,11 @@ drifting.
   is what personal Outlook.com and Hotmail accounts require; set
   `smtp_starttls = 0` with port 465 for a provider offering implicit TLS.
   See `third_party/certainly/PATCHES.md` §5.
+* **TLS 1.3 key exchange offers X25519 and P-256.** Certainly shipped with
+  X25519 only, which no Microsoft endpoint accepts — see
+  `third_party/certainly/PATCHES.md` §12. Any host requiring a group outside
+  those two will still fail; the ClientHello carries a share for both so no
+  HelloRetryRequest is needed for either.
 * **HTTP/1.1 keep-alive to the client** is not implemented and will not be:
   the client hop is always `Connection: close`, which is what makes an
   EOF-delimited body legal and keeps the state machine small.

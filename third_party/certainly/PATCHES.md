@@ -224,3 +224,29 @@ endpoint stays in a state where every subsequent call fails with
 unreachable address failed the whole connection. Large services rotate through
 many: `login.microsoftonline.com` returns eight. `ot_try_next_address()` now
 walks the list on `T_DISCONNECT` before giving up.
+
+## 12. Only X25519 was offered for TLS 1.3 key exchange
+
+Certainly generated a single ephemeral key share, on X25519, and rejected any
+ServerHello naming a different group. That is fine for most of the web and
+fatal for Microsoft:
+
+```
+login.microsoftonline.com  -groups X25519  ->  Cipher is (NONE)
+login.microsoftonline.com  -groups P-256   ->  TLS_AES_256_GCM_SHA384
+```
+
+`login.microsoftonline.com`, `outlook.office365.com` and
+`smtp-mail.outlook.com` all refuse X25519, and Azure drops the connection
+rather than answering with a `handshake_failure` alert — so the failure
+surfaced as `ECONNRESET` from a TCP connection that had completed, which is
+indistinguishable at the transport layer from a connect that never worked.
+Every part of Gateway's mail module talks to one of those three hosts, so this
+single gap blocked OAuth, IMAP and SMTP alike.
+
+The ClientHello now advertises both X25519 and secp256r1 in
+`supported_groups` and carries a key share for **both**, so the server can
+finish the exchange from the ClientHello whichever it prefers, with no
+HelloRetryRequest round trip. `negotiated_group` records the choice and the
+ECDH dispatches on it; the P-256 secret is the X coordinate of the shared
+point, per RFC 8446 §7.4.2. BearSSL supplies the curve as `br_ec_p256_m15`.

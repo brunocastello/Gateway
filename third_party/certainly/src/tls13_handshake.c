@@ -184,6 +184,37 @@ static int tls13_generate_x25519_keypair(tls13_hs_ctx *hs,
     return 0;
 }
 
+/*
+ * Generate a P-256 ephemeral key pair for the second key_share entry.
+ *
+ * br_ec_compute_pub returns the uncompressed point form the TLS key_share
+ * extension wants: 0x04 followed by the two 32-byte coordinates.
+ */
+static int tls13_generate_p256_keypair(tls13_hs_ctx *hs,
+                                       br_hmac_drbg_context *rng)
+{
+    const br_ec_impl *ec = &br_ec_p256_m15;
+    br_ec_private_key sk;
+    unsigned char kbuf_priv[BR_EC_KBUF_PRIV_MAX_SIZE];
+    unsigned char kbuf_pub[BR_EC_KBUF_PUB_MAX_SIZE];
+    size_t priv_len, pub_len;
+
+    priv_len = br_ec_keygen(&rng->vtable, ec, &sk,
+                            kbuf_priv, BR_EC_secp256r1);
+    if (priv_len == 0 || priv_len > sizeof(hs->ecdhe_p256_priv)) return -1;
+
+    pub_len = br_ec_compute_pub(ec, NULL, kbuf_pub, &sk);
+    if (pub_len != TLS13_P256_POINT_LEN) return -1;
+
+    memcpy(hs->ecdhe_p256_priv, sk.x, priv_len);
+    hs->ecdhe_p256_priv_len = priv_len;
+    memcpy(hs->ecdhe_p256_pub, kbuf_pub, TLS13_P256_POINT_LEN);
+
+    secure_wipe(kbuf_priv, sizeof(kbuf_priv));
+
+    return 0;
+}
+
 /* ── ClientHello Builder ── */
 
 /*
@@ -372,16 +403,22 @@ static int tls13_build_client_hello(tls13_hs_ctx *hs,
          *   ext_type (2)
          *   ext_data_length (2)
          *   named_group_list_length (2)
-         *   named_group (2) = 0x001D (X25519)
+         *   named_group (2) * 2 = X25519, then secp256r1
+         *
+         * Both are advertised because plenty of large deployments support
+         * only one of them; Microsoft's identity and mail endpoints reject
+         * X25519 outright.
          */
-        if (pos + 4 + 4 > buf_size) return -1;
+        if (pos + 4 + 2 + 4 > buf_size) return -1;
         put_u16(buf + pos, TLS13_EXT_SUPPORTED_GROUPS);
         pos += 2;
-        put_u16(buf + pos, 4);  /* ext_data_length */
+        put_u16(buf + pos, 6);  /* ext_data_length */
         pos += 2;
-        put_u16(buf + pos, 2);  /* named_group_list_length */
+        put_u16(buf + pos, 4);  /* named_group_list_length */
         pos += 2;
         put_u16(buf + pos, TLS13_GROUP_X25519);
+        pos += 2;
+        put_u16(buf + pos, TLS13_GROUP_SECP256R1);
         pos += 2;
     }
 
@@ -442,28 +479,40 @@ static int tls13_build_client_hello(tls13_hs_ctx *hs,
          *   ext_type (2)
          *   ext_data_length (2)
          *   client_shares_length (2)
-         *   named_group (2) = 0x001D (X25519)
-         *   key_exchange_length (2) = 32
-         *   key_exchange (32) = our X25519 public key
+         *   KeyShareEntry: named_group (2), key_exchange_length (2), key (n)
          *
-         * This is the "optimistic" key share — we include our public key
-         * right in the ClientHello so the server can complete the key
-         * exchange in its ServerHello without a round trip. If the server
-         * wants a different group, it sends HelloRetryRequest.
+         * Two entries are sent, X25519 and P-256, so the server can complete
+         * the exchange from the ClientHello whichever it prefers. Offering
+         * only one costs a HelloRetryRequest round trip at best, and at worst
+         * a reset: Microsoft's endpoints do not speak X25519 and drop the
+         * connection rather than answering.
          */
-        if (pos + 4 + 2 + 2 + 2 + 32 > buf_size) return -1;
+        const size_t x25519_entry = 2 + 2 + 32;
+        const size_t p256_entry   = 2 + 2 + TLS13_P256_POINT_LEN;
+        const size_t shares_len   = x25519_entry + p256_entry;
+
+        if (pos + 4 + 2 + shares_len > buf_size) return -1;
+
         put_u16(buf + pos, TLS13_EXT_KEY_SHARE);
         pos += 2;
-        put_u16(buf + pos, 38);  /* ext_data_length: 2 + 2 + 2 + 32 */
+        put_u16(buf + pos, (uint16_t)(2 + shares_len));  /* ext_data_length */
         pos += 2;
-        put_u16(buf + pos, 36);  /* client_shares_length: 2 + 2 + 32 */
+        put_u16(buf + pos, (uint16_t)shares_len);        /* client_shares_length */
         pos += 2;
+
         put_u16(buf + pos, TLS13_GROUP_X25519);
         pos += 2;
-        put_u16(buf + pos, 32);  /* key_exchange_length */
+        put_u16(buf + pos, 32);
         pos += 2;
         memcpy(buf + pos, hs->ecdhe_public, 32);
         pos += 32;
+
+        put_u16(buf + pos, TLS13_GROUP_SECP256R1);
+        pos += 2;
+        put_u16(buf + pos, TLS13_P256_POINT_LEN);
+        pos += 2;
+        memcpy(buf + pos, hs->ecdhe_p256_pub, TLS13_P256_POINT_LEN);
+        pos += TLS13_P256_POINT_LEN;
     }
 
     /* ── Extension: Cookie — type 44 (only on HelloRetryRequest retry) ── */
@@ -607,6 +656,36 @@ static int tls13_x25519_shared_secret(const unsigned char *private_key,
 }
 
 /*
+ * Compute a P-256 ECDH shared secret.
+ *
+ * BearSSL multiplies in place on the uncompressed point, and the TLS 1.3
+ * shared secret is the X coordinate alone -- bytes 1..33 of the result, with
+ * the 0x04 prefix and the Y coordinate discarded (RFC 8446 section 7.4.2).
+ */
+static int tls13_p256_shared_secret(const unsigned char *private_key,
+                                    size_t private_len,
+                                    const unsigned char *peer_public_key,
+                                    unsigned char *shared_secret)
+{
+    const br_ec_impl *ec = &br_ec_p256_m15;
+    unsigned char point[TLS13_P256_POINT_LEN];
+    uint32_t result;
+
+    memcpy(point, peer_public_key, TLS13_P256_POINT_LEN);
+
+    result = ec->mul(point, sizeof(point), private_key, private_len,
+                     BR_EC_secp256r1);
+    if (result == 0) {
+        secure_wipe(point, sizeof(point));
+        return -1;
+    }
+
+    memcpy(shared_secret, point + 1, 32);
+    secure_wipe(point, sizeof(point));
+    return 0;
+}
+
+/*
  * Determine the AEAD key length for a TLS 1.3 cipher suite.
  * AES-128-GCM uses 16-byte keys; AES-256-GCM and ChaCha20-Poly1305 use 32.
  */
@@ -670,7 +749,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
     int is_hrr;
     int found_supported_versions = 0;
     int found_key_share = 0;
-    unsigned char server_public[32];
+    unsigned char server_public[TLS13_P256_POINT_LEN];
     uint16_t negotiated_version = 0;
 
     /*
@@ -791,17 +870,31 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
             {
                 uint16_t group = get_u16(ext_data);
                 uint16_t ke_len = get_u16(ext_data + 2);
+                size_t   want;
 
-                if (group != TLS13_GROUP_X25519) {
-                    /* Server chose a group we don't support */
+                /* Either of the two groups we offered a share for. */
+                if (group == TLS13_GROUP_X25519) {
+                    want = 32;
+                } else if (group == TLS13_GROUP_SECP256R1) {
+                    want = TLS13_P256_POINT_LEN;
+                } else {
                     hs->error = BR_ERR_BAD_PARAM;
                     return kTLS13_Error;
                 }
-                if (ke_len != 32 || ext_len != 4 + 32) {
+
+                if (ke_len != want || ext_len != 4 + want) {
                     hs->error = BR_ERR_BAD_PARAM;
                     return kTLS13_Error;
                 }
-                memcpy(server_public, ext_data + 4, 32);
+                if (group == TLS13_GROUP_SECP256R1 &&
+                    ext_data[4] != 0x04) {
+                    /* Only the uncompressed point form is legal in TLS 1.3. */
+                    hs->error = BR_ERR_BAD_PARAM;
+                    return kTLS13_Error;
+                }
+
+                memcpy(server_public, ext_data + 4, want);
+                hs->negotiated_group = group;
                 found_key_share = 1;
             }
             break;
@@ -931,7 +1024,8 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
     tls13_transcript_update(&hs->transcript, msg, hs_msg_len + 4);
 
     /*
-     * Compute X25519 shared secret.
+     * Compute the ECDH shared secret using whichever group the server picked
+     * from the two shares we offered.
      */
     {
         unsigned char shared_secret[32];
@@ -941,8 +1035,14 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
         size_t key_len;
         int ret;
 
-        ret = tls13_x25519_shared_secret(hs->ecdhe_secret, server_public,
-                                         shared_secret);
+        if (hs->negotiated_group == TLS13_GROUP_SECP256R1) {
+            ret = tls13_p256_shared_secret(hs->ecdhe_p256_priv,
+                                           hs->ecdhe_p256_priv_len,
+                                           server_public, shared_secret);
+        } else {
+            ret = tls13_x25519_shared_secret(hs->ecdhe_secret, server_public,
+                                             shared_secret);
+        }
         if (ret != 0) {
             hs->error = BR_ERR_BAD_PARAM;
             return kTLS13_Error;
@@ -2266,13 +2366,15 @@ static tls13_hs_result tls13_state_send_client_hello(tls13_hs_ctx *hs,
     }
     /* If HRR was received, transcript was already reset by the HRR handler */
 
-    /* Generate X25519 ephemeral key pair (unless retrying after HRR) */
+    /* Generate both ephemeral key pairs (unless retrying after HRR) */
     if (!hs->hrr_received) {
         ret = tls13_generate_x25519_keypair(hs, &rng);
+        if (ret == 0) ret = tls13_generate_p256_keypair(hs, &rng);
         if (ret != 0) {
             hs->error = BR_ERR_BAD_STATE;
             return kTLS13_Error;
         }
+        hs->negotiated_group = TLS13_GROUP_X25519;   /* until told otherwise */
     }
 
     /* Build the ClientHello message */

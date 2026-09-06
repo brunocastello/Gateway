@@ -51,6 +51,16 @@
 
 /* Named groups */
 #define TLS13_GROUP_X25519  0x001D
+/*
+ * secp256r1 / NIST P-256. Not optional in practice: Microsoft's endpoints
+ * (login.microsoftonline.com, outlook.office365.com, smtp-mail.outlook.com)
+ * do not support X25519 at all, and reset the connection rather than sending
+ * an alert (Gateway patch - see PATCHES.md).
+ */
+#define TLS13_GROUP_SECP256R1  0x0017
+
+/* Uncompressed P-256 point: 0x04 || X(32) || Y(32) */
+#define TLS13_P256_POINT_LEN   65
 
 /* Handshake state machine states */
 typedef enum {
@@ -102,6 +112,16 @@ typedef struct {
     /* Ephemeral X25519 key pair */
     unsigned char       ecdhe_secret[32];
     unsigned char       ecdhe_public[32];
+
+    /*
+     * A second key share, on P-256. Both are offered in the ClientHello so
+     * the server can pick either without costing a HelloRetryRequest round
+     * trip; negotiated_group records what it chose.
+     */
+    unsigned char       ecdhe_p256_priv[32];
+    size_t              ecdhe_p256_priv_len;
+    unsigned char       ecdhe_p256_pub[TLS13_P256_POINT_LEN];
+    uint16_t            negotiated_group;
 
     /* Traffic secrets (kept for Finished key derivation) */
     unsigned char       client_hs_secret[64];
