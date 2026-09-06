@@ -219,6 +219,36 @@ connection back off and retry rather than surfacing a broken image. Gateway's
 cooperative loop makes both straightforward — a "not before tick N" field on
 the session and an early return from `session_step()`.
 
+## 7a. The date is global, and that is deliberate
+
+In the reference implementation the date is a module-level global: the settings
+handler declares `global DATE, DATE_TOLERANCE, …` and every request reads that
+same value. Gateway should keep this. It is what the existing habit depends on
+— set the era from the settings URL, browse, switch browser, set it again —
+and matching it means bookmarks and reflexes carry over untouched.
+
+The consequence to be aware of: **one era at a time, for every client.** Two
+browsers loading pages concurrently share whatever the last one set, and so do
+two machines pointed at the same Gateway. Sequential use, which is how it is
+actually used, never notices.
+
+If simultaneous eras are ever wanted, the fix is already implied by the
+listener design in §2 rather than by per-client state: give each Wayback
+listener its own date.
+
+```
+wayback_port  = 8888
+wayback_date  = 20011231
+
+wayback_port2 = 8889
+wayback_date2 = 19970822
+```
+
+A browser then chooses its era by proxy port, with no settings page visit at
+all. Per-client state keyed on the peer address would *not* solve the case
+described — IE4 and iCab on the same Mac share an address — so the port is the
+right discriminator. Not worth building until it is asked for.
+
 ## 8. Decisions still open
 
 - **Should the settings page persist to prefs?** The reference implementation
