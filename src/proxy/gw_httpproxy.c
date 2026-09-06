@@ -38,8 +38,14 @@
  * A refusal is not a missing asset, so back off briefly and ask again rather
  * than handing the browser a broken image.
  */
-#define GW_WB_RETRIES   3
-#define GW_WB_BACKOFF   60          /* ticks; multiplied by the attempt */
+#define GW_WB_RETRIES   4
+/*
+ * Ticks, multiplied by the attempt: 2s, 4s, 6s, 8s. A refusal from the archive
+ * is rate limiting rather than a fault, so backing off further than the old
+ * one second is what actually clears it. With connects serialised the retries
+ * should rarely be reached at all.
+ */
+#define GW_WB_BACKOFF   120
 
 /*
  * How many upstream connections may be *opening* at once.
@@ -53,8 +59,13 @@
  * opening rather than on total. Holding it low also gives the pool time to
  * fill: a session that waits a moment usually finds a connection waiting for
  * it instead, and pays nothing at all.
+ *
+ * It defaults to one. Gateway is a single cooperative thread, so two TLS
+ * handshakes running at once do not overlap -- they take turns on the same
+ * CPU, and on this hardware the handshake is most of the cost of a request.
+ * Opening them one at a time therefore costs almost no wall time while
+ * removing the burst entirely. See GW_MaxConnects() for the preference.
  */
-#define GW_CONNECT_LIMIT 3
 #define GW_CONNECT_WAIT  8          /* ticks before looking again */
 
 /*
@@ -492,7 +503,7 @@ static void session_start_upstream(GWHttpSession *s)
      * rationed. Wait rather than joining a burst; by the time we look again
      * there is often one back in the pool.
      */
-    if (connecting_count() >= GW_CONNECT_LIMIT) {
+    if (connecting_count() >= GW_MaxConnects()) {
         s->retryAt = GWNet_Ticks() + GW_CONNECT_WAIT;
         s->state = kHPConnectWait;
         return;

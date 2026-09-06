@@ -53,6 +53,9 @@ long        GW_MaxBodyBytes(void);
 /* How many splices to run at once, from max_sessions. */
 int         GW_MaxSessions(void);
 
+/* How many upstream connections may be opening at once (max_connects). */
+int         GW_MaxConnects(void);
+
 /* ---- Module 3: the Wayback listener ---------------------------------- */
 
 int         GW_WaybackPort(void);

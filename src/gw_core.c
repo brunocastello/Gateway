@@ -118,6 +118,30 @@ int GW_MaxSessions(void)
     return (int)n;
 }
 
+int GW_MaxConnects(void)
+{
+    /*
+     * How many upstream connections may be opening at once, across all
+     * sessions. One by default.
+     *
+     * Three seemed conservative until the archive started refusing us with
+     * ECONNREFUSED under a page load: a burst of new connections from one
+     * address is what its rate limiter watches for. Serialising them costs
+     * very little here, because Gateway runs one cooperative thread and
+     * concurrent TLS handshakes do not overlap on it -- they simply take turns
+     * on the same CPU. The connection pool is what recovers the throughput,
+     * since a reused connection skips the handshake altogether.
+     *
+     * Raise it if the upstream is fast and tolerant; leave it at one for the
+     * Internet Archive.
+     */
+    long n = GWConfig_Num("max_connects", 1);
+
+    if (n < 1) n = 1;
+    if (n > 8) n = 8;
+    return (int)n;
+}
+
 int GW_ShowWindowPref(void)
 {
     return GWConfig_Num("show_window", 1) != 0;

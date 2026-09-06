@@ -8,6 +8,7 @@
 
 show_window     = 1
 max_sessions    = 12
+max_connects    = 1
 
 
 # ------------------------------------------------------------- Web proxy
