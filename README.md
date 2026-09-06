@@ -108,7 +108,8 @@ src/gw_core.[ch]      the seam between the UI and the network core
 src/gw_config.[ch]    the "Gateway Prefs" file
 src/net/gw_net.[ch]   Open Transport listeners, connections, stream abstraction
 src/proxy/            Module 1, Module 2, and the OAuth token refresher
-tools/                host-side helper for extracting an OAuth refresh token
+tools/                host-side helpers: OAuth refresh-token extraction,
+                      and regenerating the compiled-in CA trust anchors
 src/portable/         protocol grammar with no system headers at all
 src/ui/gateway.r      SIZE (8 MB / 4 MB) and vers, as raw data blocks
 tests/host/           unit tests for src/portable, built with the host cc

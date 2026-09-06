@@ -749,6 +749,27 @@ int GWStream_TlsVersion(const GWStream *s)
     }
 }
 
+/*
+ * Turn BearSSL's error number into something readable. Only the codes that
+ * actually come up in the field are named; the rest fall through to the raw
+ * number, which is still enough to look up in bearssl_ssl.h.
+ */
+static const char *gw_tls_error_text(int err)
+{
+    switch (err) {
+    case 0:  return NULL;                       /* nothing to report */
+    case 62: return "certificate not trusted";  /* BR_ERR_X509_NOT_TRUSTED */
+    case 54: return "certificate expired";      /* BR_ERR_X509_EXPIRED */
+    case 56: return "certificate is for another host";
+    case 51: return "bad certificate signature";
+    case 34: return "server sent no certificate";
+    case 52: return "certificate dates unknown";
+    case 57: return "intermediate is not a CA";
+    case 59: return "public key too weak";
+    default: return NULL;
+    }
+}
+
 const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
 {
     const char *phase = "idle";
@@ -774,6 +795,17 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
     } else if (s != NULL && s->plain != NULL) {
         otErr = s->plain->err;
         addr  = s->plain->remote.fHost;
+    }
+
+    {
+        const char *tlsText = gw_tls_error_text(tlsErr);
+        if (tlsText != NULL) {
+            /* A named certificate problem is the whole story; say it plainly
+             * rather than making someone look the number up. */
+            snprintf(out, cap, "%s: %s [TLS %d]",
+                     GWStream_ErrorText(s), tlsText, tlsErr);
+            return out;
+        }
     }
 
     if (addr != 0) {
