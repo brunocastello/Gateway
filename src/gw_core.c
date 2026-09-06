@@ -36,6 +36,12 @@ int GW_ShowWindowPref(void)
     return GWConfig_Num("show_window", 1) != 0;
 }
 
+int GW_ShowWindowPrefReload(void)
+{
+    GWConfig_Reload();
+    return GW_ShowWindowPref();
+}
+
 void GW_SetShowWindowPref(int show)
 {
     GWConfig_Set("show_window", show ? "1" : "0");

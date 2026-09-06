@@ -69,6 +69,11 @@ const short kAboutWidth  = 280;
 const short kAboutHeight = 230;
 
 const short kFontGeneva = 3;
+
+/* How often a faceless Gateway re-reads its prefs, looking for the setting
+ * that tells it to stop. Three seconds: often enough to feel responsive,
+ * rare enough to be free. */
+const unsigned long kFacelessPollTicks = 3 * 60;
 const short kLineHeight = 11;
 const short kTextLeft   = 6;
 const short kHeaderRows = 3;
@@ -230,7 +235,7 @@ public:
     GatewayApp()
         : mWindow(nullptr), mAppleMenu(nullptr), mFileMenu(nullptr),
           mDone(false), mRunning(false), mFaceless(false),
-          mSeenGeneration(-1) {}
+          mFacelessCheck(0), mSeenGeneration(-1) {}
 
     bool Start()
     {
@@ -256,12 +261,19 @@ public:
         }
 
         EnsureBundleBit();
+
+        /*
+         * Line the SIZE resource up with the setting for next time. Done only
+         * here, at launch, on a resource map nothing else is touching -- and
+         * because it runs unconditionally, an application file left with the
+         * flag set repairs itself the first time it starts with the setting
+         * back at 1.
+         */
         ApplyFacelessSetting(wantWindow);
 
         if (mFaceless) {
             GW_SetStatus("running without a window");
-            if (wantWindow)
-                GW_Log("prefs ask for a window: quit and relaunch to get one");
+            mFacelessCheck = TickCount();
         }
 
         gApp = this;
@@ -282,6 +294,18 @@ public:
             /* One cooperative slice per pass; every OT and TLS step inside
              * yields rather than spinning (CLAUDE.md rule 6). */
             GW_Poll();
+
+            /*
+             * A faceless Gateway has no menu bar, so it has no Quit item. It
+             * watches the prefs file instead: put show_window back to 1 and it
+             * stops within a few seconds, ready to be launched again with a
+             * window. Without this the only way out would be a restart.
+             */
+            if (mFaceless &&
+                TickCount() - mFacelessCheck > kFacelessPollTicks) {
+                mFacelessCheck = TickCount();
+                if (GW_ShowWindowPrefReload()) mDone = true;
+            }
 
             if (mWindow != nullptr && GW_LogGeneration() != mSeenGeneration)
                 Redraw();
@@ -499,10 +523,17 @@ private:
         }
         if (mFileMenu != nullptr) SetMenuItemText(mFileMenu, kHideItem, title);
 
-        /* Remember the choice, and line the SIZE resource up with it so the
-         * next launch starts the way this one ended. */
+        /*
+         * Remember the choice for next time, but change nothing else about
+         * this session. The menu bar stays exactly where it is, so Quit and
+         * Show Window are always one click away -- hiding a window must never
+         * be the thing that makes an application unreachable.
+         *
+         * Going faceless is a launch-time decision, applied in Start().
+         */
         GW_SetShowWindowPref(showing ? 1 : 0);
-        ApplyFacelessSetting(showing);
+        if (!showing)
+            GW_Log("window hidden; next launch will start without one");
         if (mWindow != nullptr) Redraw();
     }
 
@@ -667,6 +698,7 @@ private:
     bool          mDone;
     bool          mRunning;
     bool          mFaceless;
+    unsigned long mFacelessCheck;
     long          mSeenGeneration;
 };
 

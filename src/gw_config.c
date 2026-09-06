@@ -25,8 +25,21 @@ static int    sLoaded;
 static char   sSource[64];
 static FSSpec sSpec;
 static int    sHaveSpec;
+static int    sQuiet;
 
 static const unsigned char kPrefsName[] = "\pGateway Prefs";
+
+/* Re-read the file without logging. A faceless Gateway polls this as its
+ * only way back: there is no menu to choose Quit from. */
+void GWConfig_Reload(void)
+{
+    int wasLoaded = sLoaded;
+    char  savedSource[64];
+
+    strcpy(savedSource, sSource);
+    GWConfig_LoadQuiet();
+    if (!sLoaded && wasLoaded) strcpy(sSource, savedSource);
+}
 
 void GWConfig_Load(void)
 {
@@ -65,7 +78,7 @@ void GWConfig_Load(void)
     sText[sLen] = '\0';
     sLoaded = 1;
     strcpy(sSource, "Preferences:Gateway Prefs");
-    gw_log("read %ld bytes of prefs", sLen);
+    if (!sQuiet) gw_log("read %ld bytes of prefs", sLen);
 
     /*
      * Say out loud whether the settings that matter actually parsed. A prefs
@@ -73,10 +86,19 @@ void GWConfig_Load(void)
      * all from the mail client's side -- every login comes back as a bad
      * password -- so the log has to distinguish the two.
      */
+    if (sQuiet) return;
+
     if (GWConfig_Str("local_password", "")[0] == '\0')
         gw_log("WARNING: no local_password in prefs; mail logins will fail");
     else
         gw_log("local_password is set; mail logins will be checked against it");
+}
+
+void GWConfig_LoadQuiet(void)
+{
+    sQuiet = 1;
+    GWConfig_Load();
+    sQuiet = 0;
 }
 
 int GWConfig_Loaded(void)
