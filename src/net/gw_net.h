@@ -111,7 +111,13 @@ typedef struct GWListener {
 GWListener  *GWListener_Open(UInt16 port, OTQLen qlen);
 
 /* Returns a fully accepted connection, or NULL when nothing is ready yet. */
-GWConn      *GWListener_Poll(GWListener *l);
+/*
+ * One slice of the listener's state machine. `accepting` says whether the
+ * caller has somewhere to put a finished connection; when it is 0 the listener
+ * still drives an accept already in flight but starts no new one, leaving the
+ * surplus queued in Open Transport's backlog.
+ */
+GWConn      *GWListener_Poll(GWListener *l, int accepting);
 void         GWListener_Close(GWListener *l);
 
 /* ------------------------------------------------------------------ */

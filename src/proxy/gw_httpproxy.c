@@ -162,14 +162,19 @@ static GWHttpSession *sSessions;
 static int            sSessionCount;
 static long           sNextId;
 
-/* How many sessions are part-way through opening a connection. */
-static int connecting_count(void)
+/*
+ * How many sessions are part-way through opening a connection, counted
+ * separately for archive and live-web traffic. They have different caps and
+ * different reasons for them, so a burst of one must not starve the other.
+ */
+static int connecting_count(int wayback)
 {
     int i, n = 0;
 
     if (sSessions == NULL) return 0;
     for (i = 0; i < sSessionCount; i++)
-        if (sSessions[i].state == kHPConnect) n++;
+        if (sSessions[i].state == kHPConnect &&
+            sSessions[i].wayback == wayback) n++;
     return n;
 }
 
@@ -300,12 +305,45 @@ static void session_reset(GWHttpSession *s)
 static void session_fail(GWHttpSession *s, const char *statusLine,
                          const char *reason)
 {
-    size_t n = strlen(statusLine);
+    /*
+     * Spliced into every error Gateway generates itself.
+     *
+     * Without them the browser caches the failure. A 404 is cacheable by
+     * default, and a bare 502 with no freshness information gets a heuristic
+     * lifetime, so Internet Explorer would store the error page *as the
+     * image* -- and on the next load serve it from disk without asking us at
+     * all. That looks exactly like a proxy that has stopped working: one
+     * request for the HTML, every image broken, and nothing in the log. A
+     * transient refusal from the archive has to stay transient.
+     *
+     * Pragma and Expires are there for the HTTP/1.0 clients this exists for;
+     * Cache-Control alone would not reach them.
+     */
+    static const char kNoStore[] =
+        "Cache-Control: no-store, no-cache, must-revalidate\r\n"
+        "Pragma: no-cache\r\n"
+        "Expires: 0\r\n";
+    const size_t extra = sizeof(kNoStore) - 1;
+    const char  *rest;
+    size_t       head, tail;
 
     gw_log("#%ld %s", s->id, reason);
-    if (s->out != NULL && s->outLen == 0 && n < (size_t)GW_OUT_MAX) {
-        memcpy(s->out, statusLine, n);
-        s->outLen = n;
+
+    rest = strstr(statusLine, "\r\n");
+    head = (rest != NULL) ? (size_t)(rest - statusLine) + 2 : 0;
+    tail = (head > 0) ? strlen(statusLine + head) : strlen(statusLine);
+
+    if (s->out != NULL && s->outLen == 0 && head > 0 &&
+        head + extra + tail < (size_t)GW_OUT_MAX) {
+        memcpy(s->out, statusLine, head);
+        memcpy(s->out + head, kNoStore, extra);
+        memcpy(s->out + head + extra, statusLine + head, tail);
+        s->outLen = head + extra + tail;
+        s->outSent = 0;
+        s->state = kHPFlushAndClose;
+    } else if (s->out != NULL && s->outLen == 0 && tail < (size_t)GW_OUT_MAX) {
+        memcpy(s->out, statusLine, tail);
+        s->outLen = tail;
         s->outSent = 0;
         s->state = kHPFlushAndClose;
     } else {
@@ -503,7 +541,8 @@ static void session_start_upstream(GWHttpSession *s)
      * rationed. Wait rather than joining a burst; by the time we look again
      * there is often one back in the pool.
      */
-    if (connecting_count() >= GW_MaxConnects()) {
+    if (connecting_count(s->wayback) >=
+        (s->wayback ? GW_WaybackConnects() : GW_MaxConnects())) {
         s->retryAt = GWNet_Ticks() + GW_CONNECT_WAIT;
         s->state = kHPConnectWait;
         return;

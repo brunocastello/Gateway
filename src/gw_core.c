@@ -121,21 +121,28 @@ int GW_MaxSessions(void)
 int GW_MaxConnects(void)
 {
     /*
-     * How many upstream connections may be opening at once, across all
-     * sessions. One by default.
+     * How many upstream connections may be opening at once, for ordinary
+     * live-web sessions.
      *
-     * Three seemed conservative until the archive started refusing us with
-     * ECONNREFUSED under a page load: a burst of new connections from one
-     * address is what its rate limiter watches for. Serialising them costs
-     * very little here, because Gateway runs one cooperative thread and
-     * concurrent TLS handshakes do not overlap on it -- they simply take turns
-     * on the same CPU. The connection pool is what recovers the throughput,
-     * since a reused connection skips the handshake altogether.
-     *
-     * Raise it if the upstream is fast and tolerant; leave it at one for the
-     * Internet Archive.
+     * The archive has its own, lower cap: see GW_WaybackConnects().
      */
-    long n = GWConfig_Num("max_connects", 1);
+    long n = GWConfig_Num("max_connects", 8);
+
+    if (n < 1) n = 1;
+    if (n > 8) n = 8;
+    return (int)n;
+}
+
+int GW_WaybackConnects(void)
+{
+    /*
+     * The same cap, for sessions being served from the Internet Archive.
+     *
+     * It is separate because the reason for holding it down is the archive's
+     * rate limiter, which has nothing to say about anywhere else. One at a
+     * time there; the ordinary web gets max_connects.
+     */
+    long n = GWConfig_Num("wayback_connects", 1);
 
     if (n < 1) n = 1;
     if (n > 8) n = 8;
@@ -253,20 +260,36 @@ void GW_Poll(void)
      * frees, which the client experiences as a slow connection rather than as
      * a reset. GWProxy_CanAccept() carries the reasoning.
      */
-    if (GWProxy_CanAccept()) {
-        if (sHttp != NULL) {
-            c = GWListener_Poll(sHttp);
-            if (c != NULL && !GWProxy_Accept(c, 0)) GWConn_Destroy(c);
-        }
+    /*
+     * Edge triggered, so a busy proxy costs two lines rather than one per
+     * poll. It is the difference between "the backlog is doing its job" and
+     * "nothing is being accepted any more", which the log could not show.
+     */
+    {
+        static int wasFull = 0;
+        int canAccept = GWProxy_CanAccept();
 
-        if (sWayback != NULL && GWProxy_CanAccept()) {
-            c = GWListener_Poll(sWayback);
-            if (c != NULL && !GWProxy_Accept(c, 1)) GWConn_Destroy(c);
+        if (!canAccept && !wasFull) {
+            gw_log("all %d sessions busy; connections are waiting",
+                   GW_MaxSessions());
+            wasFull = 1;
+        } else if (canAccept && wasFull) {
+            wasFull = 0;
         }
     }
 
+    if (sHttp != NULL) {
+        c = GWListener_Poll(sHttp, GWProxy_CanAccept());
+        if (c != NULL && !GWProxy_Accept(c, 0)) GWConn_Destroy(c);
+    }
+
+    if (sWayback != NULL) {
+        c = GWListener_Poll(sWayback, GWProxy_CanAccept());
+        if (c != NULL && !GWProxy_Accept(c, 1)) GWConn_Destroy(c);
+    }
+
     if (sImap != NULL) {
-        c = GWListener_Poll(sImap);
+        c = GWListener_Poll(sImap, 1);
         if (c != NULL && !GWMail_AcceptImap(c)) {
             gw_log("mail busy, dropped an IMAP connection");
             GWConn_Destroy(c);
@@ -274,7 +297,7 @@ void GW_Poll(void)
     }
 
     if (sPop != NULL) {
-        c = GWListener_Poll(sPop);
+        c = GWListener_Poll(sPop, 1);
         if (c != NULL && !GWMail_AcceptPop(c)) {
             gw_log("mail busy, dropped a POP connection");
             GWConn_Destroy(c);
@@ -282,7 +305,7 @@ void GW_Poll(void)
     }
 
     if (sSmtp != NULL) {
-        c = GWListener_Poll(sSmtp);
+        c = GWListener_Poll(sSmtp, 1);
         if (c != NULL && !GWMail_AcceptSmtp(c)) {
             gw_log("mail busy, dropped an SMTP connection");
             GWConn_Destroy(c);

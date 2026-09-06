@@ -506,17 +506,29 @@ GWListener *GWListener_Open(UInt16 port, OTQLen qlen)
     return l;
 }
 
-GWConn *GWListener_Poll(GWListener *l)
+GWConn *GWListener_Poll(GWListener *l, int accepting)
 {
     OSStatus err;
 
     if (l == NULL || !l->open) return NULL;
 
-    /* An accept is already in flight: let it finish before listening again. */
+    /*
+     * An accept already in flight is pumped whether or not the caller has room
+     * for it. Skipping that was a mistake: a connection part-way through being
+     * accepted when the proxy filled up would sit there unpumped, so it never
+     * completed and never reported its error either, and the listener could
+     * not start the next listen because this one still held l->pending.
+     *
+     * When there is no room the connection is simply held here, finished but
+     * undelivered, until a slot frees.
+     */
     if (l->pending != NULL) {
         GWConnState st = GWConn_Pump(l->pending);
         if (st == kGWConnReady) {
-            GWConn *c = l->pending;
+            GWConn *c;
+
+            if (!accepting) return NULL;
+            c = l->pending;
             l->pending = NULL;
             l->fAcceptDone = false;
             return c;
@@ -530,6 +542,9 @@ GWConn *GWListener_Poll(GWListener *l)
         }
         return NULL;
     }
+
+    /* Room to start a new one? If not, leave the indication queued in OT. */
+    if (!accepting) return NULL;
 
     if (!l->fListen) return NULL;
     l->fListen = false;

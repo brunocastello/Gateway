@@ -8,7 +8,7 @@
 
 show_window     = 1
 max_sessions    = 12
-max_connects    = 1
+max_connects    = 8
 
 
 # ------------------------------------------------------------- Web proxy
@@ -21,6 +21,7 @@ max_body_mb      = 0
 # --------------------------------------------------------- Wayback proxy
 
 wayback_port      = 8888
+wayback_connects = 1
 wayback_date      = 20011231
 wayback_tolerance = 730
 wayback_geocities = 1

@@ -22,7 +22,8 @@ as confusing as it sounds, so heed the warning.
 |---|---|---|
 | `show_window` | `1` | Open the log window at launch. `0` starts without one; the File menu is always present, so Gateway can be quit and the window brought back either way. Hiding the window records the choice here. |
 | `max_sessions` | `12` | Concurrent proxy connections, clamped to 16. Each costs roughly 110 KB of the 8 MB partition. When they are all busy Gateway stops accepting, so surplus connections wait in the listen backlog rather than being refused. |
-| `max_connects` | `1` | How many upstream connections may be *opening* at once, across all sessions, clamped to 8. Gateway runs a single cooperative thread, so concurrent TLS handshakes do not overlap -- they take turns on one CPU -- while a burst of new connections from one address is exactly what the Internet Archive's rate limiter refuses, logged as `connect failed [failed, OT 61, ...]`. Opening them one at a time costs little and the connection pool recovers the throughput. Raise it only for a fast, tolerant upstream. |
+| `max_connects` | `8` | How many upstream connections may be *opening* at once for ordinary live-web sessions, clamped to 8. |
+| `wayback_connects` | `1` | The same cap for sessions served from the Internet Archive, counted separately so neither starves the other. It is low because a burst of new connections from one address is exactly what the archive's rate limiter refuses, logged as `connect failed [failed, OT 61, ...]`. Gateway runs a single cooperative thread, so concurrent TLS handshakes do not overlap anyway -- they take turns on one CPU -- and the connection pool recovers the throughput, since a reused connection skips the handshake entirely. |
 
 ## Web proxy
 

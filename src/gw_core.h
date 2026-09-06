@@ -56,6 +56,9 @@ int         GW_MaxSessions(void);
 /* How many upstream connections may be opening at once (max_connects). */
 int         GW_MaxConnects(void);
 
+/* The same, for sessions served from the archive (wayback_connects). */
+int         GW_WaybackConnects(void);
+
 /* ---- Module 3: the Wayback listener ---------------------------------- */
 
 int         GW_WaybackPort(void);
