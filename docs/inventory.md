@@ -238,35 +238,34 @@ compiler. `.github/workflows/host-tests.yml` runs those tests **and** greps the
 directory for platform includes, so the rule fails the build rather than
 drifting.
 
-## 8a. Faceless operation
+## 8a. Process visibility
 
-Whether an application appears in the Application menu — and therefore in a
-dock such as A-Dock — is decided by the Process Manager from the `SIZE`
-resource at launch. There is no runtime call for it, so `show_window` is
-applied by editing Gateway's own `SIZE` resource, taking effect at the next
-launch.
+`Processes.h` defines exactly one flag that hides a running application:
 
-The edit happens **only at launch**, never mid-session. An earlier version
-applied it the moment the window was hidden, which left a running application
-with no window, no menu bar and no Application menu entry -- nothing to quit it
-with short of restarting the machine. Hiding a window must never be the thing
-that makes an application unreachable, so hiding now records the preference and
-nothing more; the transition happens at the next launch. A faceless session can
-still be ended by putting `show_window` back to 1, since Gateway re-reads the
-prefs file every three seconds and stops when it sees the change.
+```
+modeOnlyBackground = 0x00000400
+```
 
-Because `ApplyFacelessSetting()` runs unconditionally at startup, an
-application file left with the flag set repairs itself the first time it starts
-with the setting back at 1.
+It comes from the `SIZE` resource, the Process Manager reads it at launch, and
+it removes the application from the Application menu. A dock has nothing else
+to go on, so it takes the entry away there too. There is no way for an
+application to appear in one and not the other, and no runtime call to change
+any of it.
 
-That edit goes through the resource map the Process Manager already opened.
-Reopening the file with `FSpOpenResFile` is what broke it the first time: the
-Resource Manager returns the **existing** refNum rather than a second one, so
-the matching `CloseResFile` closed the application's own resources and the
-next resource access killed the process. Nothing in `SetFacelessFlag()` closes
-anything, `gAppResFile` is captured before anything else can change the
-current resource file, and a read-only fork simply fails the write and is
-reported to the log.
+Gateway therefore does not try. `show_window` controls the window and nothing
+else, and the menu bar is always present so the application can always be
+quit.
+
+An earlier version set `modeOnlyBackground` the moment the window was hidden.
+That left a running application with no window, no menu bar and no Application
+menu entry — nothing to quit it with short of restarting the machine. Hiding a
+window must never be the thing that makes an application unreachable.
+`ClearFacelessFlag()` is what remains: it only ever *clears* the bit, so a file
+left carrying it from that version repairs itself on the next launch. The edit
+goes through the resource map the Process Manager already opened and closes
+nothing — reopening the file with `FSpOpenResFile` was a separate bug, since
+the Resource Manager returns the **existing** refNum and the matching
+`CloseResFile` closed the application's own resources.
 
 ## 9. Known gaps
 

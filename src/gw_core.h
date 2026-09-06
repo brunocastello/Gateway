@@ -51,12 +51,6 @@ int         GW_ShowWindowPref(void);
 /* Remember the choice, so the next launch starts the way this one ended. */
 void        GW_SetShowWindowPref(int show);
 
-/*
- * Re-read the setting from disk. This is how a Gateway running without a
- * window gets back: with no menu bar there is no Quit item, so it watches the
- * prefs file and stops when the setting is put back to 1.
- */
-int         GW_ShowWindowPrefReload(void);
 int         GW_HttpPort(void);
 int         GW_ImapPort(void);
 int         GW_PopPort(void);

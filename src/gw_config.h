@@ -28,9 +28,6 @@ extern "C" {
 /* Read the prefs file. Safe to call again to pick up edits. */
 void        GWConfig_Load(void);
 
-/* Same, without writing anything to the log. */
-void        GWConfig_LoadQuiet(void);
-void        GWConfig_Reload(void);
 int         GWConfig_Loaded(void);
 
 const char *GWConfig_Str(const char *key, const char *def);
