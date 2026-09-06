@@ -1264,6 +1264,28 @@ void GWProxy_Poll(void)
     pool_poll();
 }
 
+/*
+ * Whether a slot is free right now.
+ *
+ * The caller polls its listeners only when this is true. Refusing to accept
+ * leaves the connection sitting in Open Transport's listen backlog, where the
+ * client simply waits; accepting and then destroying it -- which is what
+ * Gateway used to do -- sends the client a reset, and a browser that gets a
+ * reset on an image usually abandons that image rather than retrying it. That
+ * is a page that never finishes loading. Every session is bounded by
+ * GW_IDLE_TIMEOUT, so a slot cannot be held indefinitely and the backlog
+ * cannot deadlock.
+ */
+int GWProxy_CanAccept(void)
+{
+    int i;
+
+    if (sSessions == NULL) return 0;
+    for (i = 0; i < sSessionCount; i++)
+        if (sSessions[i].state == kHPFree) return 1;
+    return 0;
+}
+
 int GWProxy_ActiveCount(void)
 {
     int i, n = 0;

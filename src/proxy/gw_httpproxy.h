@@ -37,6 +37,12 @@ int  GWProxy_Accept(GWConn *c, int wayback);
 /* One cooperative slice across all live sessions. */
 void GWProxy_Poll(void);
 
+/*
+ * True when a session slot is free. Poll the proxy listeners only when it is:
+ * see the comment on the definition for why backpressure beats refusing.
+ */
+int  GWProxy_CanAccept(void);
+
 int  GWProxy_ActiveCount(void);
 
 #endif /* GW_HTTPPROXY_H */

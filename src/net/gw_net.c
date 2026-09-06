@@ -559,8 +559,19 @@ GWConn *GWListener_Poll(GWListener *l)
     err = OTAccept(l->ep, l->pending->ep, &l->call);
     if (err != noErr && err != kOTNoDataErr) {
         if (err == kOTLookErr) {
+            /*
+             * The client hung up between the T_LISTEN and the accept -- a
+             * browser cancelling a page does this to every connection it had
+             * queued. Acknowledge the disconnect and say nothing: it is
+             * ordinary traffic, and logging it buried the real lines.
+             */
             OTResult look = OTLook(l->ep);
-            if (look == T_DISCONNECT) OTRcvDisconnect(l->ep, NULL);
+            if (look == T_DISCONNECT) {
+                OTRcvDisconnect(l->ep, NULL);
+                GWConn_Destroy(l->pending);
+                l->pending = NULL;
+                return NULL;
+            }
         }
         gw_log("port %u: OTAccept %d", (unsigned)l->port, (int)err);
         GWConn_Destroy(l->pending);

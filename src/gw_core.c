@@ -166,10 +166,16 @@ int GW_Init(void)
     sWaybackSet.ct_encoding  = GWConfig_Num("wayback_ct_encoding", 1) != 0;
     sWaybackPort = (int)GWConfig_Num("wayback_port", 8888);
 
-    sHttp = GWListener_Open((UInt16)sHttpPort, (OTQLen)GW_MaxSessions());
+    /*
+     * The listen backlog is deeper than the session table on purpose. Now that
+     * a full proxy stops accepting rather than refusing, the backlog is where
+     * a browser's surplus connections wait, so it wants room for more than one
+     * page's worth of parallel requests.
+     */
+    sHttp = GWListener_Open((UInt16)sHttpPort, (OTQLen)(GW_MaxSessions() * 2));
     if (sWaybackPort > 0) {
         sWayback = GWListener_Open((UInt16)sWaybackPort,
-                                   (OTQLen)GW_MaxSessions());
+                                   (OTQLen)(GW_MaxSessions() * 2));
         if (sWayback != NULL)
             gw_log("wayback: serving %s +%ld days", sWaybackSet.date,
                    sWaybackSet.tolerance);
@@ -217,19 +223,21 @@ void GW_Poll(void)
 {
     GWConn *c;
 
-    if (sHttp != NULL) {
-        c = GWListener_Poll(sHttp);
-        if (c != NULL && !GWProxy_Accept(c, 0)) {
-            gw_log("proxy busy, dropped a connection");
-            GWConn_Destroy(c);
+    /*
+     * Only take a connection off a proxy listener when there is somewhere to
+     * put it. Anything else waits in Open Transport's backlog until a slot
+     * frees, which the client experiences as a slow connection rather than as
+     * a reset. GWProxy_CanAccept() carries the reasoning.
+     */
+    if (GWProxy_CanAccept()) {
+        if (sHttp != NULL) {
+            c = GWListener_Poll(sHttp);
+            if (c != NULL && !GWProxy_Accept(c, 0)) GWConn_Destroy(c);
         }
-    }
 
-    if (sWayback != NULL) {
-        c = GWListener_Poll(sWayback);
-        if (c != NULL && !GWProxy_Accept(c, 1)) {
-            gw_log("proxy busy, dropped a wayback connection");
-            GWConn_Destroy(c);
+        if (sWayback != NULL && GWProxy_CanAccept()) {
+            c = GWListener_Poll(sWayback);
+            if (c != NULL && !GWProxy_Accept(c, 1)) GWConn_Destroy(c);
         }
     }
 
