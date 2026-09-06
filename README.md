@@ -95,9 +95,9 @@ work. Decrypt it first, on the modern machine:
 python3 tools/extract-refresh-token.py /path/to/emailproxy.config
 ```
 
-See `docs/prefs-example.txt` for the whole prefs file. It goes in the System
-Preferences folder, named `Gateway Prefs`, and CR, LF or CRLF line endings all
-work.
+`docs/prefs-example.txt` is a starting point for the prefs file, which goes in
+the System Preferences folder named `Gateway Prefs`. Every setting is
+documented in `docs/prefs.md`.
 
 ---
 
@@ -154,6 +154,7 @@ tests/host/           unit tests for src/portable, built with the host cc
 third_party/certainly Certainly + BearSSL, vendored (see PATCHES.md)
 third_party/InterfacesAndLibraries
                       Apple's Universal Interfaces, for the Open Transport files
+docs/prefs.md         reference for every setting
 docs/inventory.md     Phase 0: toolchain shape, memory budget, known gaps
 docs/porting.md       what it would take to run this on Windows or Mac OS X
 docs/module3-wayback.md

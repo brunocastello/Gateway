@@ -31,6 +31,15 @@
 #define GW_RAW_MAX      16384L
 #define GW_OUT_MAX      32768L
 #define GW_MAX_REDIRECT 5
+
+/*
+ * The Internet Archive refuses connections for a few seconds when it is asked
+ * for too much at once, which a period page with thirty images does easily.
+ * A refusal is not a missing asset, so back off briefly and ask again rather
+ * than handing the browser a broken image.
+ */
+#define GW_WB_RETRIES   3
+#define GW_WB_BACKOFF   40          /* ticks; multiplied by the attempt */
 #define GW_IDLE_TIMEOUT (120 * 60)          /* ticks: two minutes */
 
 typedef enum {
@@ -42,6 +51,7 @@ typedef enum {
     kHPBody,
     kHPTunnelConnect,
     kHPTunnel,
+    kHPRetryWait,
     kHPFlushAndClose,
     kHPDone
 } GWHttpState;
@@ -58,6 +68,8 @@ typedef struct {
     GWUrl         redirectTo;               /* resolved before deciding to follow */
     int           wayback;                  /* arrived on the archive listener */
     GWUrl         waybackOrigin;            /* what the client actually asked for */
+    int           retries;
+    unsigned long retryAt;
     int           redirects;
 
     char         *chead;                    /* client request head           */
@@ -807,6 +819,19 @@ static void session_step(GWHttpSession *s)
             s->state = kHPSendRequest;
         } else if (s->up.state == kGWStreamError ||
                    s->up.state == kGWStreamClosed) {
+            /*
+             * The archive refuses connections when it is being hit hard, and
+             * a refusal says nothing about whether the asset exists. Wait a
+             * moment and ask again before giving up on it.
+             */
+            if (s->wayback && s->retries < GW_WB_RETRIES) {
+                s->retries++;
+                s->retryAt = GWNet_Ticks() +
+                             (unsigned long)(GW_WB_BACKOFF * s->retries);
+                GWStream_Destroy(&s->up);
+                s->state = kHPRetryWait;
+                break;
+            }
             {
                 char why[160];
                 session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
@@ -814,6 +839,15 @@ static void session_step(GWHttpSession *s)
                                 "Gateway: could not reach the origin server.\r\n",
                              GWStream_Describe(&s->up, why, sizeof(why)));
             }
+        }
+        break;
+
+    case kHPRetryWait:
+        if (GWNet_Ticks() >= s->retryAt) {
+            gw_log("#%ld retrying (%d of %d)", s->id, s->retries,
+                   GW_WB_RETRIES);
+            s->lastActivity = GWNet_Ticks();
+            session_start_upstream(s);
         }
         break;
 

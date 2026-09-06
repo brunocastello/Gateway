@@ -17,7 +17,12 @@
 #include "portable/gw_util.h"
 #include "portable/gw_log.h"
 
-#define GW_PREFS_MAX 8192
+/*
+ * Generous on purpose. An 8 KB buffer was silently truncating a 9.7 KB prefs
+ * file mid-way through the refresh token, which the provider then rejected as
+ * malformed -- a failure that looked exactly like a revoked credential.
+ */
+#define GW_PREFS_MAX 32768
 
 static char   sText[GW_PREFS_MAX];
 static long   sLen;
@@ -65,7 +70,17 @@ void GWConfig_Load(void)
     sText[sLen] = '\0';
     sLoaded = 1;
     strcpy(sSource, "Preferences:Gateway Prefs");
-    gw_log("read %ld bytes of prefs", sLen);
+
+    /*
+     * A full buffer means the file was cut off, and every setting past the cut
+     * silently reverts to its default. Say so: this went unnoticed once and
+     * cost an evening.
+     */
+    if (sLen >= GW_PREFS_MAX - 1)
+        gw_log("WARNING: prefs file is larger than %d bytes and was TRUNCATED",
+               (int)GW_PREFS_MAX - 1);
+    else
+        gw_log("read %ld bytes of prefs", sLen);
 
     /*
      * Say out loud whether the settings that matter actually parsed. A prefs
@@ -126,6 +141,13 @@ static const char *gw_provider_default(const char *key)
     if (!gw_prefs_get(sText, (size_t)sLen, "provider",
                       provider, sizeof(provider)))
         provider[0] = '\0';
+
+    /*
+     * "custom" supplies nothing, so the explicit imap_host/pop_host/smtp_host
+     * settings stand on their own. Anything else falls back to Outlook, which
+     * is what an unset provider should do.
+     */
+    if (gw_stricmp(provider, "custom") == 0) return NULL;
 
     gmail = (gw_stricmp(provider, "gmail") == 0 ||
              gw_stricmp(provider, "google") == 0);
