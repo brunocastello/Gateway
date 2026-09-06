@@ -2,7 +2,15 @@ name: Build (Mac OS 9 PowerPC / Classic Toolbox)
 
 on:
   push:
+    tags:
+      - 'v*'
     # Documentation-only changes do not need a PowerPC build.
+    #
+    # This filter also applies to tag pushes, so tagging a commit that only
+    # touched documentation skips the build and therefore the release. When
+    # that happens, publish it by hand against the tag:
+    #
+    #     gh workflow run build.yml --ref v0.2.0
     paths-ignore:
       - 'docs/**'
       - '**.md'
