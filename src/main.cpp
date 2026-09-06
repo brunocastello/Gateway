@@ -148,6 +148,8 @@ bool SetBackgroundOnlyFlag(bool on)
 
 class GatewayApp;
 extern GatewayApp *gApp;
+pascal OSErr HandleQuitEvent(const AppleEvent *event, AppleEvent *reply,
+                             long refcon);
 
 class GatewayApp {
 public:
