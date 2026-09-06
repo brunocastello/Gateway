@@ -250,3 +250,37 @@ finish the exchange from the ClientHello whichever it prefers, with no
 HelloRetryRequest round trip. `negotiated_group` records the choice and the
 ECDH dispatches on it; the P-256 secret is the X coordinate of the shared
 point, per RFC 8446 §7.4.2. BearSSL supplies the curve as `br_ec_p256_m15`.
+
+## 13. Offering TLS_AES_256_GCM_SHA384 guaranteed a failed handshake
+
+The transcript hash has to be started before the server has chosen a cipher
+suite, so Certainly starts it as SHA-256. `tls13_state_recv_server_hello()`
+then compares the suite's hash against the one already running and gives up if
+they differ:
+
+```c
+/* TODO: In a full implementation, we'd need to re-hash from the original
+ * ClientHello bytes. For now, treat this as an error ... */
+hs->error = BR_ERR_BAD_CIPHER_SUITE;
+```
+
+`TLS_AES_256_GCM_SHA384` was nevertheless in the offered list, so the failure
+was reachable purely by a server taking us up on it — and Microsoft's
+endpoints do exactly that, selecting AES-256-GCM-SHA384 whichever order the
+client lists suites in:
+
+```
+-ciphersuites 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384'  ->  AES_256_GCM_SHA384
+-ciphersuites 'TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256'  ->  AES_256_GCM_SHA384
+```
+
+So the handshake reached ServerHello and then rejected the server's choice of a
+suite Certainly had itself proposed.
+
+The suite is withdrawn from the ClientHello rather than the TODO being
+implemented. RFC 8446 §9.1 makes `TLS_AES_128_GCM_SHA256` mandatory to
+implement, so nothing is lost in interoperability, and the remaining suites all
+use SHA-256 — which makes the mismatch branch unreachable instead of merely
+unlikely. Restoring AES-256 needs a transcript that keeps the ClientHello bytes
+so it can be re-hashed under SHA-384; the HRR path would need the same
+treatment for its synthetic message_hash.

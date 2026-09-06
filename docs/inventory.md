@@ -247,6 +247,12 @@ drifting.
   is what personal Outlook.com and Hotmail accounts require; set
   `smtp_starttls = 0` with port 465 for a provider offering implicit TLS.
   See `third_party/certainly/PATCHES.md` §5.
+* **TLS 1.3 offers ChaCha20-Poly1305 and AES-128-GCM only.**
+  `TLS_AES_256_GCM_SHA384` is withheld because it is the one suite needing a
+  SHA-384 transcript, and the transcript must be started before the server has
+  picked a suite. Microsoft's endpoints select it whenever it is offered,
+  regardless of client order, so offering it guaranteed a failed handshake.
+  See `third_party/certainly/PATCHES.md` §13.
 * **TLS 1.3 key exchange offers X25519 and P-256.** Certainly shipped with
   X25519 only, which no Microsoft endpoint accepts — see
   `third_party/certainly/PATCHES.md` §12. Any host requiring a group outside

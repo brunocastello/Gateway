@@ -239,7 +239,24 @@ static const uint16_t tls12_cipher_suites[] = {
 static const uint16_t tls13_cipher_suites[] = {
     TLS13_CHACHA20_POLY1305_SHA256,  /* 0x1303 */
     TLS13_AES_128_GCM_SHA256,       /* 0x1301 */
-    TLS13_AES_256_GCM_SHA384,       /* 0x1302 */
+    /*
+     * TLS_AES_256_GCM_SHA384 (0x1302) is deliberately absent (Gateway patch
+     * - see PATCHES.md).
+     *
+     * It is the only suite here whose transcript hash is SHA-384, and the
+     * transcript has to be started before the server has chosen a suite. The
+     * code below bails out with BR_ERR_BAD_CIPHER_SUITE when the choice does
+     * not match the hash already in use, because recovering would mean
+     * re-hashing the ClientHello from its original bytes.
+     *
+     * That is not theoretical: login.microsoftonline.com and the Outlook mail
+     * servers select AES-256-GCM-SHA384 whenever it is offered, ignoring
+     * client preference order, so offering it guaranteed a failed handshake
+     * with every Microsoft endpoint. RFC 8446 section 9.1 makes
+     * TLS_AES_128_GCM_SHA256 mandatory to implement, so withdrawing this one
+     * costs no interoperability. Restore it only together with a transcript
+     * that can be re-hashed.
+     */
 };
 
 /*

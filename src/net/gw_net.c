@@ -754,6 +754,7 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
     const char *phase = "idle";
     OSStatus    otErr = noErr;
     UInt32      addr = 0;
+    int         tlsErr = 0;
 
     if (cap == 0) return out;
 
@@ -769,21 +770,22 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
         }
         otErr = MacTLS_GetOTError(s->sec);
         addr  = (UInt32)MacTLS_GetResolvedAddress(s->sec);
+        tlsErr = MacTLS_GetBearSSLError(s->sec);
     } else if (s != NULL && s->plain != NULL) {
         otErr = s->plain->err;
         addr  = s->plain->remote.fHost;
     }
 
     if (addr != 0) {
-        snprintf(out, cap, "%s [%s, OT %d, %lu.%lu.%lu.%lu]",
-                 GWStream_ErrorText(s), phase, (int)otErr,
+        snprintf(out, cap, "%s [%s, OT %d, TLS %d, %lu.%lu.%lu.%lu]",
+                 GWStream_ErrorText(s), phase, (int)otErr, tlsErr,
                  (unsigned long)((addr >> 24) & 0xFF),
                  (unsigned long)((addr >> 16) & 0xFF),
                  (unsigned long)((addr >> 8) & 0xFF),
                  (unsigned long)(addr & 0xFF));
     } else {
-        snprintf(out, cap, "%s [%s, OT %d, name unresolved]",
-                 GWStream_ErrorText(s), phase, (int)otErr);
+        snprintf(out, cap, "%s [%s, OT %d, TLS %d, name unresolved]",
+                 GWStream_ErrorText(s), phase, (int)otErr, tlsErr);
     }
     return out;
 }
