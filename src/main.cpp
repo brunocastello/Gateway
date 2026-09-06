@@ -20,6 +20,12 @@
 #include <Fonts.h>
 #include <Icons.h>
 #include <Menus.h>
+/*
+ * The Control Manager. Multiversal has no Controls.h -- its declarations come
+ * out in Multiverse.h, which is why an earlier attempt concluded, wrongly,
+ * that controls were unavailable.
+ */
+#include <Multiverse.h>
 #include <Processes.h>
 #include <Quickdraw.h>
 #include <Resources.h>
@@ -78,6 +84,19 @@ const short kFontGeneva = 3;
  * procID goes in by value, as the Monaco font ID above does.
  */
 const short kZoomDocProc = 8;
+
+/*
+ * Scroll bar geometry and part codes, by value. scrollBarProc is CDEF 16, and
+ * the part codes are the classic ones: the names are in Multiversal but
+ * spelling them out keeps this block readable next to kZoomDocProc.
+ */
+const short kScrollBarProc = 16;
+const short kScrollWidth   = 15;
+const short kInUpButton    = 20;
+const short kInDownButton  = 21;
+const short kInPageUp      = 22;
+const short kInPageDown    = 23;
+const short kInThumb       = 129;
 
 /*
  * Platinum. Mac OS 9's window background is 0xDD grey, not white -- an About
@@ -206,7 +225,7 @@ public:
     GatewayApp()
         : mWindow(nullptr), mAppleMenu(nullptr), mFileMenu(nullptr),
           mDone(false), mRunning(false), mSeenGeneration(-1),
-          mScrollBack(0) {}
+          mScrollBack(0), mScroll(nullptr) {}
 
     bool Start()
     {
@@ -305,6 +324,64 @@ private:
         if (mWindow == nullptr) return;
 
         SetPort(reinterpret_cast<GrafPtr>(mWindow));
+
+        SetRect(&bounds, 0, 0, kScrollWidth, 50);   /* placed by LayoutScroll */
+        ToPascal("", title);
+        mScroll = NewControl(mWindow, &bounds, title, true, 0, 0, 0,
+                             kScrollBarProc, 0);
+        LayoutScroll();
+    }
+
+    /*
+     * Along the right edge, stopping short of the grow box, overlapping the
+     * window frame by a pixel the way a document window's scroll bar does.
+     */
+    void LayoutScroll()
+    {
+        Rect area;
+
+        if (mWindow == nullptr || mScroll == nullptr) return;
+        area = reinterpret_cast<GrafPtr>(mWindow)->portRect;
+
+        HideControl(mScroll);
+        MoveControl(mScroll, static_cast<short>(area.right - kScrollWidth),
+                    static_cast<short>(area.top - 1));
+        SizeControl(mScroll, static_cast<short>(kScrollWidth + 1),
+                    static_cast<short>(area.bottom - area.top - kScrollWidth + 2));
+        ShowControl(mScroll);
+    }
+
+    /* Point the scroll bar at where the log actually is. */
+    void UpdateScroll()
+    {
+        int count, rows, most;
+
+        if (mScroll == nullptr) return;
+
+        count = GW_LogCount();
+        rows = VisibleRows();
+        most = count - rows;
+        if (most < 0) most = 0;
+        if (mScrollBack > most) mScrollBack = most;
+
+        SetControlMaximum(mScroll, static_cast<short>(most));
+        SetControlValue(mScroll, static_cast<short>(most - mScrollBack));
+    }
+
+    /* One click in an arrow or a page region. */
+    void ScrollByPart(short part)
+    {
+        int page = VisibleRows() - 1;
+
+        if (page < 1) page = 1;
+
+        switch (part) {
+        case kInUpButton:   Scroll(1);      break;
+        case kInDownButton: Scroll(-1);     break;
+        case kInPageUp:     Scroll(page);   break;
+        case kInPageDown:   Scroll(-page);  break;
+        default: break;
+        }
     }
 
     /*
@@ -479,8 +556,9 @@ private:
         bool showing;
 
         if (mWindow != nullptr) {
-            DisposeWindow(mWindow);
+            DisposeWindow(mWindow);     /* takes its controls with it */
             mWindow = nullptr;
+            mScroll = nullptr;
             showing = false;
         } else {
             SetUpWindow();
@@ -588,6 +666,7 @@ private:
                  * 68K trap glue InterfaceLib does not export to PowerPC. */
                 SizeWindow(win, static_cast<short>(size & 0xFFFF),
                            static_cast<short>((size >> 16) & 0xFFFF), true);
+                LayoutScroll();
                 Redraw();
             }
             break;
@@ -598,16 +677,42 @@ private:
             if (TrackBox(win, event.where, part)) {
                 SetPort(reinterpret_cast<GrafPtr>(win));
                 ZoomWindow(win, part, true);
+                LayoutScroll();
                 Redraw();
             }
             break;
 
-        case inContent:
+        case inContent: {
+            Point         local;
+            ControlHandle hit = nullptr;
+            short         where;
+
             if (win != FrontWindow()) {
                 SelectWindow(win);
                 break;
             }
+            if (win != mWindow || mScroll == nullptr) break;
+
+            local = event.where;
+            SetPort(reinterpret_cast<GrafPtr>(mWindow));
+            GlobalToLocal(&local);
+
+            where = FindControl(local, win, &hit);
+            if (hit != mScroll) break;
+
+            if (where == kInThumb) {
+                /* The Control Manager drags the thumb; read where it landed. */
+                if (TrackControl(hit, local, nullptr) == kInThumb) {
+                    int most = GetControlMaximum(mScroll);
+                    mScrollBack = most - GetControlValue(mScroll);
+                    Redraw();
+                }
+            } else if (where != 0) {
+                if (TrackControl(hit, local, nullptr) == where)
+                    ScrollByPart(where);
+            }
             break;
+        }
 
         default:
             break;
@@ -685,9 +790,19 @@ private:
         short   v;
         int     count, first, i;
 
+        Rect textArea;
+
         SetPort(port);
         EraseRect(&area);
         DrawGrowIcon(mWindow);
+
+        UpdateScroll();
+        if (mScroll != nullptr) Draw1Control(mScroll);
+
+        /* Keep the log clear of the scroll bar rather than drawing under it. */
+        textArea = area;
+        textArea.right = static_cast<short>(textArea.right - kScrollWidth);
+        ClipRect(&textArea);
 
         TextFont(4);           /* Monaco: the log needs a fixed pitch */
         TextSize(9);
@@ -717,11 +832,14 @@ private:
                 DrawCString(text);
             }
         }
+
+        ClipRect(&area);
     }
 
     /* How many lines back from the newest the log is scrolled. */
     int           mScrollBack;
 
+    ControlHandle mScroll;
     WindowPtr     mWindow;
     MenuHandle    mAppleMenu;
     MenuHandle    mFileMenu;

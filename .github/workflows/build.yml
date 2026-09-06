@@ -56,8 +56,9 @@ jobs:
           ls "$TOOLCHAIN/powerpc-apple-macos/include" | tr '\n' ' '
           echo
           echo "--- Control Manager: which header, if any, declares it ---"
-          grep -l "NewControl\|scrollBarProc\|TrackControl" \
-            "$TOOLCHAIN/powerpc-apple-macos/include"/*.h 2>/dev/null || \
+          grep -oE "\\b(New|Dispose|Draw1|Find|Track|Test|Hide|Show|Move|Size|Hilite)Control\\b|\\b(Set|Get)(Ctl|Control)(Value|Max|Min|Maximum|Minimum)\\b" \
+            "$TOOLCHAIN/powerpc-apple-macos/include"/*.h 2>/dev/null | \
+            sed 's/.*://' | sort -u | tr '\n' ' ' || \
             echo "(no header declares the Control Manager)"
           echo
 
