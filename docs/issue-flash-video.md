@@ -1,7 +1,8 @@
 # Open issue — Flash video stalls through Gateway, plays through the modern-Mac proxy
 
-Recorded 2026-09-06 for a later session. Not investigated beyond reading the
-log against the code; nothing here has been tested on hardware.
+Recorded 2026-09-06. **Fixes for hypotheses 1, 3 and 4 have landed and the
+logging has been rebuilt; hypothesis 2 is addressed by a change of default.**
+Not yet confirmed on hardware — the section at the end says what to look for.
 
 ## Symptom
 
@@ -116,18 +117,52 @@ Worth adding, all cheap:
 - a line when a request carries `Range:`, and what status came back;
 - confirmation of whether "proxy busy" appears during a page load.
 
-## Fixes to evaluate, once there is evidence
+## What was changed
 
-- **Pass `Content-Length` through** when Gateway is not de-chunking. It is only
-  unsafe to forward when the body length changes, which is exactly the chunked
-  case; a plain response can keep it.
-- **Do not follow redirects for sub-resources.** Following them for a top-level
-  navigation is useful; doing it for media fetches loses cookies and hides the
-  final URL. A preference to disable redirect following entirely would settle
-  the question in one test.
-- **Raise or remove the body cap** for responses that are not being buffered.
-- **Raise `GW_MAX_PATH`** to 4096, and `GW_MAX_SESSIONS` past 4 if the memory
-  budget in `docs/inventory.md` allows.
+All of this is in the build following this note.
+
+- **`Content-Length` is forwarded** whenever the body passes through untouched,
+  and dropped only when de-chunking changes it. `gw_http_filter_response()`
+  takes a `keep_length` argument; the caller passes `!res.chunked`.
+- **Redirects default to `auto`**: Gateway follows a `3xx` only when the client
+  could not have — plaintext to TLS — and passes everything else back, so the
+  browser follows it with its own cookies and learns the final URL.
+  `follow_redirects = auto|always|never` restores the old behaviour if needed.
+- **The body ceiling is gone by default.** `max_body_mb = 0`. The 2 MiB cap
+  protected nothing, since bodies stream through a 32 KB buffer and are never
+  held.
+- **`GW_MAX_PATH` is 4096**, so signed media URLs are no longer rejected as an
+  unusable Location header. `GWResponse` moved off the stack accordingly.
+- **The log now says what happened**: the request path, the response length or
+  `chunked` or `no length`, the full redirect target including port and path,
+  and a line when a redirect is passed back rather than followed.
+
+One hypothesis was disproved on the way. A test now covers it: a relative
+`Location` resolves against the origin including its **port**, so `:8080` was
+never being lost on a redirect. The old log simply never printed it.
+
+## If it still stalls
+
+The log will now distinguish the remaining possibilities:
+
+- `<- 200 host no length` on the media fetch means the origin itself sends no
+  `Content-Length`, and the player is unlikely to start. That is an origin
+  behaviour, not a Gateway one, and would need buffering to synthesise.
+- `passing 302 to the client` followed by no further request means the browser
+  declined to follow it — check whether the target was `https` and the browser
+  cannot reach it.
+- `proxy busy, dropped a connection` means `GW_MAX_SESSIONS` (4) is the
+  bottleneck for a page opening many parallel fetches; raise it and re-measure.
+- A `206` with a `Content-Range` and no `Content-Length` would indicate the
+  player is using range requests and needs both forwarded.
+
+## Fixes still to evaluate, if needed
+
+- **Raise `GW_MAX_SESSIONS`** past 4 if the log shows connections being
+  dropped. Each session costs roughly 109 KB, so the memory budget in
+  `docs/inventory.md` has room for six or eight.
+- **Buffer to synthesise a length** if the origin sends none and the player
+  refuses to start without one. Expensive, and a last resort.
 
 ## The quickest experiment
 

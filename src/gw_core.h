@@ -35,6 +35,12 @@ const char *GW_StatusLine(void);
 
 int         GW_ActiveSessions(void);
 
+/* 0 auto, 1 always, 2 never. See GWRedirectPolicy in gw_http.h. */
+int         GW_RedirectPolicy(void);
+
+/* Ceiling on a relayed response body, in bytes; 0 means no limit. */
+long        GW_MaxBodyBytes(void);
+
 /*
  * Read the prefs before the Toolbox side decides what to put on screen.
  * Separate from GW_Init because the window has to be created knowing this.

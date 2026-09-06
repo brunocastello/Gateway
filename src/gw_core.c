@@ -15,6 +15,7 @@
 #include "gw_config.h"
 #include "net/gw_net.h"
 #include "portable/gw_log.h"
+#include "portable/gw_util.h"
 #include "proxy/gw_httpproxy.h"
 #include "proxy/gw_mail.h"
 #include "proxy/gw_token.h"
@@ -29,6 +30,29 @@ static int         sHttpPort, sImapPort, sPopPort, sSmtpPort;
 void GW_LoadSettings(void)
 {
     GWConfig_Load();
+}
+
+int GW_RedirectPolicy(void)
+{
+    const char *how = GWConfig_Str("follow_redirects", "auto");
+
+    if (gw_stricmp(how, "always") == 0) return 1;
+    if (gw_stricmp(how, "never") == 0)  return 2;
+    return 0;                                   /* auto */
+}
+
+long GW_MaxBodyBytes(void)
+{
+    /*
+     * Zero by default, meaning no ceiling. The original 2 MiB cap protected
+     * nothing: response bodies are streamed through a 32 KB buffer and never
+     * held, so the limit only truncated large downloads -- and no video is
+     * under 2 MiB.
+     */
+    long mb = GWConfig_Num("max_body_mb", 0);
+
+    if (mb <= 0) return 0;
+    return mb * 1024L * 1024L;
 }
 
 int GW_ShowWindowPref(void)

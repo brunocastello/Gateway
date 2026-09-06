@@ -3,7 +3,7 @@
 
 #include <string.h>
 
-/* Headers that describe this hop only and must not be relayed. */
+/* Headers that describe this hop only and must never be relayed either way. */
 static const char *kHopByHop[] = {
     "Connection",
     "Proxy-Connection",
@@ -14,22 +14,39 @@ static const char *kHopByHop[] = {
     "Trailer",
     "Transfer-Encoding",
     "Upgrade",
-    "Host",                 /* Gateway writes its own */
-    "Accept-Encoding",      /* Gateway forces identity */
-    "Content-Length",       /* re-emitted verbatim only when a body follows */
     NULL
 };
 
-static int is_hop_by_hop(const char *line, size_t line_len)
+/* Dropped from requests only, because Gateway writes its own. */
+static const char *kRequestOnly[] = {
+    "Host",
+    "Accept-Encoding",      /* Gateway forces identity */
+    "Content-Length",       /* re-emitted verbatim when a body follows */
+    NULL
+};
+
+static int header_in(const char **list, const char *line, size_t line_len)
 {
     int i;
-    for (i = 0; kHopByHop[i] != NULL; i++) {
-        size_t n = strlen(kHopByHop[i]);
-        if (line_len > n && gw_strnicmp(line, kHopByHop[i], n) == 0 &&
+    for (i = 0; list[i] != NULL; i++) {
+        size_t n = strlen(list[i]);
+        if (line_len > n && gw_strnicmp(line, list[i], n) == 0 &&
             line[n] == ':')
             return 1;
     }
     return 0;
+}
+
+static int is_named(const char *line, size_t line_len, const char *name)
+{
+    size_t n = strlen(name);
+    return line_len > n && gw_strnicmp(line, name, n) == 0 && line[n] == ':';
+}
+
+static int is_hop_by_hop(const char *line, size_t line_len)
+{
+    return header_in(kHopByHop, line, line_len) ||
+           header_in(kRequestOnly, line, line_len);
 }
 
 static int append(char *out, size_t cap, size_t *used, const char *s, size_t n)
@@ -234,7 +251,7 @@ int gw_http_parse_response(const char *buf, size_t len, GWResponse *res)
 }
 
 size_t gw_http_filter_response(const char *head, size_t head_len,
-                               char *out, size_t cap)
+                               char *out, size_t cap, int keep_length)
 {
     size_t used = 0;
     size_t off = 0;
@@ -242,13 +259,18 @@ size_t gw_http_filter_response(const char *head, size_t head_len,
     while (off < head_len) {
         size_t eol = off;
         size_t line_end;
+        int    drop;
 
         while (eol < head_len && head[eol] != '\n') eol++;
         line_end = eol;
         if (line_end > off && head[line_end - 1] == '\r') line_end--;
         if (line_end == off) break;                 /* blank line */
 
-        if (off == 0 || !is_hop_by_hop(head + off, line_end - off)) {
+        drop = header_in(kHopByHop, head + off, line_end - off) ||
+               (!keep_length &&
+                is_named(head + off, line_end - off, "Content-Length"));
+
+        if (off == 0 || !drop) {
             if (!append(out, cap, &used, head + off, line_end - off)) return 0;
             if (!appends(out, cap, &used, "\r\n")) return 0;
         }
@@ -264,4 +286,22 @@ int gw_http_is_redirect(int status)
 {
     return status == 301 || status == 302 || status == 303 ||
            status == 307 || status == 308;
+}
+
+int gw_http_should_follow(GWRedirectPolicy policy, int from_tls, int to_tls)
+{
+    switch (policy) {
+    case kGWRedirectNever:
+        return 0;
+    case kGWRedirectAlways:
+        return 1;
+    default:
+        /*
+         * Follow only the hop the client could not make for itself: plaintext
+         * to TLS, which a browser with no modern TLS cannot do. Everything
+         * else goes back to the client, which follows it with its own cookies
+         * and knows where it ended up.
+         */
+        return !from_tls && to_tls;
+    }
 }

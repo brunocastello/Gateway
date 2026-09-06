@@ -29,7 +29,10 @@
   1. `GET http://host/path HTTP/1.0` (classic forward proxy)
   2. `GET https://host/path HTTP/1.0` + `Host:` header (Classilla with `network.http.proxy.use-http-proxy-for-https = true`)
   3. `CONNECT host:443 HTTP/1.0` (for git or any CONNECT client, via `200 Connection Established` + raw 32 KB bounce buffer splice)
-* Always `Connection: close` on the client hop. Decode chunked from origin. Follow redirects (max 5) on shapes 1–2. Hard-cap body at 2 MiB for buffered GETs.
+* Always `Connection: close` on the client hop. Decode chunked from origin.
+* Redirects: follow only what the client cannot (http → https), pass the rest back. `follow_redirects = auto|always|never`. Following them all internally discards `Set-Cookie` and hides the final URL, which breaks media.
+* Body ceiling is `max_body_mb`, default 0 (none). The original 2 MiB cap protected nothing — bodies stream through a 32 KB buffer — and made video impossible.
+* Forward `Content-Length` to the client whenever the body is not de-chunked; players will not start without it.
 
 ### Module 2 — Mail Splice (`:1993` / `:1587`)
 * Outlook Express 5 setup (Incoming IMAP `:1993` SSL off; Outgoing SMTP `:1587` SSL off, auth on).

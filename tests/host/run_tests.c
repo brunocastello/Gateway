@@ -225,7 +225,7 @@ static void test_response(void)
         check(res.status == 200, "status");
         check(res.chunked == 1, "chunked detected");
 
-        n = gw_http_filter_response(r, res.head_len, out, sizeof(out));
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 0);
         out[n] = '\0';
         check(strstr(out, "HTTP/1.1 200 OK\r\n") == out, "status line survives");
         check(strstr(out, "Transfer-Encoding") == NULL,
@@ -235,6 +235,73 @@ static void test_response(void)
               "Connection: close is appended");
         check(strstr(out, "Content-Type: text/html\r\n") != NULL,
               "entity headers survive");
+    }
+
+    /*
+     * Content-Length must survive when the body is passed through untouched.
+     * A media player will not start without one, which is what made every
+     * video fetch fail while ordinary pages were fine.
+     */
+    {
+        static const char r[] =
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: video/mp4\r\n"
+            "Content-Length: 15728640\r\n"
+            "Connection: keep-alive\r\n\r\n";
+        check(gw_http_parse_response(r, sizeof(r) - 1, &res) == 1,
+              "media response parses");
+        check(!res.chunked, "media response is not chunked");
+
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 1);
+        out[n] = '\0';
+        check(strstr(out, "Content-Length: 15728640\r\n") != NULL,
+              "Content-Length survives when the body is untouched");
+        check(strstr(out, "Content-Type: video/mp4\r\n") != NULL,
+              "Content-Type survives");
+        check(strstr(out, "keep-alive") == NULL,
+              "Connection is still dropped");
+
+        n = gw_http_filter_response(r, res.head_len, out, sizeof(out), 0);
+        out[n] = '\0';
+        check(strstr(out, "Content-Length") == NULL,
+              "Content-Length is dropped when de-chunking would change it");
+    }
+
+    /* Which redirects Gateway follows itself. */
+    {
+        /* Auto: only the hop a browser without modern TLS cannot make. */
+        check(gw_http_should_follow(kGWRedirectAuto, 0, 1) == 1,
+              "auto follows http to https");
+        check(gw_http_should_follow(kGWRedirectAuto, 0, 0) == 0,
+              "auto passes http to http back to the client");
+        check(gw_http_should_follow(kGWRedirectAuto, 1, 1) == 0,
+              "auto passes https to https back to the client");
+
+        check(gw_http_should_follow(kGWRedirectAlways, 0, 0) == 1,
+              "always follows");
+        check(gw_http_should_follow(kGWRedirectNever, 0, 1) == 0,
+              "never follows");
+    }
+
+    /* A signed media URL longer than the old 1024-byte limit must resolve. */
+    {
+        static char loc[3000];
+        GWUrl base, next;
+        size_t i;
+
+        strcpy(loc, "/videoplayback?id=abc&sig=");
+        for (i = strlen(loc); i < sizeof(loc) - 1; i++) loc[i] = 'A';
+        loc[sizeof(loc) - 1] = '\0';
+
+        check(gw_url_split("http://93.245.69.158:8080/watch?v=x", 35, &base),
+              "base URL with a port parses");
+        check(base.port == 8080, "base keeps its non-default port");
+
+        check(gw_url_resolve(&base, loc, strlen(loc), &next),
+              "a 3 KB signed URL resolves");
+        check(next.port == 8080,
+              "a relative redirect keeps the origin's port");
+        check(strcmp(next.path, loc) == 0, "the query string survives intact");
     }
 
     {

@@ -28,7 +28,6 @@
 #define GW_HEAD_MAX     16384L
 #define GW_RAW_MAX      16384L
 #define GW_OUT_MAX      32768L
-#define GW_BODY_CAP     (2L * 1024L * 1024L)
 #define GW_MAX_REDIRECT 5
 #define GW_IDLE_TIMEOUT (120 * 60)          /* ticks: two minutes */
 
@@ -54,6 +53,7 @@ typedef struct {
 
     GWRequest     req;
     GWUrl         target;
+    GWUrl         redirectTo;               /* resolved before deciding to follow */
     int           redirects;
 
     char         *chead;                    /* client request head           */
@@ -73,6 +73,7 @@ typedef struct {
     GWChunked     chunk;
     int           chunked;
     long          bodyBytes;
+    long          bodyCap;                  /* 0 means no ceiling */
     long          reqBodyLeft;
     int           status;
     unsigned long lastActivity;
@@ -229,9 +230,9 @@ static void step_recv_request(GWHttpSession *s)
         return;
     }
 
-    gw_log("#%ld %s %s%s:%u%s", s->id, s->req.method,
+    gw_log("#%ld %s %s%s:%u%.48s%s", s->id, s->req.method,
            s->req.url.tls ? "https " : "", s->req.url.host,
-           (unsigned)s->req.url.port,
+           (unsigned)s->req.url.port, s->req.url.path,
            s->req.shape == kGWShapeConnect ? " (CONNECT)" : "");
 
     s->target = s->req.url;
@@ -317,7 +318,10 @@ static void step_send_request(GWHttpSession *s)
 
 static void step_recv_head(GWHttpSession *s)
 {
-    GWResponse res;
+    /* Static rather than automatic: GWResponse carries a 4 KB Location, and
+     * the cooperative loop runs one session at a time, so this is filled and
+     * finished with before any other session sees it. */
+    static GWResponse res;
     long n;
     int  parsed;
 
@@ -360,11 +364,25 @@ static void step_recv_head(GWHttpSession *s)
                               GWStream_TlsVersion(&s->up) == 12 ? "1.2" : "?")
                            : "-",
                  res.status, s->req.url.host);
-    gw_log("#%ld <- %d %s", s->id, res.status, s->req.url.host);
+    if (res.has_content_length)
+        gw_log("#%ld <- %d %s %ld bytes", s->id, res.status,
+               s->req.url.host, res.content_length);
+    else
+        gw_log("#%ld <- %d %s%s", s->id, res.status, s->req.url.host,
+               res.chunked ? " chunked" : " no length");
 
-    /* Redirects are followed on the absolute-URI shapes only. */
+    /*
+     * Redirects. Gateway follows one only when the client could not have: see
+     * gw_http_should_follow(). Anything else is passed back so the browser
+     * follows it itself, with its cookies and its own idea of the final URL --
+     * which is what a media fetch depends on.
+     */
     if (gw_http_is_redirect(res.status) && res.has_location &&
-        s->req.shape != kGWShapeConnect) {
+        s->req.shape != kGWShapeConnect &&
+        gw_url_resolve(&s->target, res.location, strlen(res.location),
+                       &s->redirectTo) &&
+        gw_http_should_follow((GWRedirectPolicy)GW_RedirectPolicy(),
+                              s->target.tls, s->redirectTo.tls)) {
         if (s->redirects >= GW_MAX_REDIRECT) {
             session_fail(s, "HTTP/1.0 508 Loop Detected\r\n"
                             "Connection: close\r\n\r\n"
@@ -373,14 +391,8 @@ static void step_recv_head(GWHttpSession *s)
             return;
         }
         {
-            GWUrl next;
-            if (!gw_url_resolve(&s->target, res.location,
-                                strlen(res.location), &next)) {
-                session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                                "Connection: close\r\n\r\n",
-                             "unusable Location header");
-                return;
-            }
+            GWUrl next = s->redirectTo;
+
             s->redirects++;
             s->target = next;
             s->req.url = next;
@@ -390,18 +402,25 @@ static void step_recv_head(GWHttpSession *s)
                 s->req.content_length = -1;
             }
             s->reqBodyLeft = 0;
-            gw_log("#%ld -> %s%s (redirect %d)",
+            gw_log("#%ld -> %s%s:%u%.44s (redirect %d)",
                    s->id, next.tls ? "https://" : "http://", next.host,
-                   s->redirects);
+                   (unsigned)next.port, next.path, s->redirects);
             GWStream_Destroy(&s->up);
             session_start_upstream(s);
             return;
         }
     }
 
+    if (gw_http_is_redirect(res.status) && res.has_location)
+        gw_log("#%ld passing %d to the client: %.60s",
+               s->id, res.status, res.location);
+
     {
+        /* Keep the length whenever the body passes through untouched. It is
+         * only wrong to forward when de-chunking changes it. */
         size_t filtered = gw_http_filter_response(s->uhead, res.head_len,
-                                                  s->out, (size_t)GW_OUT_MAX);
+                                                  s->out, (size_t)GW_OUT_MAX,
+                                                  !res.chunked);
         if (filtered == 0) {
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
@@ -466,8 +485,9 @@ static void step_body(GWHttpSession *s)
     if (flushed < 0) { s->state = kHPDone; return; }
     if (flushed == 0) return;                /* client is flow controlled */
 
-    if (s->bodyBytes > GW_BODY_CAP) {
-        gw_log("#%ld body hit the 2 MiB cap, truncating", s->id);
+    if (s->bodyCap > 0 && s->bodyBytes > s->bodyCap) {
+        gw_log("#%ld body hit the %ld MiB cap, truncating",
+               s->id, s->bodyCap / (1024L * 1024L));
         s->state = kHPFlushAndClose;
         return;
     }
@@ -690,6 +710,7 @@ int GWProxy_Accept(GWConn *c)
             return 0;
         }
         GWStream_Adopt(&s->cli, c);
+        s->bodyCap = GW_MaxBodyBytes();
         s->id = ++sNextId;
         s->state = kHPRecvRequest;
         s->lastActivity = GWNet_Ticks();

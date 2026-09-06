@@ -13,7 +13,13 @@ extern "C" {
 #endif
 
 #define GW_MAX_HOST 256
-#define GW_MAX_PATH 1024
+
+/*
+ * Signed media URLs -- the ones a video player is redirected to -- routinely
+ * run past a kilobyte of query string. At 1024 those were rejected outright as
+ * an unusable Location header.
+ */
+#define GW_MAX_PATH 4096
 
 typedef struct {
     char           host[GW_MAX_HOST];

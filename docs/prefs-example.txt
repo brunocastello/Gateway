@@ -27,6 +27,26 @@
 show_window    = 1
 
 # ---------------------------------------------------------------- Module 1
+# What Gateway does with a 3xx from the origin.
+#
+#   auto   (default) follow only what the client cannot: a redirect from
+#          http:// to https://, which a browser with no modern TLS could never
+#          follow itself. Everything else is passed back so the browser
+#          follows it, with its own cookies, and knows where it ended up.
+#   always follow every redirect inside Gateway, as it used to.
+#   never  pass every redirect back to the client.
+#
+# "always" hides the response from the browser and discards any Set-Cookie the
+# redirect carried, which breaks video players and anything else using
+# token-authenticated URLs.
+follow_redirects = auto
+
+# Ceiling on a relayed response body, in MiB. 0 means no limit, which is the
+# default: bodies stream through a 32 KB buffer and are never held in memory,
+# so a limit truncates large downloads without saving anything. Set a number
+# here only if you want downloads deliberately cut short.
+max_body_mb    = 0
+
 # The forward proxy. Point Classilla at this address and port, and turn on
 # network.http.proxy.use-http-proxy-for-https so https:// URLs come here too.
 http_port      = 8765

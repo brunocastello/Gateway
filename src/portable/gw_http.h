@@ -79,13 +79,45 @@ typedef struct {
 int gw_http_parse_response(const char *buf, size_t len, GWResponse *res);
 
 /*
- * Rewrite an origin response head for the client hop: drops Transfer-Encoding,
- * Content-Length, Connection and Keep-Alive, then appends Connection: close.
- * The client hop is always EOF-delimited, so no length is re-advertised.
+ * Rewrite an origin response head for the client hop: drops the hop-by-hop
+ * headers and appends Connection: close.
+ *
+ * keep_length decides what happens to Content-Length. Pass 0 when Gateway is
+ * de-chunking, because the body it emits is a different length from the one
+ * the origin announced; pass 1 when the body goes through untouched, so the
+ * client learns how many bytes to expect.
+ *
+ * That distinction matters more than it looks. A player fetching video will
+ * generally not start without a length: it has nothing to size a buffer with,
+ * no duration, and no way to seek. Dropping the header unconditionally made
+ * every media fetch fail while ordinary pages were unaffected.
+ *
  * Returns bytes written, or 0 on overflow.
  */
 size_t gw_http_filter_response(const char *head, size_t head_len,
-                               char *out, size_t cap);
+                               char *out, size_t cap, int keep_length);
+
+/*
+ * What to do about a redirect the origin sent.
+ *
+ * A forward proxy would normally pass a 3xx straight to the client and let it
+ * follow, with its own cookie jar and its own idea of the final URL. Gateway
+ * follows them itself, which is right for exactly one case: a browser too old
+ * to speak modern TLS cannot follow a redirect from http:// to https:// on its
+ * own, and would simply fail.
+ *
+ * So the default is to follow only that case and pass everything else along.
+ * Following an ordinary http -> http redirect internally hides the response
+ * from the client, discards any Set-Cookie it carried, and leaves the client
+ * unaware of where it ended up -- which breaks token-authenticated media URLs.
+ */
+typedef enum {
+    kGWRedirectAuto = 0,    /* follow only what the client cannot */
+    kGWRedirectAlways,
+    kGWRedirectNever
+} GWRedirectPolicy;
+
+int gw_http_should_follow(GWRedirectPolicy policy, int from_tls, int to_tls);
 
 /* 1 when a 3xx status that Gateway should follow. */
 int gw_http_is_redirect(int status);

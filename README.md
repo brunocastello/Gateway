@@ -32,7 +32,7 @@ and stays on the same machine; only the modern side crosses the network.
 | OAuth refresh, including rotated tokens | working |
 | Gmail as a provider | implemented, not yet tried against a live account |
 | Wayback proxy (Module 3) | designed only — see `docs/module3-wayback.md` |
-| Streaming media (Flash video) | does not work — see `docs/issue-flash-video.md` |
+| Streaming media (Flash video) | fixes landed, awaiting a test — see `docs/issue-flash-video.md` |
 
 ## Module 1 — HTTP proxy on `:8765`
 
