@@ -34,19 +34,19 @@ data 'SIZE' (-1, "Gateway", purgeable) {
 };
 
 /*
- * vers (1): 0.2 development. GW_VERSION_STRING in src/main.cpp shows the
- * same number in the About window and has to be changed with these.
+ * vers (1): 0.3 development. GW_VERSION_STRING in src/gw_version.h shows
+ * the same number in the About window on both platforms.
  * Byte layout is major(BCD), minor(BCD), stage,
  * prerelease, region, then two Pascal strings.
  */
 data 'vers' (1, purgeable) {
-    $"00 20 20 00 0000"
-    $"03" "0.2"
-    $"19" "0.2, Gateway for Mac OS 9"
+    $"00 30 20 00 0000"
+    $"03" "0.3"
+    $"19" "0.3, Gateway for Mac OS 9"
 };
 
 data 'vers' (2, purgeable) {
-    $"00 20 20 00 0000"
-    $"03" "0.2"
+    $"00 30 20 00 0000"
+    $"03" "0.3"
     $"07" "Gateway"
 };

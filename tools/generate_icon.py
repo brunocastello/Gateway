@@ -290,6 +290,71 @@ def emit(px32, px16):
     return "\n".join(parts)
 
 
+
+# --- Windows .ico emission ---------------------------------------------------
+
+def ico(px_by_size):
+    """Pack the same pixels as a Windows icon.
+
+    8 bits per pixel with a palette and a 1-bit AND mask, which is what the
+    Windows 95 through Me shell understands. 32-bit alpha icons arrived with
+    XP and render as garbage on the systems Gateway targets, and the artwork
+    uses a couple of dozen colours out of the Macintosh cube, so a palette
+    costs nothing and loses nothing.
+
+    Drawing from the same arrays as the Rez output means the two platforms
+    carry one icon rather than two that resemble each other.
+    """
+    import struct
+
+    palette = []
+    for size in sorted(px_by_size):
+        for row in px_by_size[size]:
+            for c in row:
+                if c is not CLEAR and c not in palette:
+                    palette.append(c)
+    if len(palette) > 255:
+        raise SystemExit("icon uses %d colours; 8-bit ICO holds 255 plus "
+                         "transparency" % len(palette))
+    index = {c: i for i, c in enumerate(palette)}
+
+    images = []
+    for size in sorted(px_by_size):
+        px = px_by_size[size]
+        # Rows run bottom-up in a DIB, and each is padded to four bytes.
+        xor_stride = (size + 3) // 4 * 4
+        and_stride = ((size + 7) // 8 + 3) // 4 * 4
+        xor = bytearray()
+        andm = bytearray()
+        for y in range(size - 1, -1, -1):
+            row = bytearray()
+            mask = bytearray(and_stride)
+            for x in range(size):
+                c = px[y][x]
+                row.append(0 if c is CLEAR else index[c])
+                if c is CLEAR:
+                    mask[x // 8] |= 0x80 >> (x % 8)   # 1 = show what is behind
+            row.extend(b"\0" * (xor_stride - size))
+            xor.extend(row)
+            andm.extend(mask)
+
+        hdr = struct.pack("<IiiHHIIiiII", 40, size, size * 2, 1, 8, 0, 0,
+                          0, 0, 256, 0)
+        pal = bytearray()
+        for i in range(256):
+            r, g, b = palette[i] if i < len(palette) else (0, 0, 0)
+            pal += bytes((b, g, r, 0))            # DIB palettes are BGRA
+        images.append(bytes(hdr) + bytes(pal) + bytes(xor) + bytes(andm))
+
+    out = struct.pack("<HHH", 0, 1, len(images))   # reserved, type 1, count
+    offset = 6 + 16 * len(images)
+    for size, img in zip(sorted(px_by_size), images):
+        out += struct.pack("<BBBBHHII", size, size, 0, 0, 1, 8,
+                           len(img), offset)
+        offset += len(img)
+    return out + b"".join(images)
+
+
 def preview(px32, px16, path):
     from PIL import Image
     img = Image.new("RGBA", (32 + 4 + 16, 32), (0, 0, 0, 0))
@@ -317,12 +382,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--preview")
+    ap.add_argument("--ico", help="also write a Windows .ico here")
     ap.add_argument("--ascii", action="store_true")
     args = ap.parse_args()
 
     px32, px16 = draw32(), draw16()
     open(args.out, "w").write(emit(px32, px16))
     print("wrote", args.out)
+    if args.ico:
+        open(args.ico, "wb").write(ico({16: px16, 32: px32}))
+        print("wrote", args.ico)
     if args.ascii:
         ascii_art(px32)
     if args.preview:

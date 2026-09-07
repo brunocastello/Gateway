@@ -20,17 +20,20 @@
 #include <string.h>
 
 #include "../gw_core.h"
+#include "../gw_version.h"
 #include "../gw_config.h"
 #include "../portable/gw_log.h"
 
 #define GW_CLASS      "GatewayWndClass"
+#define GW_ABOUT_CLASS "GatewayAboutClass"
 #define GW_TRAY_MSG   (WM_APP + 1)
 #define GW_TRAY_ID     1
 #define ID_LOG         100
 
 #define IDM_SHOW       40001
 #define IDM_STARTUP    40002
-#define IDM_QUIT       40003
+#define IDM_ABOUT      40003
+#define IDM_QUIT       40004
 
 static HWND  gMain;
 static HWND  gList;
@@ -164,7 +167,7 @@ static void tray_add(void)
     gTray.uID    = GW_TRAY_ID;
     gTray.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     gTray.uCallbackMessage = GW_TRAY_MSG;
-    gTray.hIcon  = LoadIcon(NULL, IDI_APPLICATION);
+    gTray.hIcon  = LoadIcon(gInst, MAKEINTRESOURCE(1));
     strcpy(gTray.szTip, "Gateway");
 
     Shell_NotifyIconA(NIM_ADD, &gTray);
@@ -187,6 +190,8 @@ static void tray_menu(void)
     AppendMenuA(menu, MF_STRING | (startup_enabled() ? MF_CHECKED : 0),
                 IDM_STARTUP, "Start with &Windows");
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(menu, MF_STRING, IDM_ABOUT, "&About Gateway...");
+    AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(menu, MF_STRING, IDM_QUIT, "&Quit");
 
     GetCursorPos(&pt);
@@ -199,6 +204,124 @@ static void tray_menu(void)
     TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, gMain, NULL);
     PostMessage(gMain, WM_NULL, 0, 0);
     DestroyMenu(menu);
+}
+
+
+/* ------------------------------------------------------------------ */
+/* About                                                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A small window rather than a MessageBox.
+ *
+ * The Mac build draws its own About box, and this is the same information in
+ * the shape Windows expects: the application icon, the name and version, one
+ * line saying what the program is, and the licence. A MessageBox would have
+ * been three lines of code and would have looked like an error.
+ */
+static HWND gAbout;
+
+static const char *kAboutLines[] = {
+    "A TLS 1.3 gateway and proxy that runs on the machine",
+    "it serves, so applications written before modern TLS",
+    "existed can reach the current web and current mail.",
+    "",
+    "HTTP proxy, mail splice, and Internet Archive proxy.",
+    "",
+    "MIT licence. TLS by Certainly over BearSSL.",
+    "No warranty: research software pointed at old systems."
+};
+
+static LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC         dc = BeginPaint(hwnd, &ps);
+        HFONT       bold, plain, old;
+        HICON       icon;
+        int         i, y;
+
+        icon = LoadIcon(gInst, MAKEINTRESOURCE(1));
+        if (icon != NULL) DrawIcon(dc, 20, 20, icon);
+
+        SetBkMode(dc, TRANSPARENT);
+
+        bold = CreateFontA(-16, 0, 0, 0, FW_BOLD, 0, 0, 0, ANSI_CHARSET,
+                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                           DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+                           "MS Sans Serif");
+        plain = CreateFontA(-11, 0, 0, 0, FW_NORMAL, 0, 0, 0, ANSI_CHARSET,
+                            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                            DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+                            "MS Sans Serif");
+
+        old = (HFONT)SelectObject(dc, bold);
+        TextOutA(dc, 68, 20, "Gateway " GW_VERSION_LONG,
+                 (int)strlen("Gateway " GW_VERSION_LONG));
+
+        SelectObject(dc, plain);
+        TextOutA(dc, 68, 42, "for Windows 95 OSR2 and later",
+                 (int)strlen("for Windows 95 OSR2 and later"));
+
+        y = 76;
+        for (i = 0; i < (int)(sizeof(kAboutLines) / sizeof(kAboutLines[0])); i++) {
+            TextOutA(dc, 20, y, kAboutLines[i], (int)strlen(kAboutLines[i]));
+            y += 15;
+        }
+
+        SelectObject(dc, old);
+        DeleteObject(bold);
+        DeleteObject(plain);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    case WM_COMMAND:
+        if (LOWORD(wp) == IDOK) DestroyWindow(hwnd);
+        return 0;
+
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+
+    case WM_DESTROY:
+        gAbout = NULL;
+        return 0;
+
+    default:
+        break;
+    }
+    return DefWindowProcA(hwnd, msg, wp, lp);
+}
+
+static void about_show(void)
+{
+    RECT work;
+    int  w = 400, h = 250, x, y;
+
+    if (gAbout != NULL) {           /* already up: bring it forward */
+        SetForegroundWindow(gAbout);
+        return;
+    }
+
+    /* Centred on the working area, so it clears the taskbar. */
+    if (!SystemParametersInfoA(SPI_GETWORKAREA, 0, &work, 0))
+        SetRect(&work, 0, 0, 640, 480);
+    x = work.left + ((work.right - work.left) - w) / 2;
+    y = work.top + ((work.bottom - work.top) - h) / 2;
+
+    gAbout = CreateWindowA(GW_ABOUT_CLASS, "About Gateway",
+                           WS_CAPTION | WS_SYSMENU,
+                           x, y, w, h, NULL, NULL, gInst, NULL);
+    if (gAbout == NULL) return;
+
+    CreateWindowA("BUTTON", "OK",
+                  WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+                  w - 100, h - 70, 70, 24, gAbout, (HMENU)IDOK, gInst, NULL);
+
+    ShowWindow(gAbout, SW_SHOW);
+    SetForegroundWindow(gAbout);
 }
 
 /* ------------------------------------------------------------------ */
@@ -244,6 +367,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         switch (LOWORD(wp)) {
         case IDM_SHOW:    window_show(!gShown); break;
         case IDM_STARTUP: startup_set(!startup_enabled()); break;
+        case IDM_ABOUT:   about_show(); break;
         case IDM_QUIT:    PostMessage(hwnd, WM_DESTROY, 0, 0); break;
         default: break;
         }
@@ -270,11 +394,21 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     memset(&wc, 0, sizeof(wc));
     wc.lpfnWndProc   = WndProc;
     wc.hInstance     = inst;
-    wc.hIcon         = LoadIcon(NULL, IDI_APPLICATION);
+    /* MAKEINTRESOURCE(1) is gateway.ico, from gateway.rc. */
+    wc.hIcon         = LoadIcon(inst, MAKEINTRESOURCE(1));
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wc.lpszClassName = GW_CLASS;
     if (!RegisterClassA(&wc)) return 1;
+
+    memset(&wc, 0, sizeof(wc));
+    wc.lpfnWndProc   = AboutProc;
+    wc.hInstance     = inst;
+    wc.hIcon         = LoadIcon(inst, MAKEINTRESOURCE(1));
+    wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = GW_ABOUT_CLASS;
+    RegisterClassA(&wc);
 
     gMain = CreateWindowA(GW_CLASS, "Gateway",
                           WS_OVERLAPPEDWINDOW,
@@ -303,6 +437,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     for (;;) {
         while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) goto done;
+            /* Enter and Escape should close the About box, as they would in
+             * a real dialog; IsDialogMessage gives that for nothing. */
+            if (gAbout != NULL && IsDialogMessageA(gAbout, &msg)) continue;
             TranslateMessage(&msg);
             DispatchMessageA(&msg);
         }

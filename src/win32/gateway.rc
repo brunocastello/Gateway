@@ -1,0 +1,45 @@
+/*
+ * gateway.rc - the Windows resources: the icon, and the version block.
+ *
+ * gateway.ico is generated from the same pixel arrays as the Mac OS 9 icon by
+ * tools/generate_icon.py, so the two platforms carry one piece of artwork
+ * rather than two that resemble each other:
+ *
+ *     python3 tools/generate_icon.py --out src/ui/gateway_icon.r \
+ *                                    --ico src/win32/gateway.ico
+ *
+ * The numbers below have to match GW_VERSION_STRING in src/gw_version.h. The
+ * resource compiler cannot read that header, which is exactly how the About
+ * box came to disagree with the 'vers' resource at 0.2.0.
+ */
+
+#include <windows.h>
+
+/* Lowest id wins when the shell picks an application's icon. */
+1 ICON "gateway.ico"
+
+VS_VERSION_INFO VERSIONINFO
+  FILEVERSION    0,3,0,0
+  PRODUCTVERSION 0,3,0,0
+  FILEOS         VOS__WINDOWS32
+  FILETYPE       VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904E4"          /* US English, Windows multilingual */
+    BEGIN
+      VALUE "CompanyName",      "Bruno Castello"
+      VALUE "FileDescription",  "TLS 1.3 gateway and proxy for vintage clients"
+      VALUE "FileVersion",      "0.3.0"
+      VALUE "InternalName",     "Gateway"
+      VALUE "LegalCopyright",   "MIT licence"
+      VALUE "OriginalFilename", "Gateway.exe"
+      VALUE "ProductName",      "Gateway"
+      VALUE "ProductVersion",   "0.3.0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1252
+  END
+END

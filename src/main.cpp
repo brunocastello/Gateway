@@ -36,6 +36,7 @@
 #include <cstring>
 
 #include "gw_core.h"
+#include "gw_version.h"
 #include "portable/gw_log.h"   /* GW_LOG_LINES, for scroll limits */
 
 namespace {
@@ -85,12 +86,6 @@ const short kFontGeneva = 3;
  */
 const short kZoomDocProc = 8;
 
-/*
- * Shown in the About window. Keep in step with the two vers resources in
- * src/ui/gateway.r: Rez cannot see a C constant, so the only thing holding
- * them together is changing them together. This one was missed at 0.2.0.
- */
-#define GW_VERSION_STRING "Gateway 0.2"
 
 
 /*
@@ -436,7 +431,7 @@ private:
         TextFont(charcoal);
         TextSize(12);
         DrawCenteredCString(midX, static_cast<short>(box.top + 64),
-                            GW_VERSION_STRING);
+                            "Gateway " GW_VERSION_STRING);
 
         TextFont(kFontGeneva);
         TextSize(10);

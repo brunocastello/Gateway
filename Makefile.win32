@@ -9,6 +9,7 @@
 CROSS ?= i686-w64-mingw32-
 CC     = $(CROSS)gcc
 STRIP  = $(CROSS)strip
+WINDRES= $(CROSS)windres
 
 CERT   = third_party/certainly
 BEAR   = $(CERT)/bearssl
@@ -63,7 +64,7 @@ SRC = \
   $(wildcard $(BEAR)/src/*/*.c) \
   $(wildcard $(BEAR)/src/*.c)
 
-OBJ = $(SRC:%.c=build-win32/%.o)
+OBJ = $(SRC:%.c=build-win32/%.o) build-win32/gateway.res.o
 
 all: build-win32/Gateway.exe
 
@@ -75,6 +76,12 @@ build-win32/Gateway.exe: $(OBJ)
 build-win32/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+# The icon and the version block. windres needs the .rc's own directory on its
+# include path so the ICON statement can find gateway.ico beside it.
+build-win32/gateway.res.o: src/win32/gateway.rc src/win32/gateway.ico
+	@mkdir -p $(dir $@)
+	$(WINDRES) -I src/win32 -i $< -o $@ -O coff
 
 clean:
 	rm -rf build-win32
