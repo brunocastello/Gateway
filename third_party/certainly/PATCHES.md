@@ -501,3 +501,21 @@ tolerated.
 This also explains the pauses: a body that never completes holds its session
 until the 45-second idle timeout, and a page whose resources each do that loads
 at the speed of the timeout rather than the network.
+
+### §20 correction — the room test refused every full-sized record
+
+The check added above compared the *ciphertext* length against the plaintext
+buffer. A maximum-sized TLS 1.3 record is 16384 bytes of plaintext and
+therefore 16401 on the wire — a content type byte and a 16-byte tag on top —
+while `tls13_app_buf` holds exactly 16384. So `16384 - 0 < 16401` was true even
+with a completely empty buffer, the record was never decrypted, and the
+connection sat until its idle timeout.
+
+It reached anything large enough to fill one record. A 24 KB image from the
+Internet Archive does: nginx sends one maximum-sized record and one small one,
+and the first could never be accepted.
+
+The test now subtracts the overhead, so an empty buffer always has room for a
+legal record. A record claiming more plaintext than the buffer can ever hold is
+treated as an error rather than waited on, since no amount of draining would
+make space for it.
