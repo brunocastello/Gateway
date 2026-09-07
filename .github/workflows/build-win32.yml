@@ -65,9 +65,10 @@ jobs:
           set -euo pipefail
           mkdir -p obj
           FLAGS="-D_WIN32_WINNT=0x0400 -DWINVER=0x0400 -Os -Wall -Wextra
-                 -Wno-unused-parameter -Isrc -Isrc/portable -c"
+                 -Wno-unused-parameter -Isrc -Isrc/portable -Ithird_party/certainly/src -c"
 
-          for f in src/portable/*.c src/proxy/*.c; do
+          for f in src/portable/*.c src/proxy/*.c \
+                   third_party/certainly/src/transport_win32.c; do
             echo "  $f"
             i686-w64-mingw32-gcc $FLAGS -o "obj/$(basename "${f%.c}").o" "$f"
           done
