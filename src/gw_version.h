@@ -14,9 +14,9 @@
 
 #define GW_VERSION_MAJOR  0
 #define GW_VERSION_MINOR  3
-#define GW_VERSION_PATCH  0
+#define GW_VERSION_PATCH  1
 
-#define GW_VERSION_STRING "0.3"
-#define GW_VERSION_LONG   "0.3.0"
+#define GW_VERSION_STRING "0.3.1"
+#define GW_VERSION_LONG   "0.3.1"
 
 #endif /* GW_VERSION_H */
