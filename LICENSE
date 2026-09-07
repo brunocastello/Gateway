@@ -25,8 +25,51 @@ SOFTWARE.
 Gateway bundles third-party code:
 
   third_party/certainly            MIT, github.com/minorbug/certainly
+                                   minorbug's TLS 1.3 client for Mac OS 9.
+                                   Vendored and patched; see PATCHES.md for
+                                   every change and why it was needed.
+
   third_party/certainly/bearssl    MIT, bearssl.org
+                                   Thomas Pornin's BearSSL. The reason a TLS
+                                   1.3 client on a 1999 machine is possible at
+                                   all: self-contained, constant-time, and
+                                   correct on a big-endian PowerPC and a
+                                   little-endian x86 alike, unmodified.
+
   third_party/InterfacesAndLibraries
                                    Apple Universal Interfaces & Libraries,
                                    redistributed under Apple's SDK licence.
                                    Not covered by the MIT grant above.
+
+Gateway also stands on work it does not bundle:
+
+  Retro68                          github.com/autc04/Retro68
+                                   Wolfgang Thaller's cross toolchain and the
+                                   Multiversal Interfaces. Without it there is
+                                   no way to build a modern C++ Classic
+                                   application at all.
+
+  WaybackProxy                     github.com/richardg867/WaybackProxy
+                                   richardg867's Internet Archive proxy, the
+                                   prior art for Module 3. Its settings URL is
+                                   the interface Gateway's Wayback proxy
+                                   copies, so existing bookmarks keep working.
+                                   That project is GPL-3 and Gateway is MIT,
+                                   so no code was taken: Module 3 is an
+                                   independent implementation written from the
+                                   archive's public URL scheme and observable
+                                   behaviour. The design is its own; the idea
+                                   is not.
+
+  email-oauth2-proxy               github.com/simonrob/email-oauth2-proxy
+                                   simonrob's OAuth2 proxy: where the
+                                   out-of-band consent flow that produces
+                                   Gateway's refresh token happens, and whose
+                                   config format
+                                   tools/extract-refresh-token.py reads.
+
+  FrogFind                         frogfind.com
+                                   Action Retro's search engine and page
+                                   simplifier for vintage machines, which is
+                                   what a good deal of the testing was pointed
+                                   at.

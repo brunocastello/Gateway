@@ -252,6 +252,36 @@ see Open Transport, while the network files are compiled against Apple's
 only thing that crosses between them. `docs/inventory.md` §2 explains how the
 build keeps that true.
 
+## Thanks
+
+Gateway is a small amount of original work resting on other people's:
+
+* **[BearSSL](https://bearssl.org)** — Thomas Pornin. The reason a TLS 1.3
+  client on a 1999 machine is possible at all: self-contained, constant-time,
+  and correct unmodified on a big-endian PowerPC and a little-endian x86 alike.
+  Every cryptographic bug found in this project was in the code around it.
+* **[Certainly](https://github.com/minorbug/certainly)** — minorbug. A TLS 1.3
+  client written for Mac OS 9, which is the part nobody else had done. Vendored
+  and patched twenty times; `PATCHES.md` records each one, and several are
+  fixes that belong upstream rather than adaptations.
+* **[Retro68](https://github.com/autc04/Retro68)** — Wolfgang Thaller. The
+  cross toolchain and the Multiversal Interfaces. Without it there is no way to
+  build a modern C++ Classic application at all.
+* **[WaybackProxy](https://github.com/richardg867/WaybackProxy)** —
+  richardg867. The prior art for Module 3, and the source of its settings URL,
+  so bookmarks made for it keep working here. That project is GPL-3 and Gateway
+  is MIT, so no code was taken: Module 3 was written from the archive's public
+  URL scheme and observable behaviour. The idea is theirs; only the
+  implementation is ours.
+* **[email-oauth2-proxy](https://github.com/simonrob/email-oauth2-proxy)** —
+  simonrob. Where the out-of-band OAuth consent that produces Gateway's refresh
+  token actually happens, and whose config format
+  `tools/extract-refresh-token.py` reads.
+* **[FrogFind](https://frogfind.com)** — Action Retro. A search engine and page
+  simplifier for vintage machines, and a good deal of this project's testing.
+* **The Internet Archive**, for keeping the web Module 3 serves.
+
 ## Licence
 
-MIT for Gateway's own code; see `LICENSE` for the bundled third-party terms.
+MIT for Gateway's own code; see `LICENSE` for the bundled third-party terms and
+fuller credits.
