@@ -89,12 +89,28 @@ jobs:
 
           ls -l probe.exe
 
+      - name: PE header versions, before and after pinning them
+        run: |
+          # Windows 95 and NT 3.x check the subsystem version in the PE header
+          # and refuse anything newer than themselves, whatever the imports
+          # say. Discord Messenger patches offset 0xC8 by hand to get past
+          # this; the linker will simply write the right number if asked.
+          echo "=== default ==="
+          i686-w64-mingw32-objdump -p probe.exe \
+            | grep -Ei "MajorOSystemVersion|MinorOSystemVersion|MajorSubsystemVersion|MinorSubsystemVersion|Subsystem"
+
+          i686-w64-mingw32-gcc -D_WIN32_WINNT=0x0400 -DWINVER=0x0400 \
+            -Os -o pinned.exe probe.c \
+            -Wl,--major-subsystem-version=4 -Wl,--minor-subsystem-version=0 \
+            -Wl,--major-os-version=4 -Wl,--minor-os-version=0 \
+            -lwsock32 -lshell32 -luser32 -lkernel32
+
+          echo "=== pinned to 4.0 ==="
+          i686-w64-mingw32-objdump -p pinned.exe \
+            | grep -Ei "MajorOSystemVersion|MinorOSystemVersion|MajorSubsystemVersion|MinorSubsystemVersion|Subsystem"
+
       - name: Read the import table
         run: |
-          echo "=== DLLs required ==="
-          i686-w64-mingw32-objdump -p probe.exe | grep "DLL Name"
-          echo
-          echo "=== every imported symbol ==="
-          i686-w64-mingw32-objdump -p probe.exe \
-            | awk '/DLL Name:/{dll=$3} /^\t[0-9]+\t/{print dll"\t"$3}' \
-            | sort -u
+          i686-w64-mingw32-objdump -p pinned.exe \
+            | sed -n '/The Import Tables/,/^The /p' \
+            | grep -Ev "^\s*$|vma:|The " 
