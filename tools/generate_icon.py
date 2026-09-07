@@ -54,6 +54,27 @@ GOLD_D  = (204, 153, 0)
 SILVER  = (204, 204, 204)
 
 
+# The opening, recoloured, for the two tray states.
+#
+# Only the four gradient steps inside the arch change: the stonework, the
+# padlock and the mask stay exactly as they are, so all three icons are
+# recognisably one drawing. Greying the whole thing was tried first and read
+# as a flat blob at 16x16 -- at that size the colour of the opening is the
+# only thing that carries a state.
+#
+# Both replacements stay on the 51-step cube, so they remain exact in the
+# Macintosh palette that the ICO writer builds from.
+SKY = (SKY_1, SKY_2, SKY_3, SKY_4)
+GREEN = ((0, 102, 0), (0, 153, 0), (51, 204, 51), (102, 255, 102))
+RED   = ((102, 0, 0), (153, 0, 0), (204, 51, 51), (255, 102, 102))
+
+
+def tint(px, ramp):
+    """Swap the opening's gradient for another, leaving everything else."""
+    swap = dict(zip(SKY, ramp))
+    return [[swap.get(c, c) for c in row] for row in px]
+
+
 def arch(x, y, cx, cy, rx, bottom):
     """True inside an arch: a half circle on top of a rectangle."""
     if y > bottom:
@@ -383,9 +404,12 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--preview")
     ap.add_argument("--ico", help="also write a Windows .ico here")
-    ap.add_argument("--ico-off", dest="ico_off",
-                    help="write a greyed Windows .ico here, for a tray icon "
-                         "that shows the gateway is stopped")
+    ap.add_argument("--ico-on",
+                    help="write a Windows .ico with a green opening here, for "
+                         "the tray icon while the gateway is running")
+    ap.add_argument("--ico-off",
+                    help="write a Windows .ico with a red opening here, for "
+                         "the tray icon while the gateway is stopped")
     ap.add_argument("--ascii", action="store_true")
     args = ap.parse_args()
 
@@ -395,30 +419,13 @@ def main():
     if args.ico:
         open(args.ico, "wb").write(ico({16: px16, 32: px32}))
         print("wrote", args.ico)
+    if args.ico_on:
+        open(args.ico_on, "wb").write(
+            ico({16: tint(px16, GREEN), 32: tint(px32, GREEN)}))
+        print("wrote", args.ico_on)
     if args.ico_off:
-        # The same drawing with the colour taken out, so a stopped Gateway is
-        # recognisable in the tray as itself rather than as another icon.
-        #
-        # Luminance, only mildly lifted. The first attempt pushed everything
-        # towards white on the theory that disabled should look faded, and it
-        # flattened the arch, its opening and the padlock into one pale mass:
-        # the dark blue interior came out as light grey, so the icon read as a
-        # solid blob with a background rather than as a gateway. Contrast is
-        # what carries the shape, and the shape is the whole point of using the
-        # same drawing.
-        def grey(px):
-            out = []
-            for row in px:
-                r = []
-                for c in row:
-                    if c is CLEAR:
-                        r.append(CLEAR)      # stays transparent
-                    else:
-                        v = min(255, int(luminance(c) * 0.80 + 30))
-                        r.append((v, v, v))
-                out.append(r)
-            return out
-        open(args.ico_off, "wb").write(ico({16: grey(px16), 32: grey(px32)}))
+        open(args.ico_off, "wb").write(
+            ico({16: tint(px16, RED), 32: tint(px32, RED)}))
         print("wrote", args.ico_off)
     if args.ascii:
         ascii_art(px32)

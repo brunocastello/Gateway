@@ -28,8 +28,9 @@
 #define GW_ABOUT_CLASS "GatewayAboutClass"
 #define GW_TRAY_MSG   (WM_APP + 1)
 #define GW_TRAY_ID     1
-#define GW_ICON_ON     1      /* gateway.ico */
-#define GW_ICON_OFF    2      /* gateway-off.ico */
+#define GW_ICON_APP    1      /* gateway.ico      blue: the application */
+#define GW_ICON_ON     2      /* gateway-on.ico   green: running */
+#define GW_ICON_OFF    3      /* gateway-off.ico  red: stopped */
 #define ID_LOG         100
 
 #define IDM_SHOW       40001
@@ -170,17 +171,20 @@ static void tray_add(void)
     gTray.uID    = GW_TRAY_ID;
     gTray.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     gTray.uCallbackMessage = GW_TRAY_MSG;
-    gTray.hIcon  = LoadIcon(gInst, MAKEINTRESOURCE(1));
+    gTray.hIcon  = LoadIcon(gInst, MAKEINTRESOURCE(GW_ICON_ON));
     strcpy(gTray.szTip, "Gateway");
 
     Shell_NotifyIconA(NIM_ADD, &gTray);
 }
 
 /*
- * The tray icon says whether the gateway is running.
+ * The tray icon says whether the gateway is running: the opening under the
+ * arch is green while it is, red while it is not.
  *
- * Same drawing, colour removed, so a stopped Gateway is still recognisable as
- * Gateway rather than as some other program that happens to be grey.
+ * Greying the whole icon was tried first and read as a flat blob at 16 by 16.
+ * At that size the opening is the only element with enough pixels to carry a
+ * state, and recolouring just it keeps the stonework and the padlock identical
+ * across all three icons, so it still reads as Gateway.
  */
 static void tray_set_icon(void)
 {
@@ -258,14 +262,27 @@ static void tray_menu(void)
 static HWND gAbout;
 
 
-static const char *kAbout[] = {
-    "A TLS 1.3 gateway for Windows",
-    "",
-    "Bruno Castello",
-    "bfcastello@hotmail.com",
-    "Engineer: Claude Opus 5",
-    "\xA9 Castello Designs, 2026",
-    "Built with MinGW-w64"
+/*
+ * The same box the Mac build draws, in Windows' own typeface.
+ *
+ * DrawAboutContent() in src/main.cpp centres seven lines at fixed offsets from
+ * the top of a 280 by 230 window, alternating Charcoal 12 and Geneva 10, all
+ * at normal weight. Those offsets, sizes and that weight are reproduced here;
+ * only the family changes, to the one Windows actually has. The first attempt
+ * was a left-aligned block of prose in bold beside an icon, which was a
+ * different design rather than the same one.
+ */
+#define GW_ABOUT_W 280
+#define GW_ABOUT_H 230
+
+static const struct { int y; int pt; const char *text; } kAbout[] = {
+    {  64, 12, "Gateway " GW_VERSION_STRING     },
+    {  84, 10, "A TLS 1.3 gateway for Windows"  },
+    { 112, 12, "Bruno Castello"                 },
+    { 132, 10, "bfcastello@hotmail.com"         },
+    { 160, 12, "Engineer: Claude Opus 5"        },
+    { 188, 10, "\xA9 Castello Designs, 2026"    },
+    { 208, 10, "Built with MinGW-w64"           }
 };
 
 static LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -274,43 +291,38 @@ static LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC         dc = BeginPaint(hwnd, &ps);
-        HFONT       bold, plain, old;
-        HICON       icon;
-        int         i, y;
+        RECT        area;
+        HFONT       f12, f10, old;
+        int         i, dpi, midX;
 
-        icon = LoadIcon(gInst, MAKEINTRESOURCE(1));
-        if (icon != NULL) DrawIcon(dc, 20, 20, icon);
+        GetClientRect(hwnd, &area);
+        midX = (area.right - area.left) / 2;
+
+        /* Points to logical units, so the text is the size it says it is
+         * whatever the display is set to. */
+        dpi = GetDeviceCaps(dc, LOGPIXELSY);
+        f12 = CreateFontA(-MulDiv(12, dpi, 72), 0, 0, 0, FW_NORMAL, 0, 0, 0,
+                          ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                          DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+                          "MS Sans Serif");
+        f10 = CreateFontA(-MulDiv(10, dpi, 72), 0, 0, 0, FW_NORMAL, 0, 0, 0,
+                          ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                          DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+                          "MS Sans Serif");
 
         SetBkMode(dc, TRANSPARENT);
+        SetTextAlign(dc, TA_CENTER | TA_BASELINE);
+        old = (HFONT)SelectObject(dc, f12);
 
-        bold = CreateFontA(-16, 0, 0, 0, FW_BOLD, 0, 0, 0, ANSI_CHARSET,
-                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                           DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-                           "MS Sans Serif");
-        plain = CreateFontA(-11, 0, 0, 0, FW_NORMAL, 0, 0, 0, ANSI_CHARSET,
-                            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                            DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-                            "MS Sans Serif");
-
-        old = (HFONT)SelectObject(dc, bold);
-        TextOutA(dc, 68, 20, "Gateway " GW_VERSION_STRING,
-                 (int)strlen("Gateway " GW_VERSION_STRING));
-
-        /*
-         * The same lines the Mac build draws in ShowAbout(), with the platform
-         * words changed. They were different text until 0.3.1; two About boxes
-         * for one program should say one thing.
-         */
-        SelectObject(dc, plain);
-        y = 44;
         for (i = 0; i < (int)(sizeof(kAbout) / sizeof(kAbout[0])); i++) {
-            TextOutA(dc, 68, y, kAbout[i], (int)strlen(kAbout[i]));
-            y += 18;
+            SelectObject(dc, kAbout[i].pt == 12 ? f12 : f10);
+            TextOutA(dc, midX, kAbout[i].y, kAbout[i].text,
+                     (int)strlen(kAbout[i].text));
         }
 
         SelectObject(dc, old);
-        DeleteObject(bold);
-        DeleteObject(plain);
+        DeleteObject(f12);
+        DeleteObject(f10);
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -335,13 +347,23 @@ static LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 static void about_show(void)
 {
-    RECT work;
-    int  w = 400, h = 250, x, y;
+    RECT work, frame;
+    int  w, h, x, y;
 
     if (gAbout != NULL) {           /* already up: bring it forward */
         SetForegroundWindow(gAbout);
         return;
     }
+
+    /*
+     * The Mac box is 280 by 230 of content. AdjustWindowRect turns that into
+     * the outer size, so the text lands at the offsets it was laid out for
+     * rather than however much smaller the caption leaves.
+     */
+    SetRect(&frame, 0, 0, GW_ABOUT_W, GW_ABOUT_H);
+    AdjustWindowRect(&frame, WS_CAPTION | WS_SYSMENU, FALSE);
+    w = frame.right - frame.left;
+    h = frame.bottom - frame.top;
 
     /* Centred on the working area, so it clears the taskbar. */
     if (!SystemParametersInfoA(SPI_GETWORKAREA, 0, &work, 0))
@@ -356,7 +378,8 @@ static void about_show(void)
 
     CreateWindowA("BUTTON", "OK",
                   WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-                  w - 100, h - 70, 70, 24, gAbout, (HMENU)IDOK, gInst, NULL);
+                  (GW_ABOUT_W - 70) / 2, GW_ABOUT_H - 34, 70, 24,
+                  gAbout, (HMENU)IDOK, gInst, NULL);
 
     ShowWindow(gAbout, SW_SHOW);
     SetForegroundWindow(gAbout);
@@ -461,7 +484,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     wc.lpfnWndProc   = WndProc;
     wc.hInstance     = inst;
     /* MAKEINTRESOURCE(1) is gateway.ico, from gateway.rc. */
-    wc.hIcon         = LoadIcon(inst, MAKEINTRESOURCE(1));
+    wc.hIcon         = LoadIcon(inst, MAKEINTRESOURCE(GW_ICON_APP));
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wc.lpszClassName = GW_CLASS;
@@ -470,7 +493,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     memset(&wc, 0, sizeof(wc));
     wc.lpfnWndProc   = AboutProc;
     wc.hInstance     = inst;
-    wc.hIcon         = LoadIcon(inst, MAKEINTRESOURCE(1));
+    wc.hIcon         = LoadIcon(inst, MAKEINTRESOURCE(GW_ICON_APP));
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpszClassName = GW_ABOUT_CLASS;
