@@ -156,12 +156,49 @@ Three options, in increasing order of effort:
    handler drawing the same ring buffer, and a tray icon via
    `Shell_NotifyIcon`. Perhaps 400 lines.
 
-### Toolchain
+### Toolchain — decided, and measured
 
-OpenWatcom or MinGW both produce binaries that run from NT 4.0 upward. MSVC 6
-is the period-correct option and is what a 1998 target would have used.
-CMake supports all three, so `CMakeLists.txt` needs a platform branch rather
-than a rewrite.
+**MinGW-w64, targeting Windows 95 OSR2 and up.** 95 OSR2 is the floor because
+that is where `msvcrt.dll` starts shipping with the system, so nothing has to
+be redistributed alongside Gateway; NT 4.0, 98, Me, 2000 and XP all have it.
+
+The remaining worry was imports rather than the C runtime: a single entry point
+that arrived after those systems means the loader refuses the executable before
+any of Gateway's code runs, and no DLL can fix that. So it was measured rather
+than argued. A minimal Win32 application — window class, message loop, tray
+icon, non-blocking Winsock socket, and the C library calls the shared core
+makes — built with `-D_WIN32_WINNT=0x0400` imports exactly this from KERNEL32:
+
+```
+DeleteCriticalSection   EnterCriticalSection   FreeLibrary
+GetLastError            GetModuleHandleA       GetProcAddress
+GetStartupInfoA         GetTickCount           InitializeCriticalSection
+LeaveCriticalSection    LoadLibraryA           SetUnhandledExceptionFilter
+Sleep                   TlsGetValue            VirtualProtect
+VirtualQuery
+```
+
+Every one of those exists in Windows 95 and NT 4.0. Nothing reaches for
+`EncodePointer`, `GetModuleHandleEx` or `InterlockedCompareExchange`, which are
+the usual reasons a modern MinGW binary will not load on them.
+
+The PE header is also already right: MinGW-w64 writes a subsystem version of
+4.0, which is what Windows 95 expects. [Discord
+Messenger](https://github.com/DiscordMessenger/dm), which reaches NT 3.1 with
+MinGW, patches offset `0xC8` by hand to lower that field — necessary for 3.1,
+which wants 3.10, and unnecessary at our floor. If the target ever moves that
+far back, `--major-subsystem-version` sets it without touching bytes.
+
+**Winsock 1.1, not 2.** Winsock 2 was a separate download for Windows 95 even
+on OSR2, while 1.1 is on every system in range and has everything Gateway
+needs: `select`, non-blocking sockets and `gethostbyname`. Link `wsock32`, not
+`ws2_32`.
+
+**`_snprintf` is not `snprintf`.** Old `msvcrt` does not null-terminate on
+truncation and returns `-1` rather than the length that would have been needed.
+There are 35 call sites relying on C99 semantics, several doing `n +=
+snprintf(...)` accumulation that silently corrupts under those rules. A
+`gw_snprintf` wrapper is required, not optional.
 
 ### Watch out for
 
