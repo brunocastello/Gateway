@@ -249,11 +249,16 @@ int GW_Init(void)
          */
         int st = MacTLS_SelfTest();
 
+        static const char *why[] = {
+            "ok", "ciphertext wrong", "tag wrong",
+            "decrypt wrong", "decrypt tag wrong"
+        };
+
         if (st == 0)
-            gw_log("crypto self-test: ChaCha20-Poly1305 ok");
+            gw_log("crypto self-test: ChaCha20-Poly1305 ok, both directions");
         else
             gw_log("crypto self-test: FAILED (%s)",
-                   st == 1 ? "ciphertext wrong" : "tag wrong");
+                   (st >= 1 && st <= 4) ? why[st] : "unknown");
     }
     if (sProxyOn || sWaybackOn) GWProxy_Init();
     if (sMailOn) {

@@ -80,6 +80,20 @@ int MacTLS_SelfTest(void)
 
     if (memcmp(buf, want_ct, sizeof(want_ct)) != 0) return 1;
     if (memcmp(tag, want_tag, sizeof(want_tag)) != 0) return 2;
+
+    /*
+     * And back again. Decryption is a different call with a different flag,
+     * and it is the direction that matters once a peer stops rejecting what we
+     * send: a record we cannot open looks, from above, exactly like a socket
+     * that failed.
+     */
+    memcpy(buf, want_ct, sizeof(buf));
+    br_poly1305_ctmul_run(key, nonce, buf, sizeof(buf),
+                          aad, sizeof(aad), tag,
+                          br_chacha20_ct_run, 0 /* decrypt */);
+
+    if (memcmp(buf, plain, sizeof(buf)) != 0) return 3;
+    if (memcmp(tag, want_tag, sizeof(want_tag)) != 0) return 4;
     return 0;
 }
 
