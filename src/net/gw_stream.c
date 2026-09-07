@@ -53,7 +53,7 @@ void GWStream_Adopt(GWStream *s, GWConn *c)
 {
     GWStream_Init(s);
     s->plain = c;
-    s->state = (c != NULL && c->state == kGWConnReady)
+    s->state = (c != NULL && GWConn_GetState(c) == kGWConnReady)
                    ? kGWStreamReady : kGWStreamError;
 }
 
