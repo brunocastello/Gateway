@@ -61,6 +61,8 @@ jobs:
   core:
     name: Compile the shared core for Win32
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # only used by the release step, on tags
     steps:
       - uses: actions/checkout@v4
 
