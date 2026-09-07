@@ -598,11 +598,36 @@ static void tls13_recv_records(MacTLS_Context *ctx)
                 ctx->tls13_app_offset = 0;
             }
 
-            /* record_len bounds the plaintext: it also covers the content
-             * type byte and the tag, so it is never an underestimate. */
-            if (record_type == TLS13_CT_APPLICATION_DATA &&
-                sizeof(ctx->tls13_app_buf) - ctx->tls13_app_len < record_len)
-                break;
+            /*
+             * Compare against the plaintext, not the record.
+             *
+             * record_len counts the ciphertext, which carries a content type
+             * byte and a 16 byte tag on top of the plaintext. A maximum sized
+             * record is 16384 of plaintext and so 16401 on the wire, while
+             * this buffer holds exactly 16384 -- so testing record_len against
+             * it refused every full sized record even when the buffer was
+             * completely empty, and the connection stalled until its idle
+             * timeout. Any response large enough to fill one record hit it.
+             */
+            if (record_type == TLS13_CT_APPLICATION_DATA) {
+                size_t overhead = 1 + TLS13_TAG_SIZE;
+                size_t plain = (record_len > overhead)
+                                   ? (size_t)record_len - overhead : 0;
+                size_t room = sizeof(ctx->tls13_app_buf) - ctx->tls13_app_len;
+
+                /*
+                 * An empty buffer always has room for a legal record, so
+                 * needing more than all of it means the peer has exceeded
+                 * what TLS 1.3 permits. Saying so beats waiting for space
+                 * that cannot arrive.
+                 */
+                if (plain > sizeof(ctx->tls13_app_buf)) {
+                    ctx->state = kMacTLS_Error;
+                    ctx->error = kMacTLS_ErrRead;
+                    return;
+                }
+                if (room < plain) break;   /* wait for the reader to drain */
+            }
         }
 
         /*
