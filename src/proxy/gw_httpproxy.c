@@ -1165,9 +1165,31 @@ static void session_step(GWHttpSession *s)
 {
     if (s->state == kHPFree) return;
 
+    /*
+     * Idle means nothing is moving, not that the client is slow.
+     *
+     * A browser on a 1999 machine can take a long time over one large object
+     * -- parsing 85 KB of JavaScript is real work there -- and while it is
+     * busy it stops reading, we stop flushing, and the clock keeps running.
+     * Cutting the transfer off at that point destroys a connection that was
+     * about to succeed, which showed up as a page that stalled for exactly
+     * the length of the timeout and then recovered.
+     *
+     * So a session with a response still queued for a client that is still
+     * connected is not idle: it is waiting, which is what backpressure looks
+     * like from this side. GWStream_PeerGone still ends it if the browser
+     * actually leaves, so a slot cannot be held by a client that is gone.
+     */
     if (GWNet_Ticks() - s->lastActivity > GW_IDLE_TIMEOUT) {
-        gw_log("#%ld idle timeout", s->id);
-        s->state = kHPDone;
+        int waiting_on_client = (s->outLen > s->outSent) &&
+                                !GWStream_PeerGone(&s->cli);
+
+        if (!waiting_on_client) {
+            gw_log("#%ld idle timeout", s->id);
+            s->state = kHPDone;
+        } else {
+            s->lastActivity = GWNet_Ticks();
+        }
     }
 
     GWStream_Pump(&s->cli);
