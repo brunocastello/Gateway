@@ -1126,6 +1126,17 @@ MacTLS_Error MacTLS_GetError(const MacTLS_Context *ctx)
     return ctx->error;
 }
 
+void MacTLS_GetCounters(const MacTLS_Context *ctx,
+                        unsigned long *sent, unsigned long *received)
+{
+    if (ctx == NULL || ctx->transport == NULL) {
+        if (sent != NULL)     *sent = 0;
+        if (received != NULL) *received = 0;
+        return;
+    }
+    ct_transport_counters(ctx->transport, sent, received);
+}
+
 long MacTLS_GetTransportError(const MacTLS_Context *ctx)
 {
     if (ctx->transport) {

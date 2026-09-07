@@ -132,6 +132,15 @@ MacTLS_Error MacTLS_GetError(const MacTLS_Context *ctx);
  * until there was a second transport for that to be wrong about.
  */
 long         MacTLS_GetTransportError(const MacTLS_Context *ctx);
+
+/*
+ * Raw bytes across the socket in each direction, ciphertext included. What the
+ * peer actually saw, as opposed to what the TLS layer thinks it handed over --
+ * a request the record layer accepted but that never reached the wire is
+ * indistinguishable, from above, from one the peer ignored.
+ */
+void         MacTLS_GetCounters(const MacTLS_Context *ctx,
+                                unsigned long *sent, unsigned long *received);
 int          MacTLS_GetBearSSLError(const MacTLS_Context *ctx);
 
 /* Returns the negotiated protocol version, or kMacTLS_VersionUnknown

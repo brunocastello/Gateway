@@ -231,10 +231,11 @@ static const char *gw_tls_error_text(int err)
 
 const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
 {
-    const char *phase = "idle";
-    OSStatus    otErr = noErr;
-    UInt32      addr = 0;
-    int         tlsErr = 0;
+    const char   *phase = "idle";
+    OSStatus      otErr = noErr;
+    UInt32        addr = 0;
+    int           tlsErr = 0;
+    unsigned long sent = 0, got = 0;
 
     if (cap == 0) return out;
 
@@ -251,6 +252,7 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
         otErr = MacTLS_GetTransportError(s->sec);
         addr  = (UInt32)MacTLS_GetResolvedAddress(s->sec);
         tlsErr = MacTLS_GetBearSSLError(s->sec);
+        MacTLS_GetCounters(s->sec, &sent, &got);
     } else if (s != NULL && s->plain != NULL) {
         otErr = GWConn_LastError(s->plain);
         addr  = GWConn_PeerIPv4(s->plain);
@@ -267,13 +269,19 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
         }
     }
 
+    /*
+     * The byte counters are the point of this line now. "Connected, no error,
+     * nothing wrong" describes both a request that never left and a peer that
+     * ignored one, and those are looked for in completely different places.
+     */
     if (addr != 0) {
-        snprintf(out, cap, "%s [%s, OT %d, TLS %d, %lu.%lu.%lu.%lu]",
+        snprintf(out, cap,
+                 "%s [%s, OT %d, TLS %d, %lu.%lu.%lu.%lu, wire %lu out %lu in]",
                  GWStream_ErrorText(s), phase, (int)otErr, tlsErr,
                  (unsigned long)((addr >> 24) & 0xFF),
                  (unsigned long)((addr >> 16) & 0xFF),
                  (unsigned long)((addr >> 8) & 0xFF),
-                 (unsigned long)(addr & 0xFF));
+                 (unsigned long)(addr & 0xFF), sent, got);
     } else {
         snprintf(out, cap, "%s [%s, OT %d, TLS %d, name unresolved]",
                  GWStream_ErrorText(s), phase, (int)otErr, tlsErr);
