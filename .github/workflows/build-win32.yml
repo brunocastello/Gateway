@@ -68,25 +68,33 @@ jobs:
       # machine that should now compile against a Windows compiler without a
       # single Open Transport header in reach; if that stops being true, this
       # step says so long before anyone tries to link a Windows binary.
-      - name: Compile src/portable and src/proxy
+      - name: Build Gateway.exe
+        run: make -f Makefile.win32 -j4
+
+      - name: What it needs to run
         run: |
-          set -euo pipefail
-          mkdir -p obj
-          FLAGS="-D_WIN32_WINNT=0x0400 -DWINVER=0x0400 -Os -Wall -Wextra
-                 -Wno-unused-parameter -Isrc -Isrc/portable -Ithird_party/certainly/src -Ithird_party/certainly/include -Ithird_party/certainly/bearssl/inc -c"
-
-          for f in src/portable/*.c src/proxy/*.c \
-                   src/net/gw_stream.c src/net/gw_net_win32.c \
-                   src/gw_core.c src/gw_config.c src/gw_plat_win32.c \
-                   third_party/certainly/src/transport_win32.c \
-                   third_party/certainly/src/entropy_win32.c; do
-            echo "  $f"
-            i686-w64-mingw32-gcc $FLAGS -o "obj/$(basename "${f%.c}").o" "$f"
-          done
-
+          ls -l build-win32/Gateway.exe
           echo
-          echo "Objects produced:"
-          ls -1 obj | sed 's/^/  /'
+          echo "=== DLLs ==="
+          i686-w64-mingw32-objdump -p build-win32/Gateway.exe | grep "DLL Name"
+          echo
+          echo "=== PE version fields (Windows 95 wants 4.0) ==="
+          i686-w64-mingw32-objdump -p build-win32/Gateway.exe \
+            | grep -Ei "MajorOSystemVersion|MajorSubsystemVersion|Subsystem"
+          echo
+          echo "=== msvcrt: is snprintf the C99 one? ==="
+          if i686-w64-mingw32-objdump -p build-win32/Gateway.exe \
+               | grep -qE "[[:space:]]_?snprintf$"; then
+            echo "::error::linked msvcrt's _snprintf, which truncates unsafely"
+            exit 1
+          fi
+          echo "  not imported from msvcrt - libmingwex supplied it"
+
+      - name: Upload the test build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gateway-windows-95-and-up
+          path: build-win32/Gateway.exe
 
       - name: Confirm nothing dragged in a Mac header
         run: |

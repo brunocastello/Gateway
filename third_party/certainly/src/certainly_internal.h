@@ -9,6 +9,7 @@
 #define CERTAINLY_INTERNAL_H
 
 #include "certainly.h"
+#include "certainly_compat.h"
 #include "certainly_transport.h"
 #include "entropy.h"
 #include "ca_roots.h"

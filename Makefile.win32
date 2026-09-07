@@ -1,0 +1,67 @@
+# Gateway for Windows 95 OSR2 and up.
+#
+#   make -f Makefile.win32
+#
+# Cross-compiles from Linux or macOS with MinGW-w64; CROSS overrides the
+# prefix. The Mac OS 9 build is CMake plus Retro68 and shares none of this,
+# which is why it is a separate file rather than a branch in CMakeLists.txt.
+
+CROSS ?= i686-w64-mingw32-
+CC     = $(CROSS)gcc
+STRIP  = $(CROSS)strip
+
+CERT   = third_party/certainly
+BEAR   = $(CERT)/bearssl
+
+# 0x0400 is Windows 95 / NT 4.0. __USE_MINGW_ANSI_STDIO gives the C99 printf
+# family from libmingwex instead of msvcrt's _snprintf, which does not
+# null-terminate on truncation and returns -1 rather than the length needed --
+# semantics several accumulating snprintf call sites here depend on.
+DEFS   = -D_WIN32_WINNT=0x0400 -DWINVER=0x0400 -D__USE_MINGW_ANSI_STDIO=1
+INCS   = -Isrc -Isrc/portable -I$(CERT)/include -I$(CERT)/src \
+         -I$(BEAR)/inc -I$(BEAR)/src
+CFLAGS = $(DEFS) $(INCS) -Os -ffunction-sections -fdata-sections \
+         -Wall -Wextra -Wno-unused-parameter
+
+# -mwindows for a GUI subsystem: no console window behind the tray icon.
+# The subsystem and OS versions are pinned to 4.0 because Windows 95 refuses
+# anything newer, whatever the imports say. MinGW-w64 already writes 4.0, so
+# this only keeps a future toolchain from quietly raising it.
+LDFLAGS = -mwindows -Wl,--gc-sections \
+          -Wl,--major-subsystem-version=4 -Wl,--minor-subsystem-version=0 \
+          -Wl,--major-os-version=4 -Wl,--minor-os-version=0
+LIBS    = -lwsock32 -lshell32 -luser32 -lgdi32 -ladvapi32 -lkernel32
+
+SRC = \
+  $(wildcard src/portable/*.c) \
+  $(wildcard src/proxy/*.c) \
+  src/gw_core.c src/gw_config.c src/gw_plat_win32.c \
+  src/net/gw_stream.c src/net/gw_net_win32.c \
+  src/win32/main_win32.c \
+  $(CERT)/src/certainly.c \
+  $(CERT)/src/transport_win32.c \
+  $(CERT)/src/entropy_win32.c \
+  $(CERT)/src/ca_roots.c \
+  $(CERT)/src/tls13_keysched.c \
+  $(CERT)/src/tls13_record.c \
+  $(CERT)/src/tls13_handshake.c \
+  $(wildcard $(BEAR)/src/*/*.c) \
+  $(wildcard $(BEAR)/src/*.c)
+
+OBJ = $(SRC:%.c=build-win32/%.o)
+
+all: build-win32/Gateway.exe
+
+build-win32/Gateway.exe: $(OBJ)
+	@mkdir -p $(dir $@)
+	$(CC) $(LDFLAGS) -o $@ $(OBJ) $(LIBS)
+	$(STRIP) $@
+
+build-win32/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+clean:
+	rm -rf build-win32
+
+.PHONY: all clean
