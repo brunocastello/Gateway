@@ -3,45 +3,35 @@
      on the release page as a ragged column of short lines. Keep prose on
      one line per paragraph; headings, lists and tables wrap normally. -->
 
-Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rather than in front of it, so applications written before modern TLS existed can reach the current web, current mail servers, and the Internet Archive.
+Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rather than in front of it, so applications written before modern TLS existed can reach the current web, current mail servers, and the Internet Archive. It runs on Mac OS 9 (PowerPC) and on Windows 95 OSR2 through XP.
 
-**0.3.0 adds Windows.** The same program, the same settings file, the same three modules, on Windows 95 OSR2 through XP — and it fixes two memory bugs that were live in the Mac builds all along.
+**0.3.1 is a follow-up to 0.3.0**, which added Windows. Everything here came out of using that release: a way to stop the gateway without quitting it, an installer, and the Windows build behaving as the Mac one does.
 
-## Windows 95 OSR2 and later
+## Stop and start without quitting
 
-`Gateway.exe` is a single native Win32 binary with no installer and no dependencies. It runs as a tray icon: right-click for **Show/Hide Window**, **Start with Windows**, **About Gateway** and **Quit**.
+Both builds gain a menu item that releases the ports and drops what is in flight, and another click binds them again. The application stays up either way, so the log stays readable and the settings can be corrected before starting again — which is the point of stopping rather than quitting. The item names what a click will do: **Stop Gateway** while it runs, **Start Gateway** while it does not.
 
-Settings live in **Gateway.ini** beside the executable rather than in a profile directory — 95 and 98 have no user profiles by default and NT puts them somewhere else again — and the file is the same one Mac OS 9 uses. Line endings do not matter to Gateway, so a configuration written on either platform works on the other.
+On Windows the tray icon says which it is. The opening under the arch is **green while running and red while stopped**, and blue in Explorer, on the taskbar and in the window caption, where the icon means the application rather than its state. All three are the same drawing with four gradient steps changed, because at sixteen pixels square the opening is the only element with enough room to carry a state — greying the whole icon was tried first and read as a flat blob.
 
-95 needs **OSR2 or later**, which is where `msvcrt.dll` starts shipping with the system. Beyond that the binary imports nothing newer than Windows 95: every entry point it uses is listed in `docs/porting.md` §3, along with how that was established rather than assumed.
+## A Windows installer
 
-Roughly 9,500 of Gateway's 12,000 lines are shared between the two platforms unchanged — the protocol grammar, both proxy modules, the TLS library and the stream layer. What is per-platform is the transport, the preferences and log files, the entropy source, and the shell.
+`Setup.exe` installs to **C:\Gateway** by default and lets you choose somewhere else, creates a **Gateway** group in the Start Menu, and registers a proper uninstaller with Add or Remove Programs.
 
-## Two fixes that matter on Mac OS 9 too
+Two things it deliberately will not do. It never overwrites an existing `Gateway.ini`, because that file holds the mail password and the OAuth refresh token, and replacing it on an upgrade would silently log you out of your own mail. And the uninstaller asks before removing it rather than assuming that uninstalling the program means discarding the credentials. It also closes a running Gateway before deleting it, and clears the registry entry that **Start with Windows** writes, which would otherwise have Windows complaining at every login about a program that is gone.
 
-**HKDF wrote past the end of every key and IV buffer** (`PATCHES.md` §19). `br_hmac_out` always writes the hash's whole output — 32 bytes for SHA-256 — and a TLS 1.3 IV is 12. Every IV derivation overran its buffer by 20 bytes, four times per handshake, onto whichever local the compiler had placed next. Which key that destroyed depended on the stack layout, so the same source was correct on PowerPC, corrupted the client's traffic key on x86 at `-Os`, and corrupted the server's at `-O0`.
+The Windows release ships as a zip and as a **1.44 MB floppy image**. Mount the image as drive A: in 86Box, or write it to a real diskette — Setup is a third of a floppy, so it fits with room to spare.
 
-**Decrypted data was discarded when the reader fell behind** (`PATCHES.md` §20). Application data was appended to a buffer holding exactly one maximum record, and the overflow was dropped with a comment saying "truncate if buffer full". Whenever a client read more slowly than a server sent — the ordinary case on this hardware — that punched a hole in the byte stream: chunked bodies were reported malformed, plain ones arrived short and sat until their idle timeout, and pages loaded at the speed of the timeout rather than the network.
+## Also fixed
 
-Both were present in 0.2.0 and earlier. **Upgrading is worthwhile on Mac OS 9 whether or not you care about Windows.**
-
-## Also in this release
-
-* **`CONNECT` is verified.** It shipped in 0.1.0 and had never been exercised,
-because there is no git client for Mac OS 9 to point at it. RetroZilla on Windows Me does exercise it.
-* **129 trust anchors, up from 29.** The curated list was a guess about which
-authorities the vintage web needs, and it kept being wrong — GlobalSign for `lite.cnn.com`, then Sectigo for `code.jquery.com`. A BearSSL anchor is a name and a public key rather than a certificate, so the whole system set costs about 53 KB and retires the problem.
-* **A transfer waiting on a slow client is no longer timed out.** A browser
-busy parsing a large script stops reading; that is backpressure, not an idle connection, and cutting it off cost exactly one timeout of stall.
-* **A cipher self-test at startup**, silent unless it fails.
-* **The About box agrees with the version.** 0.2.0 shipped with resources
-reading 0.2 and an About box still saying 0.1; the number now lives in one header that both platforms read.
+* **One Gateway at a time on Windows.** A shortcut in the Startup group and the tray menu's Start with Windows are separate mechanisms that cannot see each other, so enabling both launched two copies at login, each trying to bind the same ports. A named mutex settles it; the second copy surfaces the first one's window and exits, which also covers double-clicking the executable while it is already in the tray.
+* **The Windows About window** now carries the Mac's content and layout, in Windows' own typeface: the icon at the top, the same seven lines at the same offsets, with the names in bold.
+* **The About box agrees with the version again**, on both platforms.
 
 ## Installing
 
 **Mac OS 9:** unpack `Gateway.sit`, or mount `Gateway.dsk` in an emulator. Copy `docs/prefs-example.txt` into the System Preferences folder as **Gateway Prefs**. If the Finder shows a generic icon, rebuild the desktop by holding Command-Option through startup.
 
-**Windows:** unpack `Gateway.zip` anywhere and run `Gateway.exe`. Copy `docs/prefs-example.txt` beside it as **Gateway.ini**. Use **Start with Windows** in the tray menu to run it at login.
+**Windows:** run `Setup.exe`, from the zip or from the floppy image. To install by hand instead, the zip also carries `Gateway.exe` on its own; put it anywhere with a `Gateway.ini` beside it.
 
 Both need the configuration file to be writable: Gateway rewrites it when a mail provider rotates its refresh token, so a read-only copy works until the first rotation and then stops.
 
@@ -53,11 +43,11 @@ Both need the configuration file to be writable: Gateway rewrites it when a mail
 
 ## Known limits
 
-Gmail is implemented as a provider but has not been tried against a live account. TLS 1.3 offers ChaCha20-Poly1305 and AES-128-GCM with X25519 and P-256; a server insisting on anything else will not connect. The compiled-in anchors are all Gateway will ever trust, since neither target has a usable system trust store.
+Gmail is implemented as a provider but has not been tried against a live account. TLS 1.3 offers ChaCha20-Poly1305 and AES-128-GCM with X25519 and P-256; a server insisting on anything else will not connect. The compiled-in anchors — 129 of them, the whole system set — are all Gateway will ever trust, since neither target has a usable system trust store.
 
 Archived pages can be slow: the Internet Archive rate-limits, so `wayback_connects` defaults to 1, and a missing image is usually `wayback_tolerance` refusing a snapshot too far from your date rather than a failure.
 
-`docs/inventory.md` is the honest account of how this is put together. `third_party/certainly/PATCHES.md` lists the twenty fixes the vendored TLS library has needed, and §19 and §20 record how they were found — a known-answer test, byte counters, and the peer's own alert, each eliminating a layer that had otherwise been guessed at.
+`docs/inventory.md` is the honest account of how this is put together, and `third_party/certainly/PATCHES.md` lists the twenty fixes the vendored TLS library has needed.
 
 ## Not warranted
 
