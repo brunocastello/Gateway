@@ -1,7 +1,7 @@
 /*
  * gw_mail.h - Module 2: the IMAP (:1993) and SMTP (:1587) splices.
  *
- * NOT PORTABLE (gw_net.h). Outlook Express 5 is configured with SSL off on
+ * Platform independent (gw_transport.h names no operating system). Outlook Express 5 is configured with SSL off on
  * both ports and authentication on for SMTP; Gateway checks the password it is
  * given against its own prefs, then speaks IMAPS / SMTPS upstream with
  * AUTHENTICATE XOAUTH2 using a token refreshed by gw_token.c.
@@ -9,7 +9,7 @@
 #ifndef GW_MAIL_H
 #define GW_MAIL_H
 
-#include "../net/gw_net.h"
+#include "../net/gw_transport.h"
 
 #define GW_MAX_MAIL_SESSIONS 4
 

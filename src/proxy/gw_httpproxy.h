@@ -1,14 +1,14 @@
 /*
  * gw_httpproxy.h - Module 1: the HTTP proxy on :8765.
  *
- * NOT PORTABLE (pulls in gw_net.h, hence Open Transport). The request and
+ * Platform independent (gw_transport.h names no operating system). The request and
  * response grammar lives in src/portable/gw_http.c so it can be unit tested on
  * the host; this file is only the state machine and the buffers.
  */
 #ifndef GW_HTTPPROXY_H
 #define GW_HTTPPROXY_H
 
-#include "../net/gw_net.h"
+#include "../net/gw_transport.h"
 
 /*
  * How many splices run at once is a preference, not a constant: see

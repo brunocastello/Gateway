@@ -1,7 +1,7 @@
 /*
  * gw_token.h - OAuth 2 access-token refresh over Certainly.
  *
- * NOT PORTABLE (gw_net.h). Gateway holds one access token at a time, shared by
+ * Platform independent (gw_transport.h names no operating system). Gateway holds one access token at a time, shared by
  * the IMAP and SMTP splices. Consent happens out of band: the refresh token is
  * read from the prefs file, and all Gateway ever does is trade it for a
  * short-lived access token at the provider's token endpoint.
@@ -9,7 +9,7 @@
 #ifndef GW_TOKEN_H
 #define GW_TOKEN_H
 
-#include "../net/gw_net.h"
+#include "../net/gw_transport.h"
 
 typedef enum {
     kGWTokenIdle = 0,

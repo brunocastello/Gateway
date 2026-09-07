@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.12)
 project(Gateway C CXX)
 
+
+# Every target in this build is the Classic Mac OS one. src/gw_platform.h keys
+# the Toolbox spellings of Ptr, UInt16 and NewPtr off this rather than guessing
+# at which macro the toolchain predefines; the Windows build simply does not
+# set it and gets the C library instead.
+add_compile_definitions(GW_MAC_OS)
+
 #
 # Gateway - a TLS 1.3 gateway that runs in the background on Mac OS 9 (PPC).
 #
