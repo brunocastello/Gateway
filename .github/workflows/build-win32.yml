@@ -25,6 +25,8 @@ on:
       - 'src/gw_core.*'
       - 'src/gw_config.*'
       - 'src/gw_platform.h'
+      - 'src/gw_plat.h'
+      - 'src/gw_plat_win32.c'
       - 'src/net/gw_transport.h'
       - 'src/net/gw_stream.c'
       - 'src/net/gw_net_win32.*'
@@ -39,6 +41,8 @@ on:
       - 'src/gw_core.*'
       - 'src/gw_config.*'
       - 'src/gw_platform.h'
+      - 'src/gw_plat.h'
+      - 'src/gw_plat_win32.c'
       - 'src/net/gw_transport.h'
       - 'src/net/gw_stream.c'
       - 'src/net/gw_net_win32.*'
@@ -69,11 +73,13 @@ jobs:
           set -euo pipefail
           mkdir -p obj
           FLAGS="-D_WIN32_WINNT=0x0400 -DWINVER=0x0400 -Os -Wall -Wextra
-                 -Wno-unused-parameter -Isrc -Isrc/portable -Ithird_party/certainly/src -Ithird_party/certainly/include -c"
+                 -Wno-unused-parameter -Isrc -Isrc/portable -Ithird_party/certainly/src -Ithird_party/certainly/include -Ithird_party/certainly/bearssl/inc -c"
 
           for f in src/portable/*.c src/proxy/*.c \
                    src/net/gw_stream.c src/net/gw_net_win32.c \
-                   third_party/certainly/src/transport_win32.c; do
+                   src/gw_core.c src/gw_config.c src/gw_plat_win32.c \
+                   third_party/certainly/src/transport_win32.c \
+                   third_party/certainly/src/entropy_win32.c; do
             echo "  $f"
             i686-w64-mingw32-gcc $FLAGS -o "obj/$(basename "${f%.c}").o" "$f"
           done

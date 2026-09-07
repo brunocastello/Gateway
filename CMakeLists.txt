@@ -142,6 +142,7 @@ add_library(gw_net STATIC
     src/net/gw_stream.c
     src/gw_core.c
     src/gw_config.c
+    src/gw_plat_mac.c
     src/proxy/gw_httpproxy.c
     src/proxy/gw_mail.c
     src/proxy/gw_token.c

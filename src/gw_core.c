@@ -12,16 +12,11 @@
 #include <stdio.h>
 #include <string.h>
 
-/*
- * The Folder and File Managers, for the log file. These come from the vendored
- * Apple Universal Interfaces, which this translation unit is already on by way
- * of gw_net.h -- Multiversal has no Open Transport (CLAUDE.md rule 3).
- */
-#include <Files.h>
-#include <Folders.h>
-
 #include "gw_config.h"
-#include "net/gw_net.h"
+#include "net/gw_transport.h"
+#include "gw_plat.h"
+
+#include <certainly.h>
 #include "portable/gw_log.h"
 #include "portable/gw_util.h"
 #include "proxy/gw_httpproxy.h"
@@ -139,81 +134,27 @@ int GW_MaxSessions(void)
  * setting belongs, but a growing log is not a setting, and Application Support
  * is where a third-party application is supposed to keep this sort of thing.
  */
-static short sLogRef;                   /* 0 when no file is open */
-
 /*
- * Every line, as it is logged. Written and left unbuffered rather than
- * accumulated: the sessions worth capturing tend to be the ones that end in a
- * crash, and a buffered tail is exactly the part that would be lost. CR is the
- * Mac OS line ending, so the file opens correctly in SimpleText.
+ * Mirror the log to a file when log_file asks for it. Where the file goes is
+ * the platform's business; see gw_plat.h.
  */
-static void log_sink(const char *line)
-{
-    long count;
-
-    if (sLogRef == 0) return;
-
-    count = (long)strlen(line);
-    if (count > 0) FSWrite(sLogRef, &count, line);
-    count = 1;
-    FSWrite(sLogRef, &count, "\r");
-}
-
 static void start_file_log(void)
 {
     const char *want = GWConfig_Str("log_file", "0");
-    OSErr       err;
-    short       vRefNum, refNum;
-    long        dirID, gwDir;
-    FSSpec      spec;
 
     if (want == NULL || want[0] == '\0' ||
         gw_stricmp(want, "0") == 0 || gw_stricmp(want, "no") == 0 ||
         gw_stricmp(want, "off") == 0 || gw_stricmp(want, "false") == 0)
         return;
 
-    err = FindFolder(kOnSystemDisk, kApplicationSupportFolderType,
-                     kCreateFolder, &vRefNum, &dirID);
-    if (err != noErr) {
-        gw_log("log file: no Application Support folder (%d)", (int)err);
-        return;
-    }
-
-    /* dupFNErr just means someone got here first, on an earlier run. */
-    err = DirCreate(vRefNum, dirID, "\pGateway", &gwDir);
-    if (err != noErr && err != dupFNErr) {
-        gw_log("log file: could not make the Gateway folder (%d)", (int)err);
-        return;
-    }
-
-    err = FSMakeFSSpec(vRefNum, dirID, "\pGateway:Gateway Log.txt", &spec);
-    if (err == fnfErr)
-        err = FSpCreate(&spec, 'GT9A', 'TEXT', 0 /* smRoman: ASCII name */);
-    if (err != noErr) {
-        gw_log("log file: could not create it (%d)", (int)err);
-        return;
-    }
-
-    err = FSpOpenDF(&spec, fsWrPerm, &refNum);
-    if (err != noErr) {
-        gw_log("log file: could not open it (%d)", (int)err);
-        return;
-    }
-
-    /* Append, so runs accumulate instead of overwriting one another. */
-    SetFPos(refNum, fsFromLEOF, 0);
-    sLogRef = refNum;
-    gw_log_set_sink(log_sink);
-    gw_log("logging to Application Support:Gateway:Gateway Log.txt");
+    if (GWPlat_OpenLog(want))
+        gw_log_set_sink(GWPlat_WriteLog);
 }
 
 static void stop_file_log(void)
 {
     gw_log_set_sink(NULL);
-    if (sLogRef != 0) {
-        FSClose(sLogRef);
-        sLogRef = 0;
-    }
+    GWPlat_CloseLog();
 }
 
 int GW_MaxConnects(void)

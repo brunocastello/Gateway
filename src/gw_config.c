@@ -8,9 +8,8 @@
 
 #include "gw_config.h"
 
-#include <Files.h>
-#include <Folders.h>
-#include <MacTypes.h>
+#include "gw_plat.h"
+
 #include <string.h>
 
 #include "portable/gw_prefs.h"
@@ -27,49 +26,22 @@
 static char   sText[GW_PREFS_MAX];
 static long   sLen;
 static int    sLoaded;
-static char   sSource[64];
-static FSSpec sSpec;
-static int    sHaveSpec;
 
-static const unsigned char kPrefsName[] = "\pGateway Prefs";
 
 void GWConfig_Load(void)
 {
-    short  vRefNum;
-    long   dirID;
-    FSSpec spec;
-    short  refNum;
-    OSErr  err;
-    long   count;
+    long count;
 
     sLen = 0;
     sLoaded = 0;
     sText[0] = '\0';
-    strcpy(sSource, "defaults (no prefs file)");
 
-    err = FindFolder(kOnSystemDisk, kPreferencesFolderType,
-                     kDontCreateFolder, &vRefNum, &dirID);
-    if (err != noErr) return;
-
-    err = FSMakeFSSpec(vRefNum, dirID, kPrefsName, &spec);
-    if (err != noErr) return;
-
-    sSpec = spec;
-    sHaveSpec = 1;
-
-    err = FSpOpenDF(&spec, fsRdPerm, &refNum);
-    if (err != noErr) return;
-
-    count = GW_PREFS_MAX - 1;
-    err = FSRead(refNum, &count, sText);
-    FSClose(refNum);
-
-    if (err != noErr && err != eofErr) return;
+    count = GWPlat_ReadPrefs(sText, GW_PREFS_MAX - 1);
+    if (count < 0) return;
 
     sLen = count;
     sText[sLen] = '\0';
     sLoaded = 1;
-    strcpy(sSource, "Preferences:Gateway Prefs");
 
     /*
      * A full buffer means the file was cut off, and every setting past the cut
@@ -196,14 +168,6 @@ int GWConfig_Set(const char *key, const char *value)
 {
     static char updated[GW_PREFS_MAX];
     size_t n;
-    short  refNum;
-    OSErr  err;
-    long   count;
-
-    if (!sHaveSpec) {
-        gw_log("cannot save %s: no prefs file to write to", key);
-        return 0;
-    }
 
     n = gw_prefs_set(sText, (size_t)sLen, key, value,
                      updated, sizeof(updated));
@@ -213,31 +177,12 @@ int GWConfig_Set(const char *key, const char *value)
         return 0;
     }
 
-    err = FSpOpenDF(&sSpec, fsRdWrPerm, &refNum);
-    if (err != noErr) {
-        gw_log("cannot save %s: prefs file would not open (%d)", key, (int)err);
-        return 0;
-    }
-
-    err = SetFPos(refNum, fsFromStart, 0);
-    if (err == noErr) {
-        count = (long)n;
-        err = FSWrite(refNum, &count, updated);
-    }
-    if (err == noErr) err = SetEOF(refNum, (long)n);
-    FSClose(refNum);
-
-    if (err != noErr) {
-        gw_log("cannot save %s: write failed (%d)", key, (int)err);
-        return 0;
-    }
+    if (!GWPlat_WritePrefs(updated, (long)n)) return 0;
 
     /* Keep the in-memory copy in step so later reads see the new value. */
     memcpy(sText, updated, n);
     sLen = (long)n;
     sText[sLen] = '\0';
-
-    FlushVol(NULL, sSpec.vRefNum);
     return 1;
 }
 
@@ -256,5 +201,5 @@ long GWConfig_Num(const char *key, long def)
 
 const char *GWConfig_Source(void)
 {
-    return sSource;
+    return GWPlat_PrefsSource();
 }
