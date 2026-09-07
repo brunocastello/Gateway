@@ -99,17 +99,30 @@ static void hkdf_expand_label(
         br_hmac_key_context kc;
         br_hmac_context mc;
         unsigned char one = 0x01;
+        unsigned char t[64];
+        size_t produced;
 
         br_hmac_key_init(&kc, hash, secret, secret_len);
         br_hmac_init(&mc, &kc, 0);
         br_hmac_update(&mc, info, info_len);
         br_hmac_update(&mc, &one, 1);
-        br_hmac_out(&mc, out);
 
-        /* If out_len < hash output, caller gets the first out_len bytes.
-         * br_hmac_out always writes hash_len bytes, so we may produce
-         * more than needed. For TLS 1.3, out_len is always either
-         * hash_len (for secrets) or key_len/iv_len (for traffic keys). */
+        /*
+         * Into a full-sized block, then copy out what was asked for.
+         *
+         * br_hmac_out always writes the hash's whole output -- 32 bytes for
+         * SHA-256 -- and out_len is routinely smaller: an IV is 12 bytes and
+         * an AES-128 key is 16. Handing it the caller's buffer therefore wrote
+         * up to 20 bytes past the end of it, four times per handshake, over
+         * whichever local the compiler had placed next. Which key that
+         * destroyed depended on the stack layout, so the same source was
+         * correct on PowerPC, corrupted the client's traffic key on x86 at
+         * -Os, and corrupted the server's at -O0. See PATCHES.md §19.
+         */
+        produced = br_hmac_out(&mc, t);
+        if (out_len > produced) out_len = produced;
+        memcpy(out, t, out_len);
+        memset(t, 0, sizeof(t));
     }
 }
 

@@ -422,3 +422,45 @@ another until the last one has left entirely, so a sequence number is never
 consumed twice. `MacTLS_Pump` drains what is still owed, because the ordinary
 shape of an exchange is a caller that writes a whole request and then only
 reads.
+
+## §19 — HKDF-Expand-Label wrote past the end of every key and IV buffer
+
+*Found by the Windows port. A stack buffer overflow, present on Mac OS 9 too.*
+
+`hkdf_expand_label()` finished with
+
+```c
+br_hmac_out(&mc, out);
+```
+
+and `br_hmac_out()` always writes the hash function's entire output — 32 bytes
+for SHA-256. `out_len` is routinely smaller than that: a TLS 1.3 IV is 12
+bytes, and an AES-128 key is 16. So every IV derivation wrote **20 bytes past
+the end of the caller's buffer**, and every AES-128 key derivation wrote 16
+past. In `tls13_state_recv_finished` the destination buffers are adjacent
+locals:
+
+```c
+unsigned char client_key[32], client_iv[12];
+unsigned char server_key[32], server_iv[12];
+```
+
+so the overflow landed on whichever local the compiler had placed next — and
+which key it destroyed was therefore a property of the stack layout, not of the
+source. That is why the same code was correct on PowerPC, corrupted the
+*client* application traffic key on x86 at `-Os`, and corrupted the *server's*
+at `-O0`. The handshake keys survived in every layout, which is what made this
+so hard to see: the handshake completed, the Finished was accepted, and only
+the first application record failed.
+
+The comment left at that call said the caller "gets the first out_len bytes",
+which describes what was intended rather than what the code did.
+
+It now expands into a full-sized block and copies out only what was asked for.
+
+Getting here took a known-answer test proving the cipher itself was correct in
+both directions, byte counters proving the request reached the wire, key
+fingerprints proving the stash was intact, and finally the peer's own alert —
+`bad_record_mac` — which the library had been discarding (§18 area, fixed in
+the same session). Each of those eliminated a layer that had otherwise been
+guessed at.
