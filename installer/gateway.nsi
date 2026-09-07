@@ -5,6 +5,10 @@
 ;
 ;   makensis -DVERSION=0.3.1 -DSRC=build-win32 installer/gateway.nsi
 ;
+; The output is Setup.exe. It is named for what it does rather than for the
+; program it carries, which is what the era's installers were called and what
+; a floppy labelled "Gateway" wants on it.
+;
 ; The default directory is C:\Gateway rather than Program Files. Windows 95
 ; does have Program Files -- it was introduced there -- but its name is not
 ; 8.3 clean, so on a FAT partition without long filename support it appears as
@@ -27,7 +31,7 @@ Unicode false
 !endif
 
 Name "Gateway ${VERSION}"
-OutFile "Gateway-Setup.exe"
+OutFile "Setup.exe"
 InstallDir "C:\Gateway"
 InstallDirRegKey HKLM "Software\Gateway" "InstallDir"
 
@@ -38,8 +42,9 @@ RequestExecutionLevel user
 SetCompressor /SOLID lzma
 BrandingText "Gateway ${VERSION}"
 
-!define MUI_ICON   "..\src\win32\gateway.ico"
-!define MUI_UNICON "..\src\win32\gateway.ico"
+; No MUI_ICON or MUI_UNICON: the installer keeps NSIS's own install and
+; uninstall icons. Setup is not Gateway, and giving it Gateway's icon makes
+; two different things look like the same one in a folder or a Start Menu.
 
 !insertmacro MUI_PAGE_LICENSE "..\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY

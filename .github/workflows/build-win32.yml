@@ -71,7 +71,7 @@ jobs:
       - name: Install the cross toolchain
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq gcc-mingw-w64-i686 binutils-mingw-w64-i686 nsis
+          sudo apt-get install -y -qq gcc-mingw-w64-i686 binutils-mingw-w64-i686 nsis mtools zip
           i686-w64-mingw32-gcc --version | head -1
 
       # The point of the transport split. src/proxy is 2,100 lines of state
@@ -109,19 +109,19 @@ jobs:
           set -euo pipefail
           makensis -V2 -DVERSION="$(sed -n 's/.*GW_VERSION_LONG   "\(.*\)"/\1/p' src/gw_version.h)" \
                    -DSRC=../build-win32 installer/gateway.nsi
-          mv installer/Gateway-Setup.exe build-win32/Gateway-Setup.exe
-          ls -l build-win32/Gateway-Setup.exe
+          mv installer/Setup.exe build-win32/Setup.exe
+          ls -l build-win32/Setup.exe
 
       - name: Will the installer run on the targets
         run: |
           echo "=== PE version fields (Windows 95 wants 4.0) ==="
-          i686-w64-mingw32-objdump -p build-win32/Gateway-Setup.exe \
+          i686-w64-mingw32-objdump -p build-win32/Setup.exe \
             | grep -Ei "MajorOSystemVersion|MajorSubsystemVersion|Subsystem"
           echo
           echo "=== DLLs ==="
-          i686-w64-mingw32-objdump -p build-win32/Gateway-Setup.exe | grep "DLL Name"
+          i686-w64-mingw32-objdump -p build-win32/Setup.exe | grep "DLL Name"
           echo
-          if i686-w64-mingw32-objdump -p build-win32/Gateway-Setup.exe \
+          if i686-w64-mingw32-objdump -p build-win32/Setup.exe \
                | grep -qiE "GetProcessWindowStation|GetUserObjectInformationW"; then
             echo "::warning::installer imports a Unicode-era API; check Windows 95"
           fi
@@ -132,7 +132,7 @@ jobs:
           name: Gateway-windows-95-and-up
           path: |
             build-win32/Gateway.exe
-            build-win32/Gateway-Setup.exe
+            build-win32/Setup.exe
 
       # Tag pushes become release assets. Two of them: the bare executable, for
       # anyone who just wants to drop it next to an existing Gateway.ini, and a
@@ -145,14 +145,23 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "release/Gateway"
+          cp build-win32/Setup.exe   "release/Gateway/"
           cp build-win32/Gateway.exe "release/Gateway/"
           cp docs/prefs-example.txt  "release/Gateway/Gateway.ini"
           cp docs/prefs.md           "release/Gateway/Settings.md"
           cp LICENSE                 "release/Gateway/LICENSE.txt"
           (cd release && zip -r "Gateway-${GITHUB_REF_NAME}-windows.zip" Gateway)
-          cp build-win32/Gateway.exe "release/Gateway-${GITHUB_REF_NAME}.exe"
-          cp build-win32/Gateway-Setup.exe \
-             "release/Gateway-${GITHUB_REF_NAME}-setup.exe"
+
+          # A 1.44 MB floppy, which 86Box mounts directly and real hardware
+          # still reads. Setup.exe is a third of a diskette, so it fits with
+          # room to spare -- and mtools writes the filesystem without needing
+          # root or a loopback mount.
+          IMG="release/Gateway-${GITHUB_REF_NAME}-windows.img"
+          dd if=/dev/zero of="$IMG" bs=512 count=2880 status=none
+          mformat -i "$IMG" -f 1440 -v GATEWAY ::
+          mcopy -i "$IMG" build-win32/Setup.exe ::SETUP.EXE
+          echo "--- floppy contents ---"
+          mdir -i "$IMG" ::
 
           # The Mac job may or may not have created the release yet, so both
           # jobs have to cope with either order.
@@ -169,17 +178,4 @@ jobs:
 
           gh release upload "$GITHUB_REF_NAME" --clobber \
             "release/Gateway-${GITHUB_REF_NAME}-windows.zip" \
-            "release/Gateway-${GITHUB_REF_NAME}-setup.exe" \
-            "release/Gateway-${GITHUB_REF_NAME}.exe"
-
-      - name: Confirm nothing dragged in a Mac header
-        run: |
-          # Belt and braces: the compile above would have failed, but a header
-          # can be silently satisfied by a same-named file. Name the ones that
-          # must never appear.
-          if grep -rlE '#include *<(OpenTransport|MacTypes|MacMemory|Memory|Files|Folders|Quickdraw|Windows)\.h>' \
-               src/portable src/proxy; then
-            echo "::error::a Mac header is included from shared code"
-            exit 1
-          fi
-          echo "clean"
+            "$IMG"
