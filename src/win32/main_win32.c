@@ -273,16 +273,29 @@ static HWND gAbout;
  * different design rather than the same one.
  */
 #define GW_ABOUT_W 280
-#define GW_ABOUT_H 230
+#define GW_ABOUT_H 272        /* the Mac's 230 of content, plus the OK button */
 
-static const struct { int y; int pt; const char *text; } kAbout[] = {
-    {  64, 12, "Gateway " GW_VERSION_STRING     },
-    {  84, 10, "A TLS 1.3 gateway for Windows"  },
-    { 112, 12, "Bruno Castello"                 },
-    { 132, 10, "bfcastello@hotmail.com"         },
-    { 160, 12, "Engineer: Claude Opus 5"        },
-    { 188, 10, "\xA9 Castello Designs, 2026"    },
-    { 208, 10, "Built with MinGW-w64"           }
+/*
+ * The Mac's About box, in Windows' typeface.
+ *
+ * DrawAboutContent() in src/main.cpp plots a 32x32 icon centred at the top,
+ * then centres seven lines at fixed offsets, alternating 12 point and 10
+ * point. Those offsets are reproduced exactly; the three 12 point lines are
+ * bold here, which is the one deliberate difference.
+ *
+ * The window is taller than the Mac's because Windows expects a button and
+ * Mac OS closes an About box from its close box. The extra height goes below
+ * the text, so every line still lands where it was laid out -- at 230 the last
+ * line shared its row with the OK button.
+ */
+static const struct { int y; int pt; int bold; const char *text; } kAbout[] = {
+    {  64, 12, 1, "Gateway " GW_VERSION_STRING     },
+    {  84, 10, 0, "A TLS 1.3 gateway for Windows"  },
+    { 112, 12, 1, "Bruno Castello"                 },
+    { 132, 10, 0, "bfcastello@hotmail.com"         },
+    { 160, 12, 1, "Engineer: Claude Opus 5"        },
+    { 188, 10, 0, "\xA9 Castello Designs, 2026"    },
+    { 208, 10, 0, "Built with MinGW-w64"           }
 };
 
 static LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -292,37 +305,43 @@ static LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         PAINTSTRUCT ps;
         HDC         dc = BeginPaint(hwnd, &ps);
         RECT        area;
-        HFONT       f12, f10, old;
+        HFONT       bold, plain, old;
+        HICON       icon;
         int         i, dpi, midX;
 
         GetClientRect(hwnd, &area);
         midX = (area.right - area.left) / 2;
 
-        /* Points to logical units, so the text is the size it says it is
-         * whatever the display is set to. */
+        /* The application icon, centred, where the Mac plots its own. */
+        icon = LoadIcon(gInst, MAKEINTRESOURCE(GW_ICON_APP));
+        if (icon != NULL)
+            DrawIconEx(dc, midX - 16, 14, icon, 32, 32, 0, NULL, DI_NORMAL);
+
+        /* Points to logical units through the display's own resolution, so
+         * the text is the size it claims whatever the screen is set to. */
         dpi = GetDeviceCaps(dc, LOGPIXELSY);
-        f12 = CreateFontA(-MulDiv(12, dpi, 72), 0, 0, 0, FW_NORMAL, 0, 0, 0,
-                          ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                          DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-                          "MS Sans Serif");
-        f10 = CreateFontA(-MulDiv(10, dpi, 72), 0, 0, 0, FW_NORMAL, 0, 0, 0,
-                          ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                          DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-                          "MS Sans Serif");
+        bold = CreateFontA(-MulDiv(12, dpi, 72), 0, 0, 0, FW_BOLD, 0, 0, 0,
+                           ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                           DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+                           "MS Sans Serif");
+        plain = CreateFontA(-MulDiv(10, dpi, 72), 0, 0, 0, FW_NORMAL, 0, 0, 0,
+                            ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                            DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+                            "MS Sans Serif");
 
         SetBkMode(dc, TRANSPARENT);
         SetTextAlign(dc, TA_CENTER | TA_BASELINE);
-        old = (HFONT)SelectObject(dc, f12);
+        old = (HFONT)SelectObject(dc, plain);
 
         for (i = 0; i < (int)(sizeof(kAbout) / sizeof(kAbout[0])); i++) {
-            SelectObject(dc, kAbout[i].pt == 12 ? f12 : f10);
+            SelectObject(dc, kAbout[i].bold ? bold : plain);
             TextOutA(dc, midX, kAbout[i].y, kAbout[i].text,
                      (int)strlen(kAbout[i].text));
         }
 
         SelectObject(dc, old);
-        DeleteObject(f12);
-        DeleteObject(f10);
+        DeleteObject(bold);
+        DeleteObject(plain);
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -378,7 +397,7 @@ static void about_show(void)
 
     CreateWindowA("BUTTON", "OK",
                   WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-                  (GW_ABOUT_W - 70) / 2, GW_ABOUT_H - 34, 70, 24,
+                  (GW_ABOUT_W - 76) / 2, 230, 76, 26,
                   gAbout, (HMENU)IDOK, gInst, NULL);
 
     ShowWindow(gAbout, SW_SHOW);
