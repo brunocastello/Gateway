@@ -14,22 +14,30 @@
 #ifndef CERTAINLY_TRANSPORT_H
 #define CERTAINLY_TRANSPORT_H
 
-#include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
-
 /*
  * A connection handle owned by whoever opened it, for the adopt path.
  *
  * Open Transport hands out a pointer; Winsock hands out an integer, and
  * INVALID_SOCKET is all ones rather than zero. Neither fits the other, so the
  * type is per-platform and callers on each side use their own.
+ *
+ * This block comes before <stdbool.h> deliberately. MacTypes.h declares true
+ * and false as enumerators, so a stdbool that got in first turns that
+ * declaration into "enum { 0 = 0, 1 = 1 }" and the Universal Interfaces stop
+ * compiling. The header this replaced had the same ordering for the same
+ * reason; it just did not say so.
  */
 #ifdef CERTAINLY_OPEN_TRANSPORT
 #include <OpenTransport.h>
 typedef EndpointRef CTSocket;
 #define CT_SOCKET_NONE ((CTSocket)0)
-#else
+#endif
+
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+
+#ifndef CERTAINLY_OPEN_TRANSPORT
 typedef uintptr_t CTSocket;
 #define CT_SOCKET_NONE ((CTSocket)~(uintptr_t)0)
 #endif
