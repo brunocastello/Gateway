@@ -1137,6 +1137,23 @@ void MacTLS_GetCounters(const MacTLS_Context *ctx,
     ct_transport_counters(ctx->transport, sent, received);
 }
 
+size_t MacTLS_GetPending(const MacTLS_Context *ctx,
+                         unsigned char *head, size_t headcap)
+{
+    size_t n;
+
+    if (ctx == NULL) return 0;
+
+    n = ctx->tls13_recv_len;
+    if (head != NULL && headcap > 0) {
+        size_t copy = (n < headcap) ? n : headcap;
+
+        memset(head, 0, headcap);
+        if (copy > 0) memcpy(head, ctx->tls13_recv_buf, copy);
+    }
+    return n;
+}
+
 long MacTLS_GetTransportError(const MacTLS_Context *ctx)
 {
     if (ctx->transport) {

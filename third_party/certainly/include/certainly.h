@@ -141,6 +141,19 @@ long         MacTLS_GetTransportError(const MacTLS_Context *ctx);
  */
 void         MacTLS_GetCounters(const MacTLS_Context *ctx,
                                 unsigned long *sent, unsigned long *received);
+
+/*
+ * Ciphertext received but not yet turned into anything: the number of bytes
+ * sitting in the record buffer, and the first few of them, which for a TLS 1.3
+ * record is its header -- content type, legacy version, and the length the
+ * peer says the record is.
+ *
+ * That header answers the question no counter can: whether bytes that arrived
+ * and produced nothing were an unparsed record, a record still short of its
+ * declared length, or an alert.
+ */
+size_t       MacTLS_GetPending(const MacTLS_Context *ctx,
+                               unsigned char *head, size_t headcap);
 int          MacTLS_GetBearSSLError(const MacTLS_Context *ctx);
 
 /* Returns the negotiated protocol version, or kMacTLS_VersionUnknown

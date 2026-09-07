@@ -246,6 +246,8 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
     UInt32        addr = 0;
     int           tlsErr = 0;
     unsigned long sent = 0, got = 0;
+    unsigned char head[5];
+    size_t        pending = 0;
 
     if (cap == 0) return out;
 
@@ -263,6 +265,7 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
         addr  = (UInt32)MacTLS_GetResolvedAddress(s->sec);
         tlsErr = MacTLS_GetBearSSLError(s->sec);
         MacTLS_GetCounters(s->sec, &sent, &got);
+        pending = MacTLS_GetPending(s->sec, head, sizeof(head));
     } else if (s != NULL && s->plain != NULL) {
         otErr = GWConn_LastError(s->plain);
         addr  = GWConn_PeerIPv4(s->plain);
@@ -285,13 +288,28 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
      * ignored one, and those are looked for in completely different places.
      */
     if (addr != 0) {
+        char rec[48];
+
+        /*
+         * Ciphertext that arrived and became nothing is the whole remaining
+         * question, so say what it looks like: the record header names the
+         * content type and the length the peer claims, and the two together
+         * separate a record we failed to decrypt from one that never finished
+         * arriving.
+         */
+        rec[0] = '\0';
+        if (pending > 0)
+            snprintf(rec, sizeof(rec), ", held %lu: %02x %02x %02x %02x %02x",
+                     (unsigned long)pending, head[0], head[1], head[2],
+                     head[3], head[4]);
+
         snprintf(out, cap,
-                 "%s [%s, OT %d, TLS %d, %lu.%lu.%lu.%lu, wire %lu out %lu in]",
+                 "%s [%s, OT %d, TLS %d, %lu.%lu.%lu.%lu, wire %lu out %lu in%s]",
                  GWStream_ErrorText(s), phase, (int)otErr, tlsErr,
                  (unsigned long)((addr >> 24) & 0xFF),
                  (unsigned long)((addr >> 16) & 0xFF),
                  (unsigned long)((addr >> 8) & 0xFF),
-                 (unsigned long)(addr & 0xFF), sent, got);
+                 (unsigned long)(addr & 0xFF), sent, got, rec);
     } else {
         snprintf(out, cap, "%s [%s, OT %d, TLS %d, name unresolved]",
                  GWStream_ErrorText(s), phase, (int)otErr, tlsErr);
