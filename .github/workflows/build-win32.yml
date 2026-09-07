@@ -33,6 +33,7 @@ on:
       - 'third_party/certainly/**'
       # Windows only.
       - 'src/win32/**'
+      - 'Makefile.win32'
       - '.github/workflows/build-win32.yml'
   pull_request:
     paths:
@@ -48,6 +49,7 @@ on:
       - 'src/net/gw_net_win32.*'
       - 'third_party/certainly/**'
       - 'src/win32/**'
+      - 'Makefile.win32'
       - '.github/workflows/build-win32.yml'
   workflow_dispatch:
 
