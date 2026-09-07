@@ -9,7 +9,7 @@
 #define CERTAINLY_INTERNAL_H
 
 #include "certainly.h"
-#include "ot_transport.h"
+#include "certainly_transport.h"
 #include "entropy.h"
 #include "ca_roots.h"
 #include "tls13_handshake.h"
@@ -36,7 +36,7 @@ struct MacTLS_Context {
     MacTLS_Error    error;
 
     /* Open Transport TCP connection */
-    OTTransport    *transport;
+    CTransport    *transport;
 
     /* BearSSL client context — contains the TLS state machine */
     br_ssl_client_context   sc;

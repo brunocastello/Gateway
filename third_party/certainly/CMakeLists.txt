@@ -14,7 +14,7 @@ add_subdirectory(bearssl)
 # Certainly — the TLS library
 add_library(certainly STATIC
     src/certainly.c
-    src/ot_transport.c
+    src/transport_ot.c
     src/entropy.c
     src/ca_roots.c
     src/tls13_keysched.c

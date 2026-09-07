@@ -1,5 +1,5 @@
 /*
- * ot_transport.c — Open Transport TCP wrapper
+ * transport_ot.c — the Open Transport implementation of certainly_transport.h
  *
  * HOW OT ASYNC WORKS:
  *
@@ -12,22 +12,81 @@
  *   - It CAN set flags and copy small amounts of data
  *
  * So our notifier just sets boolean flags ("hey, data arrived!").
- * Then ot_transport_pump(), which runs at normal application time,
+ * Then ct_transport_pump(), which runs at normal application time,
  * checks those flags and does the actual work. This two-phase
  * pattern (notifier sets flags → pump reads flags) is the standard
  * way to do async OT programming.
  */
 
-#include "ot_transport.h"
+#include "certainly_transport.h"
 #include <string.h>
 #include <Memory.h>  /* NewPtrClear, DisposePtr */
 #include <Events.h>  /* TickCount */
 
+/*
+ * The Open Transport shape of a CTransport. It was in the header until the
+ * interface was made portable; certainly.c read six of these fields directly
+ * and now goes through the accessors at the bottom of this file.
+ */
+struct CTransport {
+    /* OT endpoint - the "phone" we talk through */
+    EndpointRef     endpoint;
+
+    /* Internet services provider handle used for DNS resolution.
+     * Opened in ot_start_dns() and closed in ct_transport_destroy(). */
+    InetSvcRef      inetSvc;
+
+    /* DNS resolution result */
+    InetHostInfo    hostInfo;
+    uint16_t        port;
+
+    /*
+     * Our own copy of the hostname. OTInetStringToAddress() is issued
+     * asynchronously and Open Transport does not copy the name: the buffer has
+     * to stay put until T_DNRSTRINGTOADDRCOMPLETE arrives. Holding the
+     * caller's pointer worked only as long as callers passed string literals
+     * (Gateway patch - see PATCHES.md).
+     */
+    char            host[256];
+
+    /*
+     * The address and call structure OTConnect() is given. Like the hostname
+     * above, these must outlive the call: OTConnect on an asynchronous
+     * endpoint returns immediately and Open Transport reads the address later,
+     * when it actually sends the SYN. They used to be locals in
+     * ct_transport_pump(), so the frame was gone by then (Gateway patch - see
+     * PATCHES.md).
+     */
+    InetAddress     remoteAddr;
+    TCall           sndCall;
+
+    /* Which of hostInfo.addrs we are currently trying. */
+    int             addrIndex;
+
+    /* State tracking */
+    CTransportState state;
+    volatile OSStatus lastError;
+
+    /* Connection start time for timeout tracking (in ticks) */
+    uint32_t        connect_start_ticks;
+
+    /* Flags set by the notifier callback (runs at interrupt time) */
+    volatile bool   connectComplete;
+    volatile bool   dataAvailable;
+    volatile bool   ordRelReceived;
+    volatile bool   disconnectReceived;
+    volatile bool   dnsComplete;
+
+    /* True once we've called OTRcvOrderlyDisconnect to clear the event */
+    bool            ordRelConsumed;
+};
+
+
 /* Forward declarations */
 static pascal void ot_notifier(void *context, OTEventCode event,
                                OTResult result, void *cookie);
-static OSStatus    ot_setup_endpoint(OTTransport *t);
-static void        ot_start_dns(OTTransport *t);
+static OSStatus    ot_setup_endpoint(CTransport *t);
+static void        ot_start_dns(CTransport *t);
 
 /*
  * The notifier — runs at interrupt time when OT has something to tell us.
@@ -44,7 +103,7 @@ static void        ot_start_dns(OTTransport *t);
 static pascal void ot_notifier(void *context, OTEventCode event,
                                OTResult result, void *cookie)
 {
-    OTTransport *t = (OTTransport *)context;
+    CTransport *t = (CTransport *)context;
 
     switch (event) {
     case T_OPENCOMPLETE:
@@ -89,7 +148,7 @@ static pascal void ot_notifier(void *context, OTEventCode event,
  * either: until the event is consumed, every later call on the endpoint fails
  * with kOTLookErr (Gateway patch - see PATCHES.md).
  */
-static void ot_consume_disconnect(OTTransport *t)
+static void ot_consume_disconnect(CTransport *t)
 {
     TDiscon discon;
 
@@ -108,7 +167,7 @@ static void ot_consume_disconnect(OTTransport *t)
  * Issue OTConnect for hostInfo.addrs[t->addrIndex].
  * Returns true when the attempt started.
  */
-static Boolean ot_connect_current(OTTransport *t)
+static Boolean ot_connect_current(CTransport *t)
 {
     OTInitInetAddress(&t->remoteAddr, t->port,
                       t->hostInfo.addrs[t->addrIndex]);
@@ -131,7 +190,7 @@ static Boolean ot_connect_current(OTTransport *t)
  * to the next one rather than failing the whole connection (Gateway patch -
  * see PATCHES.md).
  */
-static Boolean ot_try_next_address(OTTransport *t)
+static Boolean ot_try_next_address(CTransport *t)
 {
     while (t->addrIndex + 1 < kMaxHostAddrs) {
         t->addrIndex++;
@@ -149,7 +208,7 @@ static Boolean ot_try_next_address(OTTransport *t)
  * "udp", "tilisten" for a listening socket, etc.). This is OT's
  * STREAMS heritage showing — you configure protocol stacks as strings.
  */
-static OSStatus ot_setup_endpoint(OTTransport *t)
+static OSStatus ot_setup_endpoint(CTransport *t)
 {
     OSStatus        err;
     OTConfigurationRef config;
@@ -212,7 +271,7 @@ static OSStatus ot_setup_endpoint(OTTransport *t)
  * T_DNRSTRINGTOADDRCOMPLETE. This is OT's built-in DNS resolver —
  * it uses whatever DNS servers are configured in the TCP/IP control panel.
  */
-static void ot_start_dns(OTTransport *t)
+static void ot_start_dns(CTransport *t)
 {
     OSStatus   err;
 
@@ -222,7 +281,7 @@ static void ot_start_dns(OTTransport *t)
     );
     if (err != noErr) {
         t->lastError = err;
-        t->state = kOTTransport_Error;
+        t->state = kCTransport_Error;
         return;
     }
 
@@ -234,24 +293,24 @@ static void ot_start_dns(OTTransport *t)
     err = OTInetStringToAddress(t->inetSvc, t->host, &t->hostInfo);
     if (err != noErr && err != kOTNoError) {
         t->lastError = err;
-        t->state = kOTTransport_Error;
+        t->state = kCTransport_Error;
     }
 }
 
-OTTransport *ot_transport_create(const char *host, uint16_t port)
+CTransport *ct_transport_create(const char *host, uint16_t port)
 {
-    OTTransport *t;
+    CTransport *t;
     OSStatus     err;
 
-    t = (OTTransport *)NewPtrClear(sizeof(OTTransport));
+    t = (CTransport *)NewPtrClear(sizeof(CTransport));
     if (t == NULL) return NULL;
 
-    t->state = kOTTransport_Idle;
+    t->state = kCTransport_Idle;
     t->port  = port;
 
     if (host == NULL || strlen(host) >= sizeof(t->host)) {
         t->lastError = kOTBadNameErr;
-        t->state = kOTTransport_Error;
+        t->state = kCTransport_Error;
         return t;
     }
     strcpy(t->host, host);
@@ -259,7 +318,7 @@ OTTransport *ot_transport_create(const char *host, uint16_t port)
     err = ot_setup_endpoint(t);
     if (err != noErr) {
         t->lastError = err;
-        t->state = kOTTransport_Error;
+        t->state = kCTransport_Error;
         return t;
     }
 
@@ -267,20 +326,20 @@ OTTransport *ot_transport_create(const char *host, uint16_t port)
     t->connect_start_ticks = (uint32_t)TickCount();
 
     /* Start DNS resolution */
-    t->state = kOTTransport_ResolvingDNS;
+    t->state = kCTransport_ResolvingDNS;
     ot_start_dns(t);
 
     return t;
 }
 
-OTTransport *ot_transport_adopt(EndpointRef ep)
+CTransport *ct_transport_adopt(EndpointRef ep)
 {
-    OTTransport *t;
+    CTransport *t;
     OSStatus     err;
 
     if (ep == NULL) return NULL;
 
-    t = (OTTransport *)NewPtrClear(sizeof(OTTransport));
+    t = (CTransport *)NewPtrClear(sizeof(CTransport));
     if (t == NULL) return NULL;
 
     t->endpoint = ep;
@@ -298,33 +357,33 @@ OTTransport *ot_transport_adopt(EndpointRef ep)
     if (err == noErr) err = OTSetNonBlocking(ep);
     if (err != noErr) {
         t->lastError = err;
-        t->state = kOTTransport_Error;
+        t->state = kCTransport_Error;
         return t;
     }
 
     /* TCP is already up; the handshake can start on the next pump. */
-    t->state = kOTTransport_Connected;
+    t->state = kCTransport_Connected;
     return t;
 }
 
-OTTransportState ot_transport_pump(OTTransport *t)
+CTransportState ct_transport_pump(CTransport *t)
 {
     switch (t->state) {
 
-    case kOTTransport_ResolvingDNS:
-        if ((uint32_t)TickCount() - t->connect_start_ticks > OT_CONNECT_TIMEOUT_TICKS) {
+    case kCTransport_ResolvingDNS:
+        if ((uint32_t)TickCount() - t->connect_start_ticks > CT_CONNECT_TIMEOUT_TICKS) {
             t->lastError = -3259;  /* kETIMEDOUTErr */
-            t->state = kOTTransport_Error;
+            t->state = kCTransport_Error;
             break;
         }
         if (t->disconnectReceived) {
             ot_consume_disconnect(t);
-            t->state = kOTTransport_Error;
+            t->state = kCTransport_Error;
             break;
         }
         if (t->dnsComplete) {
             if (t->lastError != noErr) {
-                t->state = kOTTransport_Error;
+                t->state = kCTransport_Error;
                 break;
             }
             /*
@@ -345,36 +404,36 @@ OTTransportState ot_transport_pump(OTTransport *t)
                  * them after we have returned. */
                 t->addrIndex = 0;
                 if (!ot_connect_current(t)) {
-                    t->state = kOTTransport_Error;
+                    t->state = kCTransport_Error;
                     break;
                 }
-                t->state = kOTTransport_Connecting;
+                t->state = kCTransport_Connecting;
             }
         }
         break;
 
-    case kOTTransport_Connecting:
-        if ((uint32_t)TickCount() - t->connect_start_ticks > OT_CONNECT_TIMEOUT_TICKS) {
+    case kCTransport_Connecting:
+        if ((uint32_t)TickCount() - t->connect_start_ticks > CT_CONNECT_TIMEOUT_TICKS) {
             t->lastError = -3259;  /* kETIMEDOUTErr */
-            t->state = kOTTransport_Error;
+            t->state = kCTransport_Error;
             break;
         }
         if (t->disconnectReceived) {
             ot_consume_disconnect(t);
             /* That address refused us; the resolver may have given others. */
             if (ot_try_next_address(t)) break;
-            t->state = kOTTransport_Error;
+            t->state = kCTransport_Error;
             break;
         }
         if (t->connectComplete) {
-            t->state = kOTTransport_Connected;
+            t->state = kCTransport_Connected;
         }
         break;
 
-    case kOTTransport_Connected:
+    case kCTransport_Connected:
         if (t->disconnectReceived) {
             ot_consume_disconnect(t);
-            t->state = kOTTransport_Error;
+            t->state = kCTransport_Error;
             break;
         }
         /*
@@ -389,7 +448,7 @@ OTTransportState ot_transport_pump(OTTransport *t)
          *
          * After OTRcvOrderlyDisconnect(), we stay in Connected state
          * so sends still work. The caller will drive the final close
-         * via ot_transport_close() when it's done sending.
+         * via ct_transport_close() when it's done sending.
          */
         if (t->ordRelReceived && !t->ordRelConsumed) {
             OTRcvOrderlyDisconnect(t->endpoint);
@@ -397,9 +456,9 @@ OTTransportState ot_transport_pump(OTTransport *t)
         }
         break;
 
-    case kOTTransport_Closing:
+    case kCTransport_Closing:
         if (t->ordRelReceived || t->disconnectReceived) {
-            t->state = kOTTransport_Closed;
+            t->state = kCTransport_Closed;
         }
         break;
 
@@ -410,11 +469,11 @@ OTTransportState ot_transport_pump(OTTransport *t)
     return t->state;
 }
 
-int ot_transport_send(OTTransport *t, const void *buf, size_t len)
+int ct_transport_send(CTransport *t, const void *buf, size_t len)
 {
     OTResult result;
 
-    if (t->state != kOTTransport_Connected) return -1;
+    if (t->state != kCTransport_Connected) return -1;
 
     /*
      * OTSnd sends data. Returns:
@@ -434,13 +493,13 @@ int ot_transport_send(OTTransport *t, const void *buf, size_t len)
     return (int)result;
 }
 
-int ot_transport_recv(OTTransport *t, void *buf, size_t len)
+int ct_transport_recv(CTransport *t, void *buf, size_t len)
 {
     OTResult result;
     OTFlags  flags = 0;
 
-    if (t->state != kOTTransport_Connected &&
-        t->state != kOTTransport_Closing) return -1;
+    if (t->state != kCTransport_Connected &&
+        t->state != kCTransport_Closing) return -1;
 
     /*
      * OTRcv receives data. Returns:
@@ -468,20 +527,20 @@ int ot_transport_recv(OTTransport *t, void *buf, size_t len)
     return (int)result;
 }
 
-void ot_transport_close(OTTransport *t)
+void ct_transport_close(CTransport *t)
 {
-    if (t->state == kOTTransport_Connected) {
+    if (t->state == kCTransport_Connected) {
         /*
          * OTSndOrderlyDisconnect sends a TCP FIN — "I'm done
          * sending, but I'll still read your remaining data."
          * The peer responds with their own FIN eventually.
          */
         OTSndOrderlyDisconnect(t->endpoint);
-        t->state = kOTTransport_Closing;
+        t->state = kCTransport_Closing;
     }
 }
 
-void ot_transport_destroy(OTTransport *t)
+void ct_transport_destroy(CTransport *t)
 {
     if (t == NULL) return;
 
@@ -506,4 +565,40 @@ void ot_transport_destroy(OTTransport *t)
         OTCloseProvider(t->endpoint);
     }
     DisposePtr((Ptr)t);
+}
+
+/* ------------------------------------------------------------------ */
+/* Accessors: what the TLS core is allowed to know                     */
+/* ------------------------------------------------------------------ */
+
+CTransportState ct_transport_state(const CTransport *t)
+{
+    return (t == NULL) ? kCTransport_Error : t->state;
+}
+
+int ct_transport_peer_closed(const CTransport *t)
+{
+    if (t == NULL) return 1;
+    return (t->ordRelReceived || t->disconnectReceived) ? 1 : 0;
+}
+
+uint16_t ct_transport_port(const CTransport *t)
+{
+    return (t == NULL) ? 0 : t->port;
+}
+
+long ct_transport_last_error(const CTransport *t)
+{
+    return (t == NULL) ? 0 : (long)t->lastError;
+}
+
+uint32_t ct_transport_peer_ipv4(const CTransport *t)
+{
+    if (t == NULL || !t->dnsComplete) return 0;
+    return (uint32_t)t->hostInfo.addrs[0];
+}
+
+void ct_socket_close(CTSocket sock)
+{
+    if (sock != CT_SOCKET_NONE) OTCloseProvider(sock);
 }

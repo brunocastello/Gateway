@@ -30,9 +30,15 @@
 #ifndef CERTAINLY_H
 #define CERTAINLY_H
 
-#include <OpenTransport.h>
 #include <stdint.h>
 #include <stddef.h>
+
+/*
+ * For CTSocket, the handle type of whatever transport is linked. This header
+ * used to include <OpenTransport.h> for the one EndpointRef below, which made
+ * every file that wanted to speak TLS a Mac file.
+ */
+#include "../src/certainly_transport.h"
 
 /* ── Opaque types ── */
 typedef struct MacTLS_Context MacTLS_Context;
@@ -108,7 +114,7 @@ MacTLS_Context *MacTLS_CreateWithConfig(const char *host, uint16_t port,
  * Same return contract as MacTLS_Create: check MacTLS_GetState() as well as
  * the NULL case.
  */
-MacTLS_Context *MacTLS_CreateOnEndpoint(const char *host, EndpointRef ep);
+MacTLS_Context *MacTLS_CreateOnEndpoint(const char *host, CTSocket sock);
 MacTLS_State    MacTLS_Pump(MacTLS_Context *ctx);
 void            MacTLS_Close(MacTLS_Context *ctx);
 

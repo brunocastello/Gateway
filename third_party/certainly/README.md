@@ -94,7 +94,7 @@ cooperative Mac OS 9 app without resorting to dynamic allocation tricks.
 
 **Open Transport async TCP, no threads.**
 
-`ot_transport.c` drives Open Transport's async notifier model. Every OT call
+`transport_ot.c` drives Open Transport's async notifier model. Every OT call
 that can yield does so; completion is polled from `MacTLS_Pump` without
 requiring the Thread Manager or any blocking calls. This is the only way to do
 non-blocking network I/O on Mac OS 9 without breaking the cooperative
@@ -172,7 +172,8 @@ networking configuration, and the launch scripts (`run-sheepshaver.sh`,
 include/certainly.h        Public API — source of truth for callers
 src/
   certainly.c              Public-API entry points + BearSSL/OT glue
-  ot_transport.c           Open Transport async TCP
+  transport_ot.c           Open Transport async TCP
+  certainly_transport.h    the transport interface, naming no OS
   tls13_handshake.c        TLS 1.3 handshake state machine
   tls13_keysched.c         TLS 1.3 HKDF key schedule
   tls13_record.c           TLS 1.3 record layer (AEAD)

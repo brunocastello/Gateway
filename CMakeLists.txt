@@ -88,7 +88,7 @@ target_include_directories(bearssl
 
 add_library(certainly STATIC
     ${CERTAINLY_DIR}/src/certainly.c
-    ${CERTAINLY_DIR}/src/ot_transport.c
+    ${CERTAINLY_DIR}/src/transport_ot.c
     ${CERTAINLY_DIR}/src/entropy.c
     ${CERTAINLY_DIR}/src/ca_roots.c
     ${CERTAINLY_DIR}/src/tls13_keysched.c
@@ -98,6 +98,11 @@ add_library(certainly STATIC
 
 # GW_UNIV_INC is deliberately PRIVATE: Apple's headers must not leak along the
 # link graph into src/main.cpp, which is a Multiversal translation unit.
+# Selects the Open Transport implementation of certainly_transport.h and the
+# EndpointRef spelling of CTSocket. A Windows build defines nothing and gets
+# transport_win32.c instead.
+target_compile_definitions(certainly PUBLIC CERTAINLY_OPEN_TRANSPORT)
+
 target_include_directories(certainly BEFORE
     PRIVATE ${GW_UNIV_INC}
     PUBLIC  ${CERTAINLY_DIR}/include

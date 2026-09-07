@@ -2325,7 +2325,7 @@ tls13_hs_result tls13_handle_post_handshake(tls13_hs_ctx *hs,
  * writes the complete TLS record into msg_buf for sending.
  *
  * After this returns kTLS13_WantWrite, the caller drains msg_buf
- * to the network (via ot_transport_send or BearSSL's sendrec),
+ * to the network (via ct_transport_send or BearSSL's sendrec),
  * then advances to kTLS13_SendCCS.
  */
 static tls13_hs_result tls13_state_send_client_hello(tls13_hs_ctx *hs,

@@ -171,7 +171,7 @@ MacTLS_Context *MacTLS_CreateWithConfig(const char *host, uint16_t port,
     ctx->host[sizeof(ctx->host) - 1] = '\0';
 
     /* Start TCP connection */
-    ctx->transport = ot_transport_create(host, port);
+    ctx->transport = ct_transport_create(host, port);
     if (ctx->transport == NULL) {
         ctx->state = kMacTLS_Error;
         ctx->error = kMacTLS_ErrMemory;
@@ -184,16 +184,16 @@ MacTLS_Context *MacTLS_CreateWithConfig(const char *host, uint16_t port,
     return ctx;
 }
 
-MacTLS_Context *MacTLS_CreateOnEndpoint(const char *host, EndpointRef ep)
+MacTLS_Context *MacTLS_CreateOnEndpoint(const char *host, CTSocket sock)
 {
     MacTLS_Context *ctx;
 
-    if (ep == NULL) return NULL;
+    if (sock == CT_SOCKET_NONE) return NULL;
 
     ctx = (MacTLS_Context *)NewPtrClear(sizeof(MacTLS_Context));
     if (ctx == NULL) {
         /* Ownership transferred unconditionally, so it is ours to close. */
-        OTCloseProvider(ep);
+        ct_socket_close(sock);
         return NULL;
     }
 
@@ -203,18 +203,18 @@ MacTLS_Context *MacTLS_CreateOnEndpoint(const char *host, EndpointRef ep)
     if (strlen(host) > 253 || strlen(host) >= sizeof(ctx->host)) {
         ctx->state = kMacTLS_Error;
         ctx->error = kMacTLS_ErrDNS;
-        OTCloseProvider(ep);
+        ct_socket_close(sock);
         return ctx;
     }
 
     strncpy(ctx->host, host, sizeof(ctx->host) - 1);
     ctx->host[sizeof(ctx->host) - 1] = '\0';
 
-    ctx->transport = ot_transport_adopt(ep);
+    ctx->transport = ct_transport_adopt(sock);
     if (ctx->transport == NULL) {
         ctx->state = kMacTLS_Error;
         ctx->error = kMacTLS_ErrMemory;
-        OTCloseProvider(ep);
+        ct_socket_close(sock);
         return ctx;
     }
 
@@ -255,7 +255,7 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
      */
     if (ctx->hs13.msg_offset < ctx->hs13.msg_len) {
         size_t remaining = ctx->hs13.msg_len - ctx->hs13.msg_offset;
-        n = ot_transport_send(ctx->transport,
+        n = ct_transport_send(ctx->transport,
                               ctx->hs13.msg_buf + ctx->hs13.msg_offset,
                               remaining);
         if (n > 0) {
@@ -281,7 +281,7 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
      */
     if (ctx->tls13_recv_len < sizeof(ctx->tls13_recv_buf)) {
         size_t space = sizeof(ctx->tls13_recv_buf) - ctx->tls13_recv_len;
-        n = ot_transport_recv(ctx->transport,
+        n = ct_transport_recv(ctx->transport,
                               ctx->tls13_recv_buf + ctx->tls13_recv_len,
                               space);
         if (n > 0) {
@@ -297,15 +297,13 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
              * report WantRead and we'll come back here next time
              * with still no data — at which point we mark Closed.
              */
-            if ((ctx->transport->ordRelReceived ||
-                 ctx->transport->disconnectReceived) &&
+            if (ct_transport_peer_closed(ctx->transport) &&
                 ctx->tls13_recv_len == 0 &&
                 ctx->hs13.plain_offset >= ctx->hs13.plain_len) {
                 ctx->state = kMacTLS_Closed;
                 return ctx->state;
             }
-            if (!ctx->transport->ordRelReceived &&
-                !ctx->transport->disconnectReceived) {
+            if (!ct_transport_peer_closed(ctx->transport)) {
                 ctx->state = kMacTLS_Error;
                 ctx->error = kMacTLS_ErrRead;
                 return ctx->state;
@@ -360,14 +358,14 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
          * 4. Set tls13_active = false so the pump loop uses BearSSL
          */
         {
-            uint16_t port = ctx->transport->port;
+            uint16_t port = ct_transport_port(ctx->transport);
 
             /* Close and destroy the current transport */
-            ot_transport_close(ctx->transport);
-            ot_transport_destroy(ctx->transport);
+            ct_transport_close(ctx->transport);
+            ct_transport_destroy(ctx->transport);
 
             /* Create a new transport */
-            ctx->transport = ot_transport_create(ctx->host, port);
+            ctx->transport = ct_transport_create(ctx->host, port);
             if (ctx->transport == NULL) {
                 ctx->state = kMacTLS_Error;
                 ctx->error = kMacTLS_ErrMemory;
@@ -436,7 +434,7 @@ static void tls13_recv_records(MacTLS_Context *ctx)
      */
     if (ctx->tls13_recv_len < sizeof(ctx->tls13_recv_buf)) {
         size_t space = sizeof(ctx->tls13_recv_buf) - ctx->tls13_recv_len;
-        n = ot_transport_recv(ctx->transport,
+        n = ct_transport_recv(ctx->transport,
                               ctx->tls13_recv_buf + ctx->tls13_recv_len,
                               space);
         if (n > 0) {
@@ -447,8 +445,7 @@ static void tls13_recv_records(MacTLS_Context *ctx)
              * any pending records below. Real errors (not peer close)
              * still bail immediately.
              */
-            if (!ctx->transport->ordRelReceived &&
-                !ctx->transport->disconnectReceived) {
+            if (!ct_transport_peer_closed(ctx->transport)) {
                 ctx->state = kMacTLS_Error;
                 ctx->error = kMacTLS_ErrRead;
                 return;
@@ -607,8 +604,7 @@ static void tls13_recv_records(MacTLS_Context *ctx)
      * there's no more data to read, mark as Closed. The app can still
      * drain tls13_app_buf via MacTLS_Read in the Closed state.
      */
-    if ((ctx->transport->ordRelReceived ||
-         ctx->transport->disconnectReceived) &&
+    if (ct_transport_peer_closed(ctx->transport) &&
         ctx->tls13_recv_len == 0) {
         ctx->state = kMacTLS_Closed;
     }
@@ -644,9 +640,9 @@ MacTLS_State MacTLS_Pump(MacTLS_Context *ctx)
 
     /* Step 1: Pump the OT transport layer */
     {
-        OTTransportState tstate = ot_transport_pump(ctx->transport);
+        CTransportState tstate = ct_transport_pump(ctx->transport);
 
-        if (tstate == kOTTransport_Error) {
+        if (tstate == kCTransport_Error) {
             /*
              * Transport has entered error state (e.g. server disconnected).
              * If we already completed the TLS handshake and have received
@@ -669,8 +665,8 @@ MacTLS_State MacTLS_Pump(MacTLS_Context *ctx)
         }
 
         /* Still waiting for TCP? Nothing for BearSSL to do yet. */
-        if (tstate == kOTTransport_ResolvingDNS ||
-            tstate == kOTTransport_Connecting) {
+        if (tstate == kCTransport_ResolvingDNS ||
+            tstate == kCTransport_Connecting) {
             ctx->state = kMacTLS_Connecting;
             return ctx->state;
         }
@@ -683,7 +679,7 @@ MacTLS_State MacTLS_Pump(MacTLS_Context *ctx)
          * this trivially: accept the SYN, complete the three-way handshake,
          * then go silent. Our app would spin in the pump loop indefinitely.
          */
-        if (ctx->state == kMacTLS_Connecting && tstate == kOTTransport_Connected) {
+        if (ctx->state == kMacTLS_Connecting && tstate == kCTransport_Connected) {
             ctx->handshake_start_ticks = (uint32_t)TickCount();
         }
     }
@@ -765,7 +761,7 @@ MacTLS_State MacTLS_Pump(MacTLS_Context *ctx)
     if (st & BR_SSL_SENDREC) {
         buf = br_ssl_engine_sendrec_buf(&ctx->sc.eng, &len);
         if (len > 0) {
-            n = ot_transport_send(ctx->transport, buf, len);
+            n = ct_transport_send(ctx->transport, buf, len);
             if (n > 0) {
                 br_ssl_engine_sendrec_ack(&ctx->sc.eng, n);
             } else if (n < 0) {
@@ -775,8 +771,7 @@ MacTLS_State MacTLS_Pump(MacTLS_Context *ctx)
                  * e.g., server sent "Connection: close" and shut down.
                  * Treat as closed, not as an error.
                  */
-                if (ctx->transport->ordRelReceived ||
-                    ctx->transport->disconnectReceived) {
+                if (ct_transport_peer_closed(ctx->transport)) {
                     br_ssl_engine_close(&ctx->sc.eng);
                     ctx->state = kMacTLS_Closed;
                     return ctx->state;
@@ -792,13 +787,12 @@ MacTLS_State MacTLS_Pump(MacTLS_Context *ctx)
     if (st & BR_SSL_RECVREC) {
         buf = br_ssl_engine_recvrec_buf(&ctx->sc.eng, &len);
         if (len > 0) {
-            n = ot_transport_recv(ctx->transport, buf, len);
+            n = ct_transport_recv(ctx->transport, buf, len);
             if (n > 0) {
                 br_ssl_engine_recvrec_ack(&ctx->sc.eng, n);
             } else if (n < 0) {
                 /* Recv failed — if peer closed, treat as normal close */
-                if (ctx->transport->ordRelReceived ||
-                    ctx->transport->disconnectReceived) {
+                if (ct_transport_peer_closed(ctx->transport)) {
                     br_ssl_engine_close(&ctx->sc.eng);
                     ctx->state = kMacTLS_Closed;
                     return ctx->state;
@@ -874,7 +868,7 @@ void MacTLS_Close(MacTLS_Context *ctx)
                 memcpy(record + 5, ciphertext, ct_len);
 
                 /* Best-effort send — don't retry on failure */
-                ot_transport_send(ctx->transport, record, 5 + ct_len);
+                ct_transport_send(ctx->transport, record, 5 + ct_len);
             }
         } else {
             /*
@@ -899,8 +893,8 @@ void MacTLS_Close(MacTLS_Context *ctx)
 
     /* Close the TCP connection */
     if (ctx->transport) {
-        ot_transport_close(ctx->transport);
-        ot_transport_destroy(ctx->transport);
+        ct_transport_close(ctx->transport);
+        ct_transport_destroy(ctx->transport);
         ctx->transport = NULL;
     }
 
@@ -953,7 +947,7 @@ int MacTLS_Write(MacTLS_Context *ctx, const void *data, size_t len)
         record_hdr[4] = (unsigned char)(ct_len);
 
         /* Send header */
-        sent = ot_transport_send(ctx->transport, record_hdr, 5);
+        sent = ct_transport_send(ctx->transport, record_hdr, 5);
         if (sent < 0) return -1;
         if (sent < 5) {
             /*
@@ -967,7 +961,7 @@ int MacTLS_Write(MacTLS_Context *ctx, const void *data, size_t len)
         /* Send ciphertext */
         total = 0;
         while ((size_t)total < ct_len) {
-            sent = ot_transport_send(ctx->transport,
+            sent = ct_transport_send(ctx->transport,
                                      ciphertext + total,
                                      ct_len - total);
             if (sent < 0) return -1;
@@ -1096,7 +1090,7 @@ MacTLS_Error MacTLS_GetError(const MacTLS_Context *ctx)
 OSStatus MacTLS_GetOTError(const MacTLS_Context *ctx)
 {
     if (ctx->transport) {
-        return ctx->transport->lastError;
+        return (OSStatus)ct_transport_last_error(ctx->transport);
     }
     return noErr;
 }
@@ -1105,13 +1099,13 @@ MacTLS_Phase MacTLS_GetPhase(const MacTLS_Context *ctx)
 {
     if (ctx == NULL || ctx->transport == NULL) return kMacTLS_PhaseIdle;
 
-    switch (ctx->transport->state) {
-    case kOTTransport_ResolvingDNS: return kMacTLS_PhaseResolving;
-    case kOTTransport_Connecting:   return kMacTLS_PhaseConnecting;
-    case kOTTransport_Connected:    return kMacTLS_PhaseConnected;
-    case kOTTransport_Closing:      return kMacTLS_PhaseClosing;
-    case kOTTransport_Closed:       return kMacTLS_PhaseClosed;
-    case kOTTransport_Error:        return kMacTLS_PhaseFailed;
+    switch (ct_transport_state(ctx->transport)) {
+    case kCTransport_ResolvingDNS: return kMacTLS_PhaseResolving;
+    case kCTransport_Connecting:   return kMacTLS_PhaseConnecting;
+    case kCTransport_Connected:    return kMacTLS_PhaseConnected;
+    case kCTransport_Closing:      return kMacTLS_PhaseClosing;
+    case kCTransport_Closed:       return kMacTLS_PhaseClosed;
+    case kCTransport_Error:        return kMacTLS_PhaseFailed;
     default:                        return kMacTLS_PhaseIdle;
     }
 }
@@ -1119,8 +1113,7 @@ MacTLS_Phase MacTLS_GetPhase(const MacTLS_Context *ctx)
 uint32_t MacTLS_GetResolvedAddress(const MacTLS_Context *ctx)
 {
     if (ctx == NULL || ctx->transport == NULL) return 0;
-    if (!ctx->transport->dnsComplete) return 0;
-    return (uint32_t)ctx->transport->hostInfo.addrs[0];
+    return ct_transport_peer_ipv4(ctx->transport);
 }
 
 int MacTLS_GetBearSSLError(const MacTLS_Context *ctx)

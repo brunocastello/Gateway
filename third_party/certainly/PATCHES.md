@@ -362,3 +362,33 @@ the write context actually holds a key. `tls13_record_encrypt()` and
 `tls13_record_decrypt()` additionally refuse a context with `key_len == 0`
 rather than trusting their callers, since the failure mode is memory
 corruption rather than a wrong answer.
+
+## §17 — the transport interface, split from Open Transport
+
+*Gateway change, for the Windows port. Not a bug fix.*
+
+`certainly.h` included `<OpenTransport.h>`, so every file that wanted to speak
+TLS became a Mac file — including, transitively, Gateway's own portable
+transport header. The one thing it needed from it was `EndpointRef`, for the
+single `MacTLS_CreateOnEndpoint` parameter.
+
+`ot_transport.h` is now `certainly_transport.h` and names no operating system:
+`CTransport` is opaque, `CTSocket` is the platform's own connection handle, and
+the eight functions become `ct_transport_*`. `ot_transport.c` becomes
+`transport_ot.c`, one implementation of it; `transport_win32.c` is the other.
+
+`certainly.c` read six fields of the transport struct directly —
+`ordRelReceived`, `disconnectReceived`, `port`, `lastError`, `state`,
+`hostInfo` — which is why the struct could not simply be hidden. Those reads
+are now five accessors, one of which (`ct_transport_peer_closed`) replaces the
+`ordRelReceived || disconnectReceived` pair that appeared six times. The TLS
+core only ever cared that no more bytes were coming, not which of the two ways
+the peer had gone.
+
+`ct_socket_close()` exists because `ct_transport_adopt()` takes ownership
+unconditionally: a caller that fails before reaching it still has to dispose of
+the connection, and `certainly.c` should not have to know that Open Transport
+spells that `OTCloseProvider`.
+
+`CERTAINLY_OPEN_TRANSPORT`, set by CMake, selects the implementation and the
+`EndpointRef` spelling of `CTSocket`.
