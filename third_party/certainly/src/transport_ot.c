@@ -19,6 +19,14 @@
  */
 
 #include "certainly_transport.h"
+
+/*
+ * The Internet-protocol half of Open Transport: InetSvcRef, InetHostInfo,
+ * InetAddress and the DNS events. It used to come in through the transport
+ * header, which is now platform neutral, so it belongs here with the rest of
+ * the implementation.
+ */
+#include <OpenTptInternet.h>
 #include <string.h>
 #include <Memory.h>  /* NewPtrClear, DisposePtr */
 #include <Events.h>  /* TickCount */
