@@ -279,21 +279,33 @@ static HWND gAbout;
  * The Mac's About box, in Windows' typeface.
  *
  * DrawAboutContent() in src/main.cpp plots a 32x32 icon centred at the top,
- * then centres seven lines at fixed offsets, alternating 12 point and 10
- * point. Those offsets are reproduced exactly; the three 12 point lines are
- * bold here, which is the one deliberate difference.
+ * then centres seven lines at fixed offsets. Those offsets are reproduced
+ * exactly. Two things differ deliberately: the names are bold, and only the
+ * application's own name is set larger -- the Mac gives 12 point to all three,
+ * which at this size makes the box read as three headings rather than as one
+ * title with attributions under it.
  *
  * The window is taller than the Mac's because Windows expects a button and
  * Mac OS closes an About box from its close box. The extra height goes below
  * the text, so every line still lands where it was laid out -- at 230 the last
  * line shared its row with the OK button.
  */
+/* Points to logical units through the display's own resolution, so the text is
+ * the size it claims whatever the screen is set to. */
+static HFONT about_font(int dpi, int pt, int weight)
+{
+    return CreateFontA(-MulDiv(pt, dpi, 72), 0, 0, 0, weight, 0, 0, 0,
+                       ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                       DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+                       "MS Sans Serif");
+}
+
 static const struct { int y; int pt; int bold; const char *text; } kAbout[] = {
     {  64, 12, 1, "Gateway " GW_VERSION_STRING     },
     {  84, 10, 0, "A TLS 1.3 gateway for Windows"  },
-    { 112, 12, 1, "Bruno Castello"                 },
+    { 112, 10, 1, "Bruno Castello"                 },
     { 132, 10, 0, "bfcastello@hotmail.com"         },
-    { 160, 12, 1, "Engineer: Claude Opus 5"        },
+    { 160, 10, 1, "Engineer: Claude Opus 5"        },
     { 188, 10, 0, "\xA9 Castello Designs, 2026"    },
     { 208, 10, 0, "Built with MinGW-w64"           }
 };
@@ -305,7 +317,7 @@ static LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         PAINTSTRUCT ps;
         HDC         dc = BeginPaint(hwnd, &ps);
         RECT        area;
-        HFONT       bold, plain, old;
+        HFONT       title, name, plain, old;
         HICON       icon;
         int         i, dpi, midX;
 
@@ -317,30 +329,25 @@ static LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (icon != NULL)
             DrawIconEx(dc, midX - 16, 14, icon, 32, 32, 0, NULL, DI_NORMAL);
 
-        /* Points to logical units through the display's own resolution, so
-         * the text is the size it claims whatever the screen is set to. */
         dpi = GetDeviceCaps(dc, LOGPIXELSY);
-        bold = CreateFontA(-MulDiv(12, dpi, 72), 0, 0, 0, FW_BOLD, 0, 0, 0,
-                           ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                           DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-                           "MS Sans Serif");
-        plain = CreateFontA(-MulDiv(10, dpi, 72), 0, 0, 0, FW_NORMAL, 0, 0, 0,
-                            ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                            DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-                            "MS Sans Serif");
+        title = about_font(dpi, 12, FW_BOLD);    /* the application name */
+        name  = about_font(dpi, 10, FW_BOLD);    /* who wrote it */
+        plain = about_font(dpi, 10, FW_NORMAL);  /* everything else */
 
         SetBkMode(dc, TRANSPARENT);
         SetTextAlign(dc, TA_CENTER | TA_BASELINE);
         old = (HFONT)SelectObject(dc, plain);
 
         for (i = 0; i < (int)(sizeof(kAbout) / sizeof(kAbout[0])); i++) {
-            SelectObject(dc, kAbout[i].bold ? bold : plain);
+            SelectObject(dc, !kAbout[i].bold ? plain
+                             : (kAbout[i].pt == 12 ? title : name));
             TextOutA(dc, midX, kAbout[i].y, kAbout[i].text,
                      (int)strlen(kAbout[i].text));
         }
 
         SelectObject(dc, old);
-        DeleteObject(bold);
+        DeleteObject(title);
+        DeleteObject(name);
         DeleteObject(plain);
         EndPaint(hwnd, &ps);
         return 0;
