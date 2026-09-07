@@ -398,20 +398,23 @@ def main():
     if args.ico_off:
         # The same drawing with the colour taken out, so a stopped Gateway is
         # recognisable in the tray as itself rather than as another icon.
-        # Luminance keeps the arch, the opening and the padlock distinct from
-        # one another, which a flat tint would not.
+        #
+        # Luminance, only mildly lifted. The first attempt pushed everything
+        # towards white on the theory that disabled should look faded, and it
+        # flattened the arch, its opening and the padlock into one pale mass:
+        # the dark blue interior came out as light grey, so the icon read as a
+        # solid blob with a background rather than as a gateway. Contrast is
+        # what carries the shape, and the shape is the whole point of using the
+        # same drawing.
         def grey(px):
             out = []
             for row in px:
                 r = []
                 for c in row:
                     if c is CLEAR:
-                        r.append(CLEAR)
+                        r.append(CLEAR)      # stays transparent
                     else:
-                        v = int(luminance(c))
-                        # Lift it towards white: a disabled icon should read as
-                        # faded rather than merely dark.
-                        v = min(255, int(v * 0.55 + 110))
+                        v = min(255, int(luminance(c) * 0.80 + 30))
                         r.append((v, v, v))
                 out.append(r)
             return out
