@@ -89,7 +89,27 @@ int GWPlat_WritePrefs(const char *buf, long len)
 
     f = fopen(sPrefsPath, "wb");
     if (f == NULL) {
-        gw_log("cannot save settings: prefs file would not open");
+        DWORD why = GetLastError();
+
+        /*
+         * Say which of the two it is. Both happen for real: running Gateway
+         * from a mounted image or a CD makes the whole directory read-only,
+         * and a file copied off one often keeps its read-only attribute even
+         * after it reaches the hard disk.
+         */
+        if (why == ERROR_WRITE_PROTECT || why == ERROR_ACCESS_DENIED) {
+            DWORD attr = GetFileAttributesA(sPrefsPath);
+
+            if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY))
+                gw_log("cannot save settings: %s is marked read-only",
+                       sPrefsPath);
+            else
+                gw_log("cannot save settings: %s is on a read-only drive; "
+                       "copy Gateway to the hard disk", sPrefsPath);
+        } else {
+            gw_log("cannot save settings: %s would not open (error %lu)",
+                   sPrefsPath, (unsigned long)why);
+        }
         return 0;
     }
 
