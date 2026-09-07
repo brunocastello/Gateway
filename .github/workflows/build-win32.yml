@@ -1,0 +1,97 @@
+name: Build (Windows 95 OSR2 and up)
+
+# The Windows port. Targets Windows 95 OSR2 through XP, which is the range in
+# which msvcrt.dll is present on the system, so no C runtime has to be shipped
+# alongside Gateway.
+#
+# The first job here is a toolchain probe rather than a build: whether a
+# MinGW-w64 binary will even load on Windows 95 or NT 4.0 is decided by its
+# import table, and no amount of reasoning substitutes for reading it. Any
+# entry point that arrived after those systems means the loader refuses the
+# executable outright, before a line of Gateway runs.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install the cross toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-mingw-w64-i686 binutils-mingw-w64-i686
+          i686-w64-mingw32-gcc --version | head -1
+
+      - name: Build a minimal Win32 application
+        run: |
+          cat > probe.c <<'SRC'
+          /*
+           * The smallest thing that is still shaped like Gateway's Windows
+           * shell: a window class, a message loop, a tray icon and the C
+           * library calls the portable core actually makes.
+           */
+          #define WIN32_LEAN_AND_MEAN
+          #include <windows.h>
+          #include <shellapi.h>
+          #include <winsock.h>
+          #include <stdio.h>
+          #include <string.h>
+          #include <stdlib.h>
+
+          static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l)
+          {
+              if (m == WM_DESTROY) { PostQuitMessage(0); return 0; }
+              return DefWindowProc(h, m, w, l);
+          }
+
+          int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
+          {
+              WNDCLASS wc;
+              NOTIFYICONDATA ni;
+              WSADATA wsa;
+              SOCKET s;
+              char buf[64];
+              unsigned long nb = 1;
+
+              WSAStartup(MAKEWORD(1, 1), &wsa);
+              s = socket(AF_INET, SOCK_STREAM, 0);
+              ioctlsocket(s, FIONBIO, &nb);
+              closesocket(s);
+              WSACleanup();
+
+              memset(&wc, 0, sizeof(wc));
+              wc.lpfnWndProc = WndProc;
+              wc.hInstance = inst;
+              wc.lpszClassName = "GatewayProbe";
+              RegisterClass(&wc);
+
+              memset(&ni, 0, sizeof(ni));
+              ni.cbSize = sizeof(ni);
+              ni.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+              Shell_NotifyIcon(NIM_ADD, &ni);
+
+              _snprintf(buf, sizeof(buf), "%s %d", "ticks", (int)GetTickCount());
+              return (int)strlen(buf) + (int)malloc(1);
+          }
+          SRC
+
+          # 0x0400 is NT 4.0 / Windows 95. --nostdlib is not used: the point is
+          # to see what the ordinary CRT drags in.
+          i686-w64-mingw32-gcc -D_WIN32_WINNT=0x0400 -DWINVER=0x0400 \
+            -Os -municode- -o probe.exe probe.c \
+            -lws2_32 -lshell32 -luser32 -lkernel32 2>&1 | head -20 || \
+          i686-w64-mingw32-gcc -D_WIN32_WINNT=0x0400 -DWINVER=0x0400 \
+            -Os -o probe.exe probe.c -lwsock32 -lshell32 -luser32 -lkernel32
+
+          ls -l probe.exe
+
+      - name: Read the import table
+        run: |
+          echo "=== DLLs required ==="
+          i686-w64-mingw32-objdump -p probe.exe | grep "DLL Name"
+          echo
+          echo "=== every imported symbol ==="
+          i686-w64-mingw32-objdump -p probe.exe \
+            | awk '/DLL Name:/{dll=$3} /^\t[0-9]+\t/{print dll"\t"$3}' \
+            | sort -u
