@@ -259,10 +259,10 @@ int GW_Init(void)
      */
     if (sProxyOn)
         sHttp = GWListener_Open((UInt16)sHttpPort,
-                                (OTQLen)(GW_MaxSessions() * 2));
+                                GW_MaxSessions() * 2);
     if (sWaybackOn && sWaybackPort > 0) {
         sWayback = GWListener_Open((UInt16)sWaybackPort,
-                                   (OTQLen)(GW_MaxSessions() * 2));
+                                   GW_MaxSessions() * 2);
         if (sWayback != NULL)
             gw_log("wayback: serving %s +%ld days", sWaybackSet.date,
                    sWaybackSet.tolerance);
