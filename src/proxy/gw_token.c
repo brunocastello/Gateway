@@ -226,6 +226,14 @@ void GWToken_Poll(void)
             if (n == 0) return;
             t->reqSent += (size_t)n;
         }
+        /*
+         * How much actually left, and over how many calls. A reset that
+         * arrives after the whole request went out is the peer's answer to
+         * what we sent; one that arrives part-way through is the transport
+         * failing underneath us, and the two need looking at in different
+         * places.
+         */
+        gw_log("oauth: request sent, %lu bytes", (unsigned long)t->reqLen);
         t->step = kStRecv;
         break;
 
