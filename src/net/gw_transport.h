@@ -174,6 +174,15 @@ void          GWStream_Destroy(GWStream *s);
  */
 int           GWStream_PeerGone(const GWStream *s);
 
+/*
+ * Raw bytes across the socket in each direction, ciphertext included. Sampled
+ * at the moment a handshake completes and again at a failure, the difference
+ * is exactly how much application data went out -- which no other measurement
+ * here distinguishes from a handshake that happened to be that size.
+ */
+void          GWStream_Counters(const GWStream *s,
+                                unsigned long *sent, unsigned long *received);
+
 /* 0 when unknown or plain, otherwise 12 or 13. */
 int           GWStream_TlsVersion(const GWStream *s);
 const char   *GWStream_ErrorText(const GWStream *s);

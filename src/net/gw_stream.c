@@ -229,6 +229,16 @@ static const char *gw_tls_error_text(int err)
     }
 }
 
+void GWStream_Counters(const GWStream *s,
+                       unsigned long *sent, unsigned long *received)
+{
+    if (sent != NULL)     *sent = 0;
+    if (received != NULL) *received = 0;
+
+    if (s != NULL && s->tls && s->sec != NULL)
+        MacTLS_GetCounters(s->sec, sent, received);
+}
+
 const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
 {
     const char   *phase = "idle";

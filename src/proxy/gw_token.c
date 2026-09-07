@@ -208,8 +208,13 @@ void GWToken_Poll(void)
              * telling a handshake that completed from one that never ran:
              * both ended at the same failure further down.
              */
-            gw_log("oauth: connected [TLS 1.%d]",
-                   GWStream_TlsVersion(&t->up) == 13 ? 3 : 2);
+            {
+                unsigned long w = 0, r = 0;
+
+                GWStream_Counters(&t->up, &w, &r);
+                gw_log("oauth: connected [TLS 1.%d, handshake %lu out %lu in]",
+                       GWStream_TlsVersion(&t->up) == 13 ? 3 : 2, w, r);
+            }
             t->step = kStSend;
         } else if (t->up.state == kGWStreamError ||
                    t->up.state == kGWStreamClosed) {

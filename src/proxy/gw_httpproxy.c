@@ -1195,9 +1195,14 @@ static void session_step(GWHttpSession *s)
              * engine -- and a failure after a successful handshake means
              * different things depending on which one is running.
              */
-            if (s->upTls)
-                gw_log("#%ld connected to %s [TLS 1.%d]", s->id, s->upHost,
-                       GWStream_TlsVersion(&s->up) == 13 ? 3 : 2);
+            if (s->upTls) {
+                unsigned long w = 0, r = 0;
+
+                GWStream_Counters(&s->up, &w, &r);
+                gw_log("#%ld connected to %s [TLS 1.%d, handshake %lu out %lu in]",
+                       s->id, s->upHost,
+                       GWStream_TlsVersion(&s->up) == 13 ? 3 : 2, w, r);
+            }
             s->state = kHPSendRequest;
         } else if (s->up.state == kGWStreamError ||
                    s->up.state == kGWStreamClosed) {
