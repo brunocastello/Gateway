@@ -2,6 +2,11 @@ name: Build (Mac OS 9 PowerPC / Classic Toolbox)
 
 on:
   push:
+    # Both filters are needed. Naming tags alone restricts push events to tags
+    # and silently stops every branch build -- which is exactly what happened
+    # when the tag filter was added on its own.
+    branches:
+      - '**'
     tags:
       - 'v*'
     # Documentation-only changes do not need a PowerPC build.
