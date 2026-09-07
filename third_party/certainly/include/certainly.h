@@ -77,6 +77,14 @@ typedef enum {
 
 /* ── Library lifecycle ── */
 MacTLS_Error MacTLS_Init(void);
+
+/*
+ * Encrypt a published test vector and check the answer. 0 passes, 1 means the
+ * ciphertext is wrong, 2 means only the tag is. Separates a broken cipher from
+ * a library that is driving a working one incorrectly -- which a
+ * bad_record_mac from a peer cannot do.
+ */
+int          MacTLS_SelfTest(void);
 void         MacTLS_Shutdown(void);
 
 /* ── Connection lifecycle ── */

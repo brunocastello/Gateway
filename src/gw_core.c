@@ -240,6 +240,21 @@ int GW_Init(void)
     sWaybackOn = GWConfig_Num("wayback_enabled", 1) != 0;
 
     MacTLS_Init();
+    {
+        /*
+         * One line, once, at startup. If the cipher cannot reproduce a
+         * published answer then nothing above it is worth debugging, and if it
+         * can then a peer's bad_record_mac is about how the library is being
+         * driven rather than about the arithmetic.
+         */
+        int st = MacTLS_SelfTest();
+
+        if (st == 0)
+            gw_log("crypto self-test: ChaCha20-Poly1305 ok");
+        else
+            gw_log("crypto self-test: FAILED (%s)",
+                   st == 1 ? "ciphertext wrong" : "tag wrong");
+    }
     if (sProxyOn || sWaybackOn) GWProxy_Init();
     if (sMailOn) {
         GWMail_Init();

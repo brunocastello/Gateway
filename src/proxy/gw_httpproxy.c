@@ -794,10 +794,18 @@ static void step_recv_head(GWHttpSession *s)
             s->uheadLen += (size_t)n;
             s->lastActivity = GWNet_Ticks();
         } else if (n == -1) {
+            char why[192];
+
             if (s->uheadLen == 0 && session_retry_fresh(s)) return;
+            /*
+             * This path reported nothing but the fact of failure, which left
+             * a transport error and a record that would not decrypt looking
+             * identical -- and they are set from the same place inside the TLS
+             * library, so the distinction has to come from here.
+             */
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
-                         "upstream read failed");
+                         GWStream_Describe(&s->up, why, sizeof(why)));
             return;
         }
     }
