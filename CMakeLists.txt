@@ -10,11 +10,17 @@ add_compile_definitions(GW_MAC_OS)
 
 # The same build stamp the Windows makefile applies, so a log from either
 # platform names the revision it came from.
-execute_process(COMMAND git rev-parse --short HEAD
-                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-                OUTPUT_VARIABLE GW_BUILD_ID
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-                ERROR_QUIET)
+# CI passes it in; the container running this has no repository of its own to
+# ask, which is why every Mac log used to read "build unknown".
+if(DEFINED ENV{GW_BUILD_ID})
+    set(GW_BUILD_ID $ENV{GW_BUILD_ID})
+else()
+    execute_process(COMMAND git rev-parse --short HEAD
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                    OUTPUT_VARIABLE GW_BUILD_ID
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
+endif()
 if(NOT GW_BUILD_ID)
     set(GW_BUILD_ID "unknown")
 endif()

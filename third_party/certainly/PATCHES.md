@@ -464,3 +464,40 @@ fingerprints proving the stash was intact, and finally the peer's own alert —
 `bad_record_mac` — which the library had been discarding (§18 area, fixed in
 the same session). Each of those eliminated a layer that had otherwise been
 guessed at.
+
+## §20 — decrypted application data was discarded when the reader was behind
+
+*Found by the Windows port's log reaching Mac OS 9. A data-loss bug on both.*
+
+`tls13_recv_records()` appended each decrypted record to `tls13_app_buf` like
+this:
+
+```c
+/* Append decrypted data (truncate if buffer full) */
+size_t space = sizeof(ctx->tls13_app_buf) - ctx->tls13_app_len;
+size_t copy = (dec_len < space) ? dec_len : space;
+```
+
+`tls13_app_buf` holds exactly one maximum-sized record. Whenever the
+application read more slowly than the peer sent — which, on a 1999 Macintosh
+behind a browser fetching a dozen resources, is the ordinary case — unread
+bytes were still in the buffer when the next full record arrived, and the
+overflow was thrown away without a word.
+
+The result is a hole punched into the middle of the byte stream. A
+Content-Length body arrives short and the session sits until its idle timeout.
+A chunked body loses sync with its own framing a few kilobytes later, and the
+proxy reports `malformed chunked body` — which is what led here, since the
+chunked decoder was the obvious suspect and turned out to be innocent: the
+exact failing response, captured from the live server, replayed through it
+cleanly at every slice size and every drain rate.
+
+The record is now left in `tls13_recv_buf` until there is room for its
+plaintext. That costs nothing — the bytes are already buffered, and the next
+pump finds them again once the reader has drained. The append can no longer
+overflow, and a short copy is treated as an error rather than silently
+tolerated.
+
+This also explains the pauses: a body that never completes holds its session
+until the 45-second idle timeout, and a page whose resources each do that loads
+at the speed of the timeout rather than the network.

@@ -569,6 +569,43 @@ static void tls13_recv_records(MacTLS_Context *ctx)
         }
 
         /*
+         * Make room before decrypting, and stop if there is not enough.
+         *
+         * The plaintext of this record has to go somewhere, and the only
+         * somewhere is tls13_app_buf, which holds exactly one maximum record.
+         * When the application reads more slowly than the peer sends -- which
+         * on a 1999 Macintosh behind a browser fetching a dozen resources is
+         * the normal case, not the exception -- unread bytes are still in
+         * there when the next full-sized record lands.
+         *
+         * This used to decrypt anyway and copy what fit, discarding the rest,
+         * with a comment that said "truncate if buffer full". That is a hole
+         * punched in the middle of the byte stream: a chunked body loses sync
+         * with its own framing a few kilobytes later and is reported as
+         * malformed, and a Content-Length body simply arrives short.
+         *
+         * Leaving the record in recv_buf costs nothing -- it is already there,
+         * and the next pump will find it again once the reader has drained.
+         */
+        {
+            size_t held = ctx->tls13_app_len - ctx->tls13_app_offset;
+
+            if (ctx->tls13_app_offset > 0) {
+                if (held > 0)
+                    memmove(ctx->tls13_app_buf,
+                            ctx->tls13_app_buf + ctx->tls13_app_offset, held);
+                ctx->tls13_app_len = held;
+                ctx->tls13_app_offset = 0;
+            }
+
+            /* record_len bounds the plaintext: it also covers the content
+             * type byte and the tag, so it is never an underestimate. */
+            if (record_type == TLS13_CT_APPLICATION_DATA &&
+                sizeof(ctx->tls13_app_buf) - ctx->tls13_app_len < record_len)
+                break;
+        }
+
+        /*
          * Skip CCS records (type 20) — middlebox compatibility artifacts
          * that can arrive at any time.
          */
@@ -627,26 +664,18 @@ static void tls13_recv_records(MacTLS_Context *ctx)
              * If app_buf still has unconsumed data, compact it first
              * (move remaining data to the front).
              */
-            size_t app_remaining = ctx->tls13_app_len - ctx->tls13_app_offset;
-            if (ctx->tls13_app_offset > 0 && app_remaining > 0) {
-                memmove(ctx->tls13_app_buf,
-                        ctx->tls13_app_buf + ctx->tls13_app_offset,
-                        app_remaining);
-                ctx->tls13_app_len = app_remaining;
-                ctx->tls13_app_offset = 0;
-            } else if (app_remaining == 0) {
-                ctx->tls13_app_len = 0;
-                ctx->tls13_app_offset = 0;
+            /*
+             * Room was checked and the buffer compacted before this record was
+             * decrypted, so the whole plaintext fits. Nothing is dropped here;
+             * a short copy would be a hole in the stream.
+             */
+            if (ctx->tls13_app_len + dec_len > sizeof(ctx->tls13_app_buf)) {
+                ctx->state = kMacTLS_Error;
+                ctx->error = kMacTLS_ErrRead;
+                return;
             }
-
-            /* Append decrypted data (truncate if buffer full) */
-            {
-                size_t space = sizeof(ctx->tls13_app_buf) - ctx->tls13_app_len;
-                size_t copy = (dec_len < space) ? dec_len : space;
-                memcpy(ctx->tls13_app_buf + ctx->tls13_app_len,
-                       decrypted, copy);
-                ctx->tls13_app_len += copy;
-            }
+            memcpy(ctx->tls13_app_buf + ctx->tls13_app_len, decrypted, dec_len);
+            ctx->tls13_app_len += dec_len;
 
         } else if (inner_ct == TLS13_CT_HANDSHAKE) {
             /*

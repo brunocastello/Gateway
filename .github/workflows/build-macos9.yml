@@ -47,9 +47,13 @@ jobs:
 
       - name: Build with Retro68
         run: |
+          # The build stamp comes in from here rather than from `git rev-parse`
+          # inside the container, which has no repository to look at and left
+          # every Mac log saying "build unknown".
           docker run --rm \
             -v "${{ github.workspace }}:/root/Gateway" \
             -w /root/Gateway \
+            -e GW_BUILD_ID="$(echo "${{ github.sha }}" | cut -c1-7)" \
             -i ghcr.io/autc04/retro68 /bin/bash <<'EOF'
           set -euo pipefail
           TOOLCHAIN=/Retro68-build/toolchain
