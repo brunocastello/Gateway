@@ -24,18 +24,16 @@ DEFS   = -D_WIN32_WINNT=0x0400 -DWINVER=0x0400 -D__USE_MINGW_ANSI_STDIO=1 \
          -DGW_BUILD_ID=\"$(GW_BUILD_ID)\"
 INCS   = -Isrc -Isrc/portable -I$(CERT)/include -I$(CERT)/src \
          -I$(BEAR)/inc -I$(BEAR)/src
-# Optimisation is a variable because it is currently a suspect.
+# Optimisation was briefly a suspect and is not one.
 #
-# The Mac build sets no optimisation level at all -- CMake with no build type
-# passes none -- and it encrypts application records the archive accepts. This
-# build used -Os and produces a bad tag for the same key, same nonce, same AAD
-# and the same cipher, differing only in that the record spans several ChaCha
-# blocks rather than one. That is the shape of a miscompilation or of
-# undefined behaviour that only an optimiser acts on, so the two builds should
-# be compared at the same level before anything else is believed.
+# Building unoptimised changed the symptom, which looked like evidence and was
+# not: the real fault was HKDF writing past the end of its output buffer
+# (PATCHES.md §19), so which key got destroyed depended on how the compiler had
+# arranged the stack. Any level was wrong, differently. Back to -Os, which is
+# 580 KB against 790 KB, and still overridable:
 #
-#   make -f Makefile.win32 OPT="-Os"      to go back
-OPT ?= -O0 -fno-strict-aliasing
+#   make -f Makefile.win32 OPT="-O0"
+OPT ?= -Os
 
 CFLAGS = $(DEFS) $(INCS) $(OPT) -ffunction-sections -fdata-sections \
          -Wall -Wextra -Wno-unused-parameter
