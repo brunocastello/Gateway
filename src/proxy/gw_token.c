@@ -203,6 +203,13 @@ void GWToken_Poll(void)
     switch (t->step) {
     case kStConnect:
         if (t->up.state == kGWStreamReady) {
+            /*
+             * Say so, with the version. Until this line existed there was no
+             * telling a handshake that completed from one that never ran:
+             * both ended at the same failure further down.
+             */
+            gw_log("oauth: connected [TLS 1.%d]",
+                   GWStream_TlsVersion(&t->up) == 13 ? 3 : 2);
             t->step = kStSend;
         } else if (t->up.state == kGWStreamError ||
                    t->up.state == kGWStreamClosed) {
@@ -238,7 +245,9 @@ void GWToken_Poll(void)
         if (n == 0) return;
         /* EOF or error: Connection: close means EOF is the end of the body. */
         if (t->respLen == 0) {
-            token_fail(t, "token endpoint closed without answering");
+            char why[160];
+
+            token_fail(t, GWStream_Describe(&t->up, why, sizeof(why)));
             return;
         }
         t->resp[t->respLen] = '\0';

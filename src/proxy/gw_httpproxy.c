@@ -809,10 +809,18 @@ static void step_recv_head(GWHttpSession *s)
                             "Connection: close\r\n\r\n",
                          "response head exceeded 16K");
         else if (s->up.eof) {
+            char why[160];
+
             if (s->uheadLen == 0 && session_retry_fresh(s)) return;
+            /*
+             * Describe rather than assert. "Closed before sending a response"
+             * names what was observed and nothing about the cause: a TLS
+             * alert, a socket error and an orderly close all reach here
+             * looking identical.
+             */
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
-                         "upstream closed before sending a response");
+                         GWStream_Describe(&s->up, why, sizeof(why)));
         }
         return;
     }
