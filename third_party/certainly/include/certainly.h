@@ -142,15 +142,6 @@ MacTLS_Error MacTLS_GetError(const MacTLS_Context *ctx);
 long         MacTLS_GetTransportError(const MacTLS_Context *ctx);
 
 /*
- * Raw bytes across the socket in each direction, ciphertext included. What the
- * peer actually saw, as opposed to what the TLS layer thinks it handed over --
- * a request the record layer accepted but that never reached the wire is
- * indistinguishable, from above, from one the peer ignored.
- */
-void         MacTLS_GetCounters(const MacTLS_Context *ctx,
-                                unsigned long *sent, unsigned long *received);
-
-/*
  * Ciphertext received but not yet turned into anything: the number of bytes
  * sitting in the record buffer, and the first few of them, which for a TLS 1.3
  * record is its header -- content type, legacy version, and the length the
@@ -167,24 +158,6 @@ void         MacTLS_GetCounters(const MacTLS_Context *ctx,
  */
 unsigned int MacTLS_GetAlert(const MacTLS_Context *ctx);
 
-/*
- * The negotiated TLS 1.3 cipher suite, or 0. 0x1301 is AES-128-GCM, 0x1303 is
- * ChaCha20-Poly1305 -- two entirely separate code paths through BearSSL, and a
- * failure in one says nothing about the other.
- */
-uint16_t     MacTLS_GetCipherSuite(const MacTLS_Context *ctx);
-
-/*
- * Fingerprints of the client application key material where it was stashed and
- * where it was installed. Equal means the stash survived; different means
- * something wrote over it in between.
- */
-void         MacTLS_GetAppKeyFingerprints(const MacTLS_Context *ctx,
-                                          unsigned long *stashed,
-                                          unsigned long *installed);
-
-size_t       MacTLS_GetPending(const MacTLS_Context *ctx,
-                               unsigned char *head, size_t headcap);
 int          MacTLS_GetBearSSLError(const MacTLS_Context *ctx);
 
 /* Returns the negotiated protocol version, or kMacTLS_VersionUnknown

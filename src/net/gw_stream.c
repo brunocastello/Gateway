@@ -229,41 +229,12 @@ static const char *gw_tls_error_text(int err)
     }
 }
 
-void GWStream_KeyFingerprints(const GWStream *s,
-                              unsigned long *stashed, unsigned long *installed)
-{
-    if (stashed != NULL)   *stashed = 0;
-    if (installed != NULL) *installed = 0;
-
-    if (s != NULL && s->tls && s->sec != NULL)
-        MacTLS_GetAppKeyFingerprints(s->sec, stashed, installed);
-}
-
-unsigned int GWStream_CipherSuite(const GWStream *s)
-{
-    if (s == NULL || !s->tls || s->sec == NULL) return 0;
-    return (unsigned int)MacTLS_GetCipherSuite(s->sec);
-}
-
-void GWStream_Counters(const GWStream *s,
-                       unsigned long *sent, unsigned long *received)
-{
-    if (sent != NULL)     *sent = 0;
-    if (received != NULL) *received = 0;
-
-    if (s != NULL && s->tls && s->sec != NULL)
-        MacTLS_GetCounters(s->sec, sent, received);
-}
-
 const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
 {
     const char   *phase = "idle";
     OSStatus      otErr = noErr;
     UInt32        addr = 0;
     int           tlsErr = 0;
-    unsigned long sent = 0, got = 0;
-    unsigned char head[5];
-    size_t        pending = 0;
     unsigned int  alert = 0;
 
     if (cap == 0) return out;
@@ -281,9 +252,7 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
         otErr = MacTLS_GetTransportError(s->sec);
         addr  = (UInt32)MacTLS_GetResolvedAddress(s->sec);
         tlsErr = MacTLS_GetBearSSLError(s->sec);
-        MacTLS_GetCounters(s->sec, &sent, &got);
-        pending = MacTLS_GetPending(s->sec, head, sizeof(head));
-        alert   = MacTLS_GetAlert(s->sec);
+        alert = MacTLS_GetAlert(s->sec);
     } else if (s != NULL && s->plain != NULL) {
         otErr = GWConn_LastError(s->plain);
         addr  = GWConn_PeerIPv4(s->plain);
@@ -300,37 +269,26 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
         }
     }
 
-    /*
-     * The byte counters are the point of this line now. "Connected, no error,
-     * nothing wrong" describes both a request that never left and a peer that
-     * ignored one, and those are looked for in completely different places.
-     */
     if (addr != 0) {
-        char rec[48];
+        char why[24];
 
         /*
-         * Ciphertext that arrived and became nothing is the whole remaining
-         * question, so say what it looks like: the record header names the
-         * content type and the length the peer claims, and the two together
-         * separate a record we failed to decrypt from one that never finished
-         * arriving.
+         * The peer's own alert, when it sent one. Level and description are
+         * two bytes that say what it objected to -- 2/20 is bad_record_mac,
+         * 2/51 decrypt_error -- and the library used to discard them, which
+         * turned every rejected record into an unexplained disconnection.
          */
-        rec[0] = '\0';
+        why[0] = '\0';
         if (alert != 0)
-            snprintf(rec, sizeof(rec), ", alert %u/%u",
+            snprintf(why, sizeof(why), ", alert %u/%u",
                      (alert >> 8) & 0xFF, alert & 0xFF);
-        else if (pending > 0)
-            snprintf(rec, sizeof(rec), ", held %lu: %02x %02x %02x %02x %02x",
-                     (unsigned long)pending, head[0], head[1], head[2],
-                     head[3], head[4]);
 
-        snprintf(out, cap,
-                 "%s [%s, OT %d, TLS %d, %lu.%lu.%lu.%lu, wire %lu out %lu in%s]",
+        snprintf(out, cap, "%s [%s, OT %d, TLS %d, %lu.%lu.%lu.%lu%s]",
                  GWStream_ErrorText(s), phase, (int)otErr, tlsErr,
                  (unsigned long)((addr >> 24) & 0xFF),
                  (unsigned long)((addr >> 16) & 0xFF),
                  (unsigned long)((addr >> 8) & 0xFF),
-                 (unsigned long)(addr & 0xFF), sent, got, rec);
+                 (unsigned long)(addr & 0xFF), why);
     } else {
         snprintf(out, cap, "%s [%s, OT %d, TLS %d, name unresolved]",
                  GWStream_ErrorText(s), phase, (int)otErr, tlsErr);

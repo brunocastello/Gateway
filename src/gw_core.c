@@ -254,10 +254,13 @@ int GW_Init(void)
             "decrypt wrong", "decrypt tag wrong"
         };
 
-        if (st == 0)
-            gw_log("crypto self-test: ChaCha20-Poly1305 ok, both directions");
-        else
-            gw_log("crypto self-test: FAILED (%s)",
+        /*
+         * Silent when it passes. A line every launch saying the cipher still
+         * works is noise; a line saying it does not is the only thing worth
+         * reading in the log, because nothing above it can be trusted.
+         */
+        if (st != 0)
+            gw_log("crypto self-test FAILED (%s) -- TLS will not work",
                    (st >= 1 && st <= 4) ? why[st] : "unknown");
     }
     if (sProxyOn || sWaybackOn) GWProxy_Init();

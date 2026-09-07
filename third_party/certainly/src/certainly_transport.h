@@ -135,14 +135,5 @@ long ct_transport_last_error(const CTransport *t);
 /* The resolved peer address in host byte order, or 0 if not yet known. */
 uint32_t ct_transport_peer_ipv4(const CTransport *t);
 
-/*
- * Raw bytes that have crossed the socket in each direction, ciphertext
- * included -- what the peer actually saw, as distinct from what the TLS layer
- * believes it handed over. The distinction matters: a request that the record
- * layer accepted but that never reached the wire looks, from every level
- * above, exactly like a request the peer ignored.
- */
-void ct_transport_counters(const CTransport *t,
-                           unsigned long *sent, unsigned long *received);
 
 #endif /* CERTAINLY_TRANSPORT_H */

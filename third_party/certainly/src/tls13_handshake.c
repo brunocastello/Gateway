@@ -706,19 +706,6 @@ static int tls13_p256_shared_secret(const unsigned char *private_key,
  * Determine the AEAD key length for a TLS 1.3 cipher suite.
  * AES-128-GCM uses 16-byte keys; AES-256-GCM and ChaCha20-Poly1305 use 32.
  */
-/* FNV-1a, for comparing key material without printing any of it. */
-static uint32_t tls13_fp(const unsigned char *p, size_t n)
-{
-    uint32_t h = 2166136261u;
-    size_t   i;
-
-    for (i = 0; i < n; i++) {
-        h ^= p[i];
-        h *= 16777619u;
-    }
-    return h;
-}
-
 static size_t tls13_key_len_for_suite(uint16_t suite)
 {
     switch (suite) {
@@ -2104,7 +2091,6 @@ static tls13_hs_result tls13_state_recv_finished(
      */
     memcpy(hs->client_hs_secret, client_key, key_len);
     memcpy(hs->client_hs_secret + key_len, client_iv, 12);
-    hs->app_write_fp_stash = tls13_fp(hs->client_hs_secret, key_len + 12);
 
     /* Wipe all intermediate key material */
     secure_wipe(finished_key, sizeof(finished_key));
@@ -2245,7 +2231,6 @@ static tls13_hs_result tls13_state_send_finished(tls13_hs_ctx *hs)
      * The client application keys were stashed in client_hs_secret by
      * RecvFinished: [key (key_len bytes)] [iv (12 bytes)].
      */
-    hs->app_write_fp_install = tls13_fp(hs->client_hs_secret, key_len + 12);
     tls13_record_init(&hs->write_ctx,
                       hs->client_hs_secret, key_len,
                       hs->client_hs_secret + key_len,

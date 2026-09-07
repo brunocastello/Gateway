@@ -1220,28 +1220,6 @@ static void session_step(GWHttpSession *s)
 
     case kHPConnect:
         if (s->up.state == kGWStreamReady) {
-            /*
-             * Which version was negotiated, on a connection that is about to
-             * carry a request. Certainly has two entirely separate code paths
-             * below this -- its own TLS 1.3 record layer, and BearSSL's 1.2
-             * engine -- and a failure after a successful handshake means
-             * different things depending on which one is running.
-             */
-            if (s->upTls) {
-                unsigned long w = 0, r = 0;
-
-                GWStream_Counters(&s->up, &w, &r);
-                {
-                    unsigned long ks = 0, ki = 0;
-
-                    GWStream_KeyFingerprints(&s->up, &ks, &ki);
-                    gw_log("#%ld connected to %s [TLS 1.%d, suite %04x, "
-                           "handshake %lu out %lu in, key %08lx/%08lx]",
-                           s->id, s->upHost,
-                           GWStream_TlsVersion(&s->up) == 13 ? 3 : 2,
-                           GWStream_CipherSuite(&s->up), w, r, ks, ki);
-                }
-            }
             s->state = kHPSendRequest;
         } else if (s->up.state == kGWStreamError ||
                    s->up.state == kGWStreamClosed) {

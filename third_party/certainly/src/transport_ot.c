@@ -75,10 +75,6 @@ struct CTransport {
     CTransportState state;
     volatile OSStatus lastError;
 
-    /* Raw bytes across the endpoint, for ct_transport_counters(). */
-    unsigned long   bytesSent;
-    unsigned long   bytesRecv;
-
     /* Connection start time for timeout tracking (in ticks) */
     uint32_t        connect_start_ticks;
 
@@ -502,7 +498,6 @@ int ct_transport_send(CTransport *t, const void *buf, size_t len)
         t->lastError = result;
         return -1;
     }
-    t->bytesSent += (unsigned long)result;
     return (int)result;
 }
 
@@ -537,7 +532,6 @@ int ct_transport_recv(CTransport *t, void *buf, size_t len)
         t->lastError = result;
         return -1;
     }
-    t->bytesRecv += (unsigned long)result;
     return (int)result;
 }
 
@@ -615,11 +609,4 @@ uint32_t ct_transport_peer_ipv4(const CTransport *t)
 void ct_socket_close(CTSocket sock)
 {
     if (sock != CT_SOCKET_NONE) OTCloseProvider(sock);
-}
-
-void ct_transport_counters(const CTransport *t,
-                           unsigned long *sent, unsigned long *received)
-{
-    if (sent != NULL)     *sent     = (t == NULL) ? 0 : t->bytesSent;
-    if (received != NULL) *received = (t == NULL) ? 0 : t->bytesRecv;
 }

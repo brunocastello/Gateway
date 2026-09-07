@@ -29,8 +29,6 @@ struct CTransport {
     char            host[256];
 
     long            lastError;      /* WSAGetLastError() at the failure */
-    unsigned long   bytesSent;      /* raw, across the socket */
-    unsigned long   bytesRecv;
     uint32_t        addr;           /* resolved peer, host byte order */
     int             peerClosed;     /* FIN or reset seen */
     DWORD           startedAt;      /* GetTickCount() when connecting began */
@@ -299,7 +297,6 @@ int ct_transport_send(CTransport *t, const void *buf, size_t len)
         t->lastError = err;
         return -1;
     }
-    t->bytesSent += (unsigned long)n;
     return n;
 }
 
@@ -333,7 +330,6 @@ int ct_transport_recv(CTransport *t, void *buf, size_t len)
         t->lastError = err;
         return -1;
     }
-    t->bytesRecv += (unsigned long)n;
     return n;
 }
 
@@ -396,11 +392,4 @@ long ct_transport_last_error(const CTransport *t)
 uint32_t ct_transport_peer_ipv4(const CTransport *t)
 {
     return (t == NULL) ? 0 : t->addr;
-}
-
-void ct_transport_counters(const CTransport *t,
-                           unsigned long *sent, unsigned long *received)
-{
-    if (sent != NULL)     *sent     = (t == NULL) ? 0 : t->bytesSent;
-    if (received != NULL) *received = (t == NULL) ? 0 : t->bytesRecv;
 }

@@ -1255,52 +1255,9 @@ MacTLS_Error MacTLS_GetError(const MacTLS_Context *ctx)
     return ctx->error;
 }
 
-void MacTLS_GetCounters(const MacTLS_Context *ctx,
-                        unsigned long *sent, unsigned long *received)
-{
-    if (ctx == NULL || ctx->transport == NULL) {
-        if (sent != NULL)     *sent = 0;
-        if (received != NULL) *received = 0;
-        return;
-    }
-    ct_transport_counters(ctx->transport, sent, received);
-}
-
-void MacTLS_GetAppKeyFingerprints(const MacTLS_Context *ctx,
-                                  unsigned long *stashed,
-                                  unsigned long *installed)
-{
-    if (stashed != NULL)
-        *stashed = (ctx == NULL) ? 0 : (unsigned long)ctx->hs13.app_write_fp_stash;
-    if (installed != NULL)
-        *installed = (ctx == NULL) ? 0 : (unsigned long)ctx->hs13.app_write_fp_install;
-}
-
-uint16_t MacTLS_GetCipherSuite(const MacTLS_Context *ctx)
-{
-    return (ctx == NULL) ? 0 : ctx->hs13.cipher_suite;
-}
-
 unsigned int MacTLS_GetAlert(const MacTLS_Context *ctx)
 {
     return (ctx == NULL) ? 0 : ctx->tls13_alert;
-}
-
-size_t MacTLS_GetPending(const MacTLS_Context *ctx,
-                         unsigned char *head, size_t headcap)
-{
-    size_t n;
-
-    if (ctx == NULL) return 0;
-
-    n = ctx->tls13_recv_len;
-    if (head != NULL && headcap > 0) {
-        size_t copy = (n < headcap) ? n : headcap;
-
-        memset(head, 0, headcap);
-        if (copy > 0) memcpy(head, ctx->tls13_recv_buf, copy);
-    }
-    return n;
 }
 
 long MacTLS_GetTransportError(const MacTLS_Context *ctx)

@@ -124,18 +124,6 @@ typedef struct {
     uint16_t            negotiated_group;
 
     /* Traffic secrets (kept for Finished key derivation) */
-    /*
-     * A fingerprint of the client application key material, taken where it is
-     * stashed and again where it is installed.
-     *
-     * The server's application keys are installed the moment they are derived
-     * and demonstrably work; the client's are parked in client_hs_secret and
-     * picked up later, and only they produce bad_record_mac. These two numbers
-     * decide whether what is picked up is what was put down.
-     */
-    uint32_t            app_write_fp_stash;
-    uint32_t            app_write_fp_install;
-
     unsigned char       client_hs_secret[64];
     unsigned char       server_hs_secret[64];
 

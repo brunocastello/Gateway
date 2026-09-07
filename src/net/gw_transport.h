@@ -174,26 +174,6 @@ void          GWStream_Destroy(GWStream *s);
  */
 int           GWStream_PeerGone(const GWStream *s);
 
-/*
- * Raw bytes across the socket in each direction, ciphertext included. Sampled
- * at the moment a handshake completes and again at a failure, the difference
- * is exactly how much application data went out -- which no other measurement
- * here distinguishes from a handshake that happened to be that size.
- */
-void          GWStream_Counters(const GWStream *s,
-                                unsigned long *sent, unsigned long *received);
-
-/*
- * Fingerprints of the client application key material at the two points it
- * passes through. Equal means the stash survived intact.
- */
-void          GWStream_KeyFingerprints(const GWStream *s,
-                                       unsigned long *stashed,
-                                       unsigned long *installed);
-
-/* The negotiated cipher suite, or 0. 0x1301 AES-128-GCM, 0x1303 ChaCha20. */
-unsigned int  GWStream_CipherSuite(const GWStream *s);
-
 /* 0 when unknown or plain, otherwise 12 or 13. */
 int           GWStream_TlsVersion(const GWStream *s);
 const char   *GWStream_ErrorText(const GWStream *s);

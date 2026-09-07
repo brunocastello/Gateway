@@ -203,20 +203,6 @@ void GWToken_Poll(void)
     switch (t->step) {
     case kStConnect:
         if (t->up.state == kGWStreamReady) {
-            /*
-             * Say so, with the version. Until this line existed there was no
-             * telling a handshake that completed from one that never ran:
-             * both ended at the same failure further down.
-             */
-            {
-                unsigned long w = 0, r = 0;
-
-                GWStream_Counters(&t->up, &w, &r);
-                gw_log("oauth: connected [TLS 1.%d, suite %04x, "
-                       "handshake %lu out %lu in]",
-                       GWStream_TlsVersion(&t->up) == 13 ? 3 : 2,
-                       GWStream_CipherSuite(&t->up), w, r);
-            }
             t->step = kStSend;
         } else if (t->up.state == kGWStreamError ||
                    t->up.state == kGWStreamClosed) {
@@ -233,14 +219,6 @@ void GWToken_Poll(void)
             if (n == 0) return;
             t->reqSent += (size_t)n;
         }
-        /*
-         * How much actually left, and over how many calls. A reset that
-         * arrives after the whole request went out is the peer's answer to
-         * what we sent; one that arrives part-way through is the transport
-         * failing underneath us, and the two need looking at in different
-         * places.
-         */
-        gw_log("oauth: request sent, %lu bytes", (unsigned long)t->reqLen);
         t->step = kStRecv;
         break;
 
