@@ -113,6 +113,9 @@ def main():
                     help="additional PEM files, for roots a given system "
                          "bundle happens to omit (default: tools/extra-roots/*)")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--all", action="store_true",
+                    help="compile in every root in the bundle, "
+                         "not just the curated list")
     args = ap.parse_args()
 
     certs = load_bundle(args.bundle)
@@ -125,14 +128,26 @@ def main():
     for path in extra:
         certs.update(load_bundle(path))
 
-    chosen = []
-    for name in WANTED:
-        c = certs.get(name)
-        if c is None:
-            print("WARNING: not in bundle, skipping: %s" % name,
-                  file=sys.stderr)
-            continue
-        chosen.append((name, c))
+    if args.all:
+        # Everything the bundle holds, in a stable order.
+        #
+        # The curated list below was an attempt to guess which authorities the
+        # vintage web would need, and it kept being wrong: lite.cnn.com wanted
+        # GlobalSign, code.jquery.com wants Sectigo, and each miss costs an
+        # evening and a rebuild that only the author can perform. A trust
+        # anchor is a distinguished name and a public key rather than a whole
+        # certificate, so the entire set costs tens of kilobytes -- affordable
+        # even in an 8 MB partition, and far cheaper than being wrong again.
+        chosen = sorted(certs.items())
+    else:
+        chosen = []
+        for name in WANTED:
+            c = certs.get(name)
+            if c is None:
+                print("WARNING: not in bundle, skipping: %s" % name,
+                      file=sys.stderr)
+                continue
+            chosen.append((name, c))
 
     if not chosen:
         sys.exit("No trust anchors matched; is --bundle correct?")

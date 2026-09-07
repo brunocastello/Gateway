@@ -1038,7 +1038,8 @@ static void step_body(GWHttpSession *s)
     if (s->uheadLen > 0) {
         long used = body_emit(s, s->uhead, s->uheadLen);
         if (used < 0) {
-            gw_log("#%ld malformed chunked body", s->id);
+            gw_log("#%ld malformed chunked body after %ld bytes",
+                   s->id, s->bodyBytes);
             s->upReusable = 0;
             session_finish_body(s);
             return;
@@ -1084,7 +1085,8 @@ static void step_body(GWHttpSession *s)
     {
         long used = body_emit(s, s->raw, (size_t)n);
         if (used < 0) {
-            gw_log("#%ld malformed chunked body", s->id);
+            gw_log("#%ld malformed chunked body after %ld bytes",
+                   s->id, s->bodyBytes);
             s->upReusable = 0;
             session_finish_body(s);
             return;
