@@ -93,7 +93,21 @@ struct MacTLS_Context {
      * connection state, on the heap, sized against the RFC 8446 limit.
      */
     unsigned char   tls13_dec_buf[TLS13_MAX_CIPHERTEXT];
-    unsigned char   tls13_enc_buf[TLS13_MAX_PLAINTEXT + 1 + TLS13_TAG_SIZE];
+    /*
+     * Five bytes longer than the ciphertext needs, so the record header can be
+     * written in front of it and the whole record sent as one buffer. See the
+     * partial-send fix in MacTLS_Write (PATCHES.md §18).
+     */
+    unsigned char   tls13_enc_buf[5 + TLS13_MAX_PLAINTEXT + 1 + TLS13_TAG_SIZE];
+
+    /*
+     * How much of the record in tls13_enc_buf has reached the transport.
+     * A record that is only half sent must be finished before another one may
+     * be encrypted: the next record has the next sequence number, and the peer
+     * would be unable to parse either.
+     */
+    size_t          tls13_out_len;
+    size_t          tls13_out_sent;
 
     /* True once TLS 1.3 handshake is confirmed (ServerHello chose 1.3) */
     bool            tls13_active;

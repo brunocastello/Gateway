@@ -392,3 +392,33 @@ spells that `OTCloseProvider`.
 
 `CERTAINLY_OPEN_TRANSPORT`, set by CMake, selects the implementation and the
 `EndpointRef` spelling of `CTSocket`.
+
+## §18 — a TLS record could be sent in part and reported as sent in full
+
+*Found by the Windows port; the bug was always there.*
+
+The TLS 1.3 application-data write path sent the five-byte record header, then
+looped over the ciphertext, and broke out of that loop if the transport went
+flow controlled — after which it returned the full plaintext length as though
+everything had gone. The rest of the record was never sent. The peer received
+a truncated record and closed the connection without answering.
+
+Worse, if the *header* send returned zero the function returned 0 and the
+caller retried the same plaintext, which encrypted it again — with the next
+sequence number. A number the peer never saw had been consumed, so even a
+small request could kill the connection.
+
+On Mac OS 9 neither half was reachable in practice: `OTSnd` on a non-blocking
+endpoint either takes the whole buffer or returns `kOTFlowErr` having sent
+nothing, so partial sends did not occur and a zero-length header send was rare
+enough never to be hit. Winsock's `send()` returns a partial count as a matter
+of course once the socket buffer fills. The first thing the Windows build did
+was fail to refresh an OAuth token, and the Wayback proxy reported the same
+thing as `upstream closed before sending a response`.
+
+The record is now staged whole — header and ciphertext in one buffer, which is
+why `tls13_enc_buf` grew by five bytes — and `MacTLS_Write` refuses to encrypt
+another until the last one has left entirely, so a sequence number is never
+consumed twice. `MacTLS_Pump` drains what is still owed, because the ordinary
+shape of an exchange is a caller that writes a whole request and then only
+reads.

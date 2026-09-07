@@ -421,6 +421,8 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
  * This function is non-blocking: it processes whatever data is available
  * and returns.
  */
+static int tls13_flush_out(MacTLS_Context *ctx);
+
 static void tls13_recv_records(MacTLS_Context *ctx)
 {
     int n;
@@ -724,9 +726,23 @@ MacTLS_State MacTLS_Pump(MacTLS_Context *ctx)
     }
 
     /*
-     * TLS 1.3 connected state — process incoming records.
+     * TLS 1.3 connected state — finish sending, then process incoming records.
      */
     if (ctx->tls13_active && ctx->state == kMacTLS_Connected) {
+        /*
+         * A record MacTLS_Write staged but could not finish must keep going
+         * out from here. The usual shape of an exchange is a caller that
+         * writes a whole request and then does nothing but read, so without
+         * this the tail of the last record would sit in the buffer forever
+         * and the peer would wait for a message it had only half received.
+         */
+        if (ctx->tls13_out_sent < ctx->tls13_out_len &&
+            tls13_flush_out(ctx) < 0) {
+            ctx->state = kMacTLS_Error;
+            ctx->error = kMacTLS_ErrWrite;
+            return ctx->state;
+        }
+
         tls13_recv_records(ctx);
         return ctx->state;
     }
@@ -910,6 +926,25 @@ void MacTLS_Close(MacTLS_Context *ctx)
 
 /* ── Data transfer ── */
 
+/*
+ * Push whatever is left of the staged record at the transport.
+ *
+ * Returns -1 on a transport error, 0 otherwise; the caller checks
+ * tls13_out_len against tls13_out_sent to see whether anything is still owed.
+ */
+static int tls13_flush_out(MacTLS_Context *ctx)
+{
+    while (ctx->tls13_out_sent < ctx->tls13_out_len) {
+        int n = ct_transport_send(ctx->transport,
+                                  ctx->tls13_enc_buf + ctx->tls13_out_sent,
+                                  ctx->tls13_out_len - ctx->tls13_out_sent);
+        if (n < 0) return -1;
+        if (n == 0) break;                  /* flow controlled; try later */
+        ctx->tls13_out_sent += (size_t)n;
+    }
+    return 0;
+}
+
 int MacTLS_Write(MacTLS_Context *ctx, const void *data, size_t len)
 {
     if (ctx->state != kMacTLS_Connected) return -1;
@@ -918,16 +953,34 @@ int MacTLS_Write(MacTLS_Context *ctx, const void *data, size_t len)
         /*
          * TLS 1.3 write path.
          *
-         * Encrypt the plaintext into a TLS 1.3 record and send it
-         * directly via OT transport. We bypass BearSSL's sendapp
-         * buffer entirely.
+         * Encrypt the plaintext into a TLS 1.3 record and send it directly,
+         * bypassing BearSSL's sendapp buffer. Max plaintext per record is
+         * 16384 (2^14), so cap at that.
          *
-         * Max plaintext per record is 16384 (2^14). We cap at that.
+         * The record is staged whole -- header and ciphertext in one buffer --
+         * and this function will not encrypt another until the last one has
+         * left entirely. It used to send the header, then loop over the
+         * ciphertext and break out if the transport went flow controlled, and
+         * then report the whole plaintext as written. The remainder of that
+         * record was never sent, so the peer received a truncated one and
+         * closed the connection without answering.
+         *
+         * On Mac OS 9 that was invisible: OTSnd on a non-blocking endpoint
+         * either takes everything or returns kOTFlowErr having sent nothing,
+         * so a partial send effectively never happened. Winsock's send()
+         * returns a partial count as a matter of course once the socket buffer
+         * fills, which a several-kilobyte OAuth request does easily -- and the
+         * first thing the Windows port did was fail to refresh a token.
          */
-        unsigned char *ciphertext = ctx->tls13_enc_buf;
-        unsigned char record_hdr[5];
+        unsigned char *ciphertext = ctx->tls13_enc_buf + 5;
         size_t ct_len;
-        int ret, sent, total;
+        int ret;
+
+        /* Finish the previous record before starting another. */
+        if (ctx->tls13_out_sent < ctx->tls13_out_len) {
+            if (tls13_flush_out(ctx) < 0) return -1;
+            if (ctx->tls13_out_sent < ctx->tls13_out_len) return 0;
+        }
 
         if (len > TLS13_MAX_PLAINTEXT) len = TLS13_MAX_PLAINTEXT;
 
@@ -937,36 +990,24 @@ int MacTLS_Write(MacTLS_Context *ctx, const void *data, size_t len)
                                    ciphertext, &ct_len);
         if (ret != 0) return -1;
 
-        /* Build the record header */
-        record_hdr[0] = TLS13_CT_APPLICATION_DATA;  /* 0x17 */
-        record_hdr[1] = 0x03;
-        record_hdr[2] = 0x03;
-        record_hdr[3] = (unsigned char)(ct_len >> 8);
-        record_hdr[4] = (unsigned char)(ct_len);
+        ctx->tls13_enc_buf[0] = TLS13_CT_APPLICATION_DATA;  /* 0x17 */
+        ctx->tls13_enc_buf[1] = 0x03;
+        ctx->tls13_enc_buf[2] = 0x03;
+        ctx->tls13_enc_buf[3] = (unsigned char)(ct_len >> 8);
+        ctx->tls13_enc_buf[4] = (unsigned char)(ct_len);
 
-        /* Send header */
-        sent = ct_transport_send(ctx->transport, record_hdr, 5);
-        if (sent < 0) return -1;
-        if (sent < 5) {
-            /*
-             * Partial header send — this shouldn't happen in practice
-             * since 5 bytes is tiny, but handle gracefully.
-             * For simplicity, report 0 bytes written (caller retries).
-             */
-            return 0;
-        }
+        ctx->tls13_out_len  = 5 + ct_len;
+        ctx->tls13_out_sent = 0;
 
-        /* Send ciphertext */
-        total = 0;
-        while ((size_t)total < ct_len) {
-            sent = ct_transport_send(ctx->transport,
-                                     ciphertext + total,
-                                     ct_len - total);
-            if (sent < 0) return -1;
-            if (sent == 0) break;
-            total += sent;
-        }
+        if (tls13_flush_out(ctx) < 0) return -1;
 
+        /*
+         * The plaintext is accounted for even if the record is still going
+         * out: it is staged, it belongs to this context, and no further
+         * plaintext will be encrypted until it has all left. MacTLS_Pump
+         * keeps pushing it, so a caller that stops writing and starts reading
+         * -- which is exactly what an HTTP request does -- still drains it.
+         */
         return (int)len;
     }
 
