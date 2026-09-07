@@ -93,12 +93,18 @@ struct MacTLS_Context {
      * connection state, on the heap, sized against the RFC 8446 limit.
      */
     unsigned char   tls13_dec_buf[TLS13_MAX_CIPHERTEXT];
+    unsigned char   tls13_enc_buf[TLS13_MAX_PLAINTEXT + 1 + TLS13_TAG_SIZE];
+
     /*
-     * Five bytes longer than the ciphertext needs, so the record header can be
-     * written in front of it and the whole record sent as one buffer. See the
-     * partial-send fix in MacTLS_Write (PATCHES.md §18).
+     * The record header, staged separately from the ciphertext.
+     *
+     * It was briefly written into the front of tls13_enc_buf, which meant
+     * encrypting to an odd offset. Nothing proved that wrong, but it changed
+     * the alignment of every buffer BearSSL's cipher code touches, and while
+     * chasing a bad_record_mac that arrives only on one platform it is not
+     * worth keeping a variable that cannot be ruled out by reading.
      */
-    unsigned char   tls13_enc_buf[5 + TLS13_MAX_PLAINTEXT + 1 + TLS13_TAG_SIZE];
+    unsigned char   tls13_out_hdr[5];
 
     /*
      * How much of the record in tls13_enc_buf has reached the transport.

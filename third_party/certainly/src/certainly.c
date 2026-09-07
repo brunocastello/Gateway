@@ -940,10 +940,26 @@ void MacTLS_Close(MacTLS_Context *ctx)
  */
 static int tls13_flush_out(MacTLS_Context *ctx)
 {
+    /*
+     * The staged record is the five header bytes followed by the ciphertext,
+     * held in two buffers but sent as one stream, so out_sent counts across
+     * both. Keeping them separate leaves the ciphertext at the alignment
+     * BearSSL's cipher code was handed everywhere else.
+     */
     while (ctx->tls13_out_sent < ctx->tls13_out_len) {
-        int n = ct_transport_send(ctx->transport,
-                                  ctx->tls13_enc_buf + ctx->tls13_out_sent,
-                                  ctx->tls13_out_len - ctx->tls13_out_sent);
+        const unsigned char *from;
+        size_t               avail;
+        int                  n;
+
+        if (ctx->tls13_out_sent < 5) {
+            from  = ctx->tls13_out_hdr + ctx->tls13_out_sent;
+            avail = 5 - ctx->tls13_out_sent;
+        } else {
+            from  = ctx->tls13_enc_buf + (ctx->tls13_out_sent - 5);
+            avail = ctx->tls13_out_len - ctx->tls13_out_sent;
+        }
+
+        n = ct_transport_send(ctx->transport, from, avail);
         if (n < 0) return -1;
         if (n == 0) break;                  /* flow controlled; try later */
         ctx->tls13_out_sent += (size_t)n;
@@ -978,7 +994,7 @@ int MacTLS_Write(MacTLS_Context *ctx, const void *data, size_t len)
          * fills, which a several-kilobyte OAuth request does easily -- and the
          * first thing the Windows port did was fail to refresh a token.
          */
-        unsigned char *ciphertext = ctx->tls13_enc_buf + 5;
+        unsigned char *ciphertext = ctx->tls13_enc_buf;
         size_t ct_len;
         int ret;
 
@@ -996,11 +1012,11 @@ int MacTLS_Write(MacTLS_Context *ctx, const void *data, size_t len)
                                    ciphertext, &ct_len);
         if (ret != 0) return -1;
 
-        ctx->tls13_enc_buf[0] = TLS13_CT_APPLICATION_DATA;  /* 0x17 */
-        ctx->tls13_enc_buf[1] = 0x03;
-        ctx->tls13_enc_buf[2] = 0x03;
-        ctx->tls13_enc_buf[3] = (unsigned char)(ct_len >> 8);
-        ctx->tls13_enc_buf[4] = (unsigned char)(ct_len);
+        ctx->tls13_out_hdr[0] = TLS13_CT_APPLICATION_DATA;  /* 0x17 */
+        ctx->tls13_out_hdr[1] = 0x03;
+        ctx->tls13_out_hdr[2] = 0x03;
+        ctx->tls13_out_hdr[3] = (unsigned char)(ct_len >> 8);
+        ctx->tls13_out_hdr[4] = (unsigned char)(ct_len);
 
         ctx->tls13_out_len  = 5 + ct_len;
         ctx->tls13_out_sent = 0;
@@ -1141,6 +1157,11 @@ void MacTLS_GetCounters(const MacTLS_Context *ctx,
         return;
     }
     ct_transport_counters(ctx->transport, sent, received);
+}
+
+uint16_t MacTLS_GetCipherSuite(const MacTLS_Context *ctx)
+{
+    return (ctx == NULL) ? 0 : ctx->hs13.cipher_suite;
 }
 
 unsigned int MacTLS_GetAlert(const MacTLS_Context *ctx)

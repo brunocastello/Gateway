@@ -1199,9 +1199,11 @@ static void session_step(GWHttpSession *s)
                 unsigned long w = 0, r = 0;
 
                 GWStream_Counters(&s->up, &w, &r);
-                gw_log("#%ld connected to %s [TLS 1.%d, handshake %lu out %lu in]",
+                gw_log("#%ld connected to %s [TLS 1.%d, suite %04x, "
+                       "handshake %lu out %lu in]",
                        s->id, s->upHost,
-                       GWStream_TlsVersion(&s->up) == 13 ? 3 : 2, w, r);
+                       GWStream_TlsVersion(&s->up) == 13 ? 3 : 2,
+                       GWStream_CipherSuite(&s->up), w, r);
             }
             s->state = kHPSendRequest;
         } else if (s->up.state == kGWStreamError ||

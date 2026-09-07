@@ -183,6 +183,9 @@ int           GWStream_PeerGone(const GWStream *s);
 void          GWStream_Counters(const GWStream *s,
                                 unsigned long *sent, unsigned long *received);
 
+/* The negotiated cipher suite, or 0. 0x1301 AES-128-GCM, 0x1303 ChaCha20. */
+unsigned int  GWStream_CipherSuite(const GWStream *s);
+
 /* 0 when unknown or plain, otherwise 12 or 13. */
 int           GWStream_TlsVersion(const GWStream *s);
 const char   *GWStream_ErrorText(const GWStream *s);

@@ -229,6 +229,12 @@ static const char *gw_tls_error_text(int err)
     }
 }
 
+unsigned int GWStream_CipherSuite(const GWStream *s)
+{
+    if (s == NULL || !s->tls || s->sec == NULL) return 0;
+    return (unsigned int)MacTLS_GetCipherSuite(s->sec);
+}
+
 void GWStream_Counters(const GWStream *s,
                        unsigned long *sent, unsigned long *received)
 {

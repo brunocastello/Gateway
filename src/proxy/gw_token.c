@@ -212,8 +212,10 @@ void GWToken_Poll(void)
                 unsigned long w = 0, r = 0;
 
                 GWStream_Counters(&t->up, &w, &r);
-                gw_log("oauth: connected [TLS 1.%d, handshake %lu out %lu in]",
-                       GWStream_TlsVersion(&t->up) == 13 ? 3 : 2, w, r);
+                gw_log("oauth: connected [TLS 1.%d, suite %04x, "
+                       "handshake %lu out %lu in]",
+                       GWStream_TlsVersion(&t->up) == 13 ? 3 : 2,
+                       GWStream_CipherSuite(&t->up), w, r);
             }
             t->step = kStSend;
         } else if (t->up.state == kGWStreamError ||

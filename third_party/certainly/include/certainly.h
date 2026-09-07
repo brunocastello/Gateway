@@ -159,6 +159,13 @@ void         MacTLS_GetCounters(const MacTLS_Context *ctx,
  */
 unsigned int MacTLS_GetAlert(const MacTLS_Context *ctx);
 
+/*
+ * The negotiated TLS 1.3 cipher suite, or 0. 0x1301 is AES-128-GCM, 0x1303 is
+ * ChaCha20-Poly1305 -- two entirely separate code paths through BearSSL, and a
+ * failure in one says nothing about the other.
+ */
+uint16_t     MacTLS_GetCipherSuite(const MacTLS_Context *ctx);
+
 size_t       MacTLS_GetPending(const MacTLS_Context *ctx,
                                unsigned char *head, size_t headcap);
 int          MacTLS_GetBearSSLError(const MacTLS_Context *ctx);
