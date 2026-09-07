@@ -26,6 +26,8 @@ on:
       - 'src/gw_config.*'
       - 'src/gw_platform.h'
       - 'src/net/gw_transport.h'
+      - 'src/net/gw_stream.c'
+      - 'src/net/gw_net_win32.*'
       - 'third_party/certainly/**'
       # Windows only.
       - 'src/win32/**'
@@ -38,6 +40,8 @@ on:
       - 'src/gw_config.*'
       - 'src/gw_platform.h'
       - 'src/net/gw_transport.h'
+      - 'src/net/gw_stream.c'
+      - 'src/net/gw_net_win32.*'
       - 'third_party/certainly/**'
       - 'src/win32/**'
       - '.github/workflows/build-win32.yml'
