@@ -152,6 +152,13 @@ void         MacTLS_GetCounters(const MacTLS_Context *ctx,
  * and produced nothing were an unparsed record, a record still short of its
  * declared length, or an alert.
  */
+/*
+ * The last alert the peer sent, as (level << 8) | description, or 0 if none.
+ * Level 1 is a warning and 2 is fatal; description 20 is bad_record_mac, 40 a
+ * handshake failure, 51 decrypt_error. RFC 8446 section 6 has the rest.
+ */
+unsigned int MacTLS_GetAlert(const MacTLS_Context *ctx);
+
 size_t       MacTLS_GetPending(const MacTLS_Context *ctx,
                                unsigned char *head, size_t headcap);
 int          MacTLS_GetBearSSLError(const MacTLS_Context *ctx);

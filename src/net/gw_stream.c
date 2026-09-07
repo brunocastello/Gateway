@@ -248,6 +248,7 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
     unsigned long sent = 0, got = 0;
     unsigned char head[5];
     size_t        pending = 0;
+    unsigned int  alert = 0;
 
     if (cap == 0) return out;
 
@@ -266,6 +267,7 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
         tlsErr = MacTLS_GetBearSSLError(s->sec);
         MacTLS_GetCounters(s->sec, &sent, &got);
         pending = MacTLS_GetPending(s->sec, head, sizeof(head));
+        alert   = MacTLS_GetAlert(s->sec);
     } else if (s != NULL && s->plain != NULL) {
         otErr = GWConn_LastError(s->plain);
         addr  = GWConn_PeerIPv4(s->plain);
@@ -298,7 +300,10 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
          * arriving.
          */
         rec[0] = '\0';
-        if (pending > 0)
+        if (alert != 0)
+            snprintf(rec, sizeof(rec), ", alert %u/%u",
+                     (alert >> 8) & 0xFF, alert & 0xFF);
+        else if (pending > 0)
             snprintf(rec, sizeof(rec), ", held %lu: %02x %02x %02x %02x %02x",
                      (unsigned long)pending, head[0], head[1], head[2],
                      head[3], head[4]);

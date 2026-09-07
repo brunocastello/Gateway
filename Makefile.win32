@@ -17,7 +17,11 @@ BEAR   = $(CERT)/bearssl
 # family from libmingwex instead of msvcrt's _snprintf, which does not
 # null-terminate on truncation and returns -1 rather than the length needed --
 # semantics several accumulating snprintf call sites here depend on.
-DEFS   = -D_WIN32_WINNT=0x0400 -DWINVER=0x0400 -D__USE_MINGW_ANSI_STDIO=1
+# Stamped into the binary so a screenshot of the log identifies the build.
+GW_BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+
+DEFS   = -D_WIN32_WINNT=0x0400 -DWINVER=0x0400 -D__USE_MINGW_ANSI_STDIO=1 \
+         -DGW_BUILD_ID=\"$(GW_BUILD_ID)\"
 INCS   = -Isrc -Isrc/portable -I$(CERT)/include -I$(CERT)/src \
          -I$(BEAR)/inc -I$(BEAR)/src
 CFLAGS = $(DEFS) $(INCS) -Os -ffunction-sections -fdata-sections \

@@ -109,6 +109,15 @@ struct MacTLS_Context {
     size_t          tls13_out_len;
     size_t          tls13_out_sent;
 
+    /*
+     * The last alert the peer sent, as (level << 8) | description, or 0.
+     *
+     * A decrypted alert used to be turned straight into "connection closed"
+     * and the two bytes saying why were dropped. Those two bytes are the
+     * peer's entire explanation of what it objected to.
+     */
+    unsigned int    tls13_alert;
+
     /* True once TLS 1.3 handshake is confirmed (ServerHello chose 1.3) */
     bool            tls13_active;
     /* True once TLS 1.3 handshake has started (ClientHello sent) */

@@ -202,7 +202,18 @@ int GW_Init(void)
 {
     OSStatus err;
 
+    /*
+     * Which build this is, in the first line of the log.
+     *
+     * Two rounds of debugging were spent unable to tell whether the binary
+     * under test was the one that had just been fixed. A short revision in the
+     * log costs nothing and settles it from a screenshot.
+     */
+#ifdef GW_BUILD_ID
+    gw_log("Gateway starting up (build %s)", GW_BUILD_ID);
+#else
     gw_log("Gateway starting up");
+#endif
 
     err = GWNet_Init();
     if (err != noErr) {

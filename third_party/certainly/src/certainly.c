@@ -586,8 +586,14 @@ static void tls13_recv_records(MacTLS_Context *ctx)
 
         } else if (inner_ct == TLS13_CT_ALERT) {
             /*
-             * Decrypted alert — treat as connection close.
+             * Decrypted alert. Keep the two bytes before treating it as a
+             * close: level and description are the peer's entire account of
+             * what it objected to, and discarding them turned every rejected
+             * record into an unexplained disconnection.
              */
+            if (dec_len >= 2)
+                ctx->tls13_alert = ((unsigned int)decrypted[0] << 8) |
+                                   decrypted[1];
             ctx->state = kMacTLS_Closed;
             return;
 
@@ -1135,6 +1141,11 @@ void MacTLS_GetCounters(const MacTLS_Context *ctx,
         return;
     }
     ct_transport_counters(ctx->transport, sent, received);
+}
+
+unsigned int MacTLS_GetAlert(const MacTLS_Context *ctx)
+{
+    return (ctx == NULL) ? 0 : ctx->tls13_alert;
 }
 
 size_t MacTLS_GetPending(const MacTLS_Context *ctx,

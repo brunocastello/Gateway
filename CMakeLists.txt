@@ -8,6 +8,18 @@ project(Gateway C CXX)
 # set it and gets the C library instead.
 add_compile_definitions(GW_MAC_OS)
 
+# The same build stamp the Windows makefile applies, so a log from either
+# platform names the revision it came from.
+execute_process(COMMAND git rev-parse --short HEAD
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                OUTPUT_VARIABLE GW_BUILD_ID
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET)
+if(NOT GW_BUILD_ID)
+    set(GW_BUILD_ID "unknown")
+endif()
+add_compile_definitions(GW_BUILD_ID="${GW_BUILD_ID}")
+
 #
 # Gateway - a TLS 1.3 gateway that runs in the background on Mac OS 9 (PPC).
 #
