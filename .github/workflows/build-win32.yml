@@ -72,15 +72,18 @@ jobs:
               Shell_NotifyIcon(NIM_ADD, &ni);
 
               _snprintf(buf, sizeof(buf), "%s %d", "ticks", (int)GetTickCount());
-              return (int)strlen(buf) + (int)malloc(1);
+              free(malloc(16));
+              return (int)strlen(buf);
           }
           SRC
 
-          # 0x0400 is NT 4.0 / Windows 95. --nostdlib is not used: the point is
-          # to see what the ordinary CRT drags in.
-          i686-w64-mingw32-gcc -D_WIN32_WINNT=0x0400 -DWINVER=0x0400 \
-            -Os -municode- -o probe.exe probe.c \
-            -lws2_32 -lshell32 -luser32 -lkernel32 2>&1 | head -20 || \
+          # 0x0400 is NT 4.0 / Windows 95. The ordinary CRT is deliberately
+          # linked: the point is to see what it drags in.
+          #
+          # wsock32, not ws2_32: Winsock 2 was a separate download for
+          # Windows 95, even on OSR2, while Winsock 1.1 is on every system in
+          # range and has everything Gateway needs -- select, non-blocking
+          # sockets and gethostbyname.
           i686-w64-mingw32-gcc -D_WIN32_WINNT=0x0400 -DWINVER=0x0400 \
             -Os -o probe.exe probe.c -lwsock32 -lshell32 -luser32 -lkernel32
 
