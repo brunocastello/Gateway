@@ -112,6 +112,21 @@ jobs:
           mv installer/Setup.exe build-win32/Setup.exe
           ls -l build-win32/Setup.exe
 
+      # Built every time rather than only on a tag: an asset that is only ever
+      # produced during a release is an asset whose first test is the release.
+      - name: Make the floppy image
+        run: |
+          set -euo pipefail
+          # 1.44 MB, which 86Box mounts directly and real hardware still reads.
+          # Setup.exe is a third of a diskette, so it fits with room to spare,
+          # and mtools writes the filesystem into a plain file without root or
+          # a loopback mount.
+          dd if=/dev/zero of=build-win32/Gateway.img bs=512 count=2880 status=none
+          mformat -i build-win32/Gateway.img -f 1440 -v GATEWAY ::
+          mcopy -i build-win32/Gateway.img build-win32/Setup.exe ::SETUP.EXE
+          echo "--- floppy contents ---"
+          mdir -i build-win32/Gateway.img ::
+
       - name: Will the installer run on the targets
         run: |
           echo "=== PE version fields (Windows 95 wants 4.0) ==="
@@ -133,6 +148,7 @@ jobs:
           path: |
             build-win32/Gateway.exe
             build-win32/Setup.exe
+            build-win32/Gateway.img
 
       # Tag pushes become release assets. Two of them: the bare executable, for
       # anyone who just wants to drop it next to an existing Gateway.ini, and a
@@ -152,16 +168,8 @@ jobs:
           cp LICENSE                 "release/Gateway/LICENSE.txt"
           (cd release && zip -r "Gateway-${GITHUB_REF_NAME}-windows.zip" Gateway)
 
-          # A 1.44 MB floppy, which 86Box mounts directly and real hardware
-          # still reads. Setup.exe is a third of a diskette, so it fits with
-          # room to spare -- and mtools writes the filesystem without needing
-          # root or a loopback mount.
           IMG="release/Gateway-${GITHUB_REF_NAME}-windows.img"
-          dd if=/dev/zero of="$IMG" bs=512 count=2880 status=none
-          mformat -i "$IMG" -f 1440 -v GATEWAY ::
-          mcopy -i "$IMG" build-win32/Setup.exe ::SETUP.EXE
-          echo "--- floppy contents ---"
-          mdir -i "$IMG" ::
+          cp build-win32/Gateway.img "$IMG"
 
           # The Mac job may or may not have created the release yet, so both
           # jobs have to cope with either order.
