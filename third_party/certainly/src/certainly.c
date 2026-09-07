@@ -15,8 +15,6 @@
 
 #include "certainly_internal.h"
 
-#include <Memory.h>   /* NewPtrClear, DisposePtr */
-#include <Events.h>   /* TickCount - Gateway patch, see PATCHES.md */
 #include <string.h>
 
 /* ── Library lifecycle ── */
@@ -1087,12 +1085,12 @@ MacTLS_Error MacTLS_GetError(const MacTLS_Context *ctx)
     return ctx->error;
 }
 
-OSStatus MacTLS_GetOTError(const MacTLS_Context *ctx)
+long MacTLS_GetTransportError(const MacTLS_Context *ctx)
 {
     if (ctx->transport) {
-        return (OSStatus)ct_transport_last_error(ctx->transport);
+        return ct_transport_last_error(ctx->transport);
     }
-    return noErr;
+    return 0;
 }
 
 MacTLS_Phase MacTLS_GetPhase(const MacTLS_Context *ctx)

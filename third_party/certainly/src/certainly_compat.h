@@ -10,7 +10,12 @@
 #ifndef CERTAINLY_COMPAT_H
 #define CERTAINLY_COMPAT_H
 
-#ifndef CERTAINLY_OPEN_TRANSPORT
+#ifdef CERTAINLY_OPEN_TRANSPORT
+
+#include <MacMemory.h>  /* NewPtrClear, DisposePtr */
+#include <Events.h>     /* TickCount - Gateway patch, see PATCHES.md */
+
+#else
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -30,6 +35,6 @@ static uint32_t TickCount(void)
     return (uint32_t)((ULONGLONG)GetTickCount() * 60 / 1000);
 }
 
-#endif /* !CERTAINLY_OPEN_TRANSPORT */
+#endif /* CERTAINLY_OPEN_TRANSPORT */
 
 #endif /* CERTAINLY_COMPAT_H */

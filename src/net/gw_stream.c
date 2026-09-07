@@ -248,7 +248,7 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
         case kMacTLS_PhaseFailed:     phase = "failed";         break;
         default:                      phase = "idle";           break;
         }
-        otErr = MacTLS_GetOTError(s->sec);
+        otErr = MacTLS_GetTransportError(s->sec);
         addr  = (UInt32)MacTLS_GetResolvedAddress(s->sec);
         tlsErr = MacTLS_GetBearSSLError(s->sec);
     } else if (s != NULL && s->plain != NULL) {

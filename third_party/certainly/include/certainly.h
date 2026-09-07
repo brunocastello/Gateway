@@ -126,7 +126,12 @@ size_t MacTLS_Available(const MacTLS_Context *ctx);
 /* ── Status ── */
 MacTLS_State MacTLS_GetState(const MacTLS_Context *ctx);
 MacTLS_Error MacTLS_GetError(const MacTLS_Context *ctx);
-OSStatus     MacTLS_GetOTError(const MacTLS_Context *ctx);
+/*
+ * The transport's own error number -- an Open Transport OSStatus on Mac OS 9,
+ * a Winsock error on Windows. It was called GetOTError and returned OSStatus
+ * until there was a second transport for that to be wrong about.
+ */
+long         MacTLS_GetTransportError(const MacTLS_Context *ctx);
 int          MacTLS_GetBearSSLError(const MacTLS_Context *ctx);
 
 /* Returns the negotiated protocol version, or kMacTLS_VersionUnknown
