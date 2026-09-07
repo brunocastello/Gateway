@@ -24,7 +24,20 @@ DEFS   = -D_WIN32_WINNT=0x0400 -DWINVER=0x0400 -D__USE_MINGW_ANSI_STDIO=1 \
          -DGW_BUILD_ID=\"$(GW_BUILD_ID)\"
 INCS   = -Isrc -Isrc/portable -I$(CERT)/include -I$(CERT)/src \
          -I$(BEAR)/inc -I$(BEAR)/src
-CFLAGS = $(DEFS) $(INCS) -Os -ffunction-sections -fdata-sections \
+# Optimisation is a variable because it is currently a suspect.
+#
+# The Mac build sets no optimisation level at all -- CMake with no build type
+# passes none -- and it encrypts application records the archive accepts. This
+# build used -Os and produces a bad tag for the same key, same nonce, same AAD
+# and the same cipher, differing only in that the record spans several ChaCha
+# blocks rather than one. That is the shape of a miscompilation or of
+# undefined behaviour that only an optimiser acts on, so the two builds should
+# be compared at the same level before anything else is believed.
+#
+#   make -f Makefile.win32 OPT="-Os"      to go back
+OPT ?= -O0 -fno-strict-aliasing
+
+CFLAGS = $(DEFS) $(INCS) $(OPT) -ffunction-sections -fdata-sections \
          -Wall -Wextra -Wno-unused-parameter
 
 # -mwindows for a GUI subsystem: no console window behind the tray icon.
