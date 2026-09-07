@@ -21,6 +21,9 @@
 #include <stdint.h>
 #include <windows.h>
 
+/* DisposePtr((Ptr)x) is the Toolbox idiom and appears at the call sites. */
+typedef char *Ptr;
+
 #define NewPtrClear(n) ((void *)calloc(1, (size_t)(n)))
 #define DisposePtr(p)  free((void *)(p))
 
