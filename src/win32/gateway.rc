@@ -15,12 +15,23 @@
 
 #include <windows.h>
 
-/* Lowest id wins when the shell picks an application's icon, so the running
- * one is 1. The greyed variant is the tray icon while the gateway is stopped;
- * it is the same drawing with the colour taken out, so it reads as Gateway
- * rather than as some other program. */
+/*
+ * Lowest id wins when the shell picks an application's icon, so the ordinary
+ * blue one is 1: that is Gateway in Explorer, on the taskbar and in the window
+ * caption, regardless of what it happens to be doing at the time.
+ *
+ * The tray icon says what it is doing, in the one place a 16x16 image has room
+ * to say anything: the opening under the arch, green while running and red
+ * while stopped. Same stonework, same padlock, same mask.
+ *
+ * These ids are what main_win32.c's GW_ICON_* constants name. They were out of
+ * step once -- the file kept an older pair while the code had moved to three --
+ * and the result was a tray icon that showed red while running and vanished
+ * when stopped, because id 3 did not exist and LoadIcon returned nothing.
+ */
 1 ICON "gateway.ico"
-2 ICON "gateway-off.ico"
+2 ICON "gateway-on.ico"
+3 ICON "gateway-off.ico"
 
 VS_VERSION_INFO VERSIONINFO
   FILEVERSION    0,3,1,0
