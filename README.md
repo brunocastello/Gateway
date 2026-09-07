@@ -283,5 +283,4 @@ Gateway is a small amount of original work resting on other people's:
 
 ## Licence
 
-MIT for Gateway's own code; see `LICENSE` for the bundled third-party terms and
-fuller credits.
+MIT for Gateway's own code; see `LICENSE` for the bundled third-party terms.
