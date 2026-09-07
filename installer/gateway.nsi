@@ -12,6 +12,11 @@
 ; a suite. A short path at the root is what this era's utilities did, and it is
 ; what the documentation can print without qualification.
 
+; ANSI, not Unicode: the Unicode stub will not load on 95, 98 or Me. This has
+; to come before anything that writes to the header or compresses data --
+; including the MUI include below -- or NSIS refuses to change charset.
+Unicode false
+
 !include "MUI2.nsh"
 
 !ifndef VERSION
@@ -29,9 +34,6 @@ InstallDirRegKey HKLM "Software\Gateway" "InstallDir"
 ; Windows 95 has no notion of elevation, and on 2000 and XP a directory the
 ; user chose themselves does not need it.
 RequestExecutionLevel user
-
-; ANSI, not Unicode: the Unicode build will not load on 95, 98 or Me.
-Unicode false
 
 SetCompressor /SOLID lzma
 BrandingText "Gateway ${VERSION}"
