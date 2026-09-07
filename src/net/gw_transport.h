@@ -25,6 +25,14 @@
 
 #include "../gw_platform.h"
 
+/*
+ * For CTSocket, the platform's own connection handle. The stream layer hands
+ * one to Certainly when a plaintext connection is upgraded in place, which is
+ * the only place Gateway and the TLS library have to agree on what a socket
+ * is. Relative, because certainly/src is private to that library's own build.
+ */
+#include "../../third_party/certainly/src/certainly_transport.h"
+
 #define GW_NET_HOST_MAX      256
 #define GW_CONNECT_TIMEOUT   (30 * 60)      /* ticks: 30 seconds */
 
@@ -63,6 +71,26 @@ long         GWConn_Send(GWConn *c, const void *buf, size_t len);
 
 /* >= 0: bytes read (0 means nothing yet). -1: error. -2: peer sent FIN. */
 long         GWConn_Recv(GWConn *c, void *buf, size_t len);
+
+/*
+ * Hand the connection to someone else. Our own bookkeeping comes off it, so
+ * GWConn_Destroy() no longer closes it; ownership passes to the caller, which
+ * on the STARTTLS path is Certainly. Returns CT_SOCKET_NONE if there is
+ * nothing to hand over.
+ */
+CTSocket     GWConn_DetachSocket(GWConn *c);
+
+/* State, without advancing anything. */
+GWConnState  GWConn_GetState(const GWConn *c);
+
+/* True once the peer has closed its side, however it did so. */
+int          GWConn_PeerClosed(const GWConn *c);
+
+/* The platform's own error number, for diagnostics. */
+long         GWConn_LastError(const GWConn *c);
+
+/* The peer address in host byte order, or 0 if not known. */
+UInt32       GWConn_PeerIPv4(const GWConn *c);
 
 void         GWConn_Close(GWConn *c);       /* orderly: sends FIN */
 void         GWConn_Destroy(GWConn *c);

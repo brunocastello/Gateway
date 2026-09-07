@@ -139,6 +139,7 @@ target_compile_options(gw_portable PRIVATE -Wall -Wextra -Wno-unused-parameter)
 
 add_library(gw_net STATIC
     src/net/gw_net.c
+    src/net/gw_stream.c
     src/gw_core.c
     src/gw_config.c
     src/proxy/gw_httpproxy.c

@@ -61,14 +61,4 @@ struct GWListener {
     InetAddress       callAddr;
 };
 
-/*
- * Hand the endpoint to someone else. Our notifier comes off and c->ep is
- * cleared, so GWConn_Destroy() no longer closes it. Used by STARTTLS, where
- * Certainly takes over a socket Gateway has been speaking plaintext on.
- *
- * Open Transport specific, and used only inside gw_net.c, which is why it did
- * not move to gw_transport.h with the rest.
- */
-EndpointRef  GWConn_DetachEndpoint(GWConn *c);
-
 #endif /* GW_NET_H */
