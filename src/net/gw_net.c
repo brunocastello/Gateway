@@ -439,7 +439,7 @@ static pascal void gw_listener_notifier(void *context, OTEventCode event,
     }
 }
 
-GWListener *GWListener_Open(UInt16 port, OTQLen qlen)
+GWListener *GWListener_Open(UInt16 port, int backlog)
 {
     GWListener        *l;
     OTConfigurationRef cfg;
@@ -478,7 +478,7 @@ GWListener *GWListener_Open(UInt16 port, OTQLen qlen)
     bindReq.addr.maxlen = sizeof(local);
     bindReq.addr.len    = sizeof(local);
     bindReq.addr.buf    = (unsigned char *)&local;
-    bindReq.qlen        = qlen;
+    bindReq.qlen        = (OTQLen)backlog;
     bindRet.addr.maxlen = sizeof(boundAddr);
     bindRet.addr.buf    = (unsigned char *)&boundAddr;
 
