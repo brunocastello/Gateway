@@ -15,8 +15,12 @@
 
 #include <windows.h>
 
-/* Lowest id wins when the shell picks an application's icon. */
+/* Lowest id wins when the shell picks an application's icon, so the running
+ * one is 1. The greyed variant is the tray icon while the gateway is stopped;
+ * it is the same drawing with the colour taken out, so it reads as Gateway
+ * rather than as some other program. */
 1 ICON "gateway.ico"
+2 ICON "gateway-off.ico"
 
 VS_VERSION_INFO VERSIONINFO
   FILEVERSION    0,3,0,0

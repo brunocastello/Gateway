@@ -79,7 +79,8 @@ build-win32/%.o: %.c
 
 # The icon and the version block. windres needs the .rc's own directory on its
 # include path so the ICON statement can find gateway.ico beside it.
-build-win32/gateway.res.o: src/win32/gateway.rc src/win32/gateway.ico
+build-win32/gateway.res.o: src/win32/gateway.rc src/win32/gateway.ico \
+                           src/win32/gateway-off.ico
 	@mkdir -p $(dir $@)
 	$(WINDRES) -I src/win32 -i $< -o $@ -O coff
 

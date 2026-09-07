@@ -28,12 +28,15 @@
 #define GW_ABOUT_CLASS "GatewayAboutClass"
 #define GW_TRAY_MSG   (WM_APP + 1)
 #define GW_TRAY_ID     1
+#define GW_ICON_ON     1      /* gateway.ico */
+#define GW_ICON_OFF    2      /* gateway-off.ico */
 #define ID_LOG         100
 
 #define IDM_SHOW       40001
 #define IDM_STARTUP    40002
-#define IDM_ABOUT      40003
-#define IDM_QUIT       40004
+#define IDM_STOP       40003
+#define IDM_ABOUT      40004
+#define IDM_QUIT       40005
 
 static HWND  gMain;
 static HWND  gList;
@@ -173,6 +176,36 @@ static void tray_add(void)
     Shell_NotifyIconA(NIM_ADD, &gTray);
 }
 
+/*
+ * The tray icon says whether the gateway is running.
+ *
+ * Same drawing, colour removed, so a stopped Gateway is still recognisable as
+ * Gateway rather than as some other program that happens to be grey.
+ */
+static void tray_set_icon(void)
+{
+    gTray.uFlags = NIF_ICON;
+    gTray.hIcon  = LoadIcon(gInst, MAKEINTRESOURCE(
+                       GW_IsRunning() ? GW_ICON_ON : GW_ICON_OFF));
+    Shell_NotifyIconA(NIM_MODIFY, &gTray);
+    gTray.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+}
+
+/*
+ * Release the ports, or bind them again, without quitting. The window stays
+ * up either way, so the log remains readable and the settings can be
+ * corrected before starting again -- which is the point of stopping rather
+ * than quitting.
+ */
+static void toggle_running(void)
+{
+    if (GW_IsRunning())
+        GW_Stop();
+    else if (!GW_Start())
+        gw_log("could not start: the ports may still be in use");
+    tray_set_icon();
+}
+
 static void tray_remove(void)
 {
     Shell_NotifyIconA(NIM_DELETE, &gTray);
@@ -187,6 +220,9 @@ static void tray_menu(void)
 
     AppendMenuA(menu, MF_STRING, IDM_SHOW,
                 gShown ? "&Hide Window" : "&Show Window");
+    /* The item names what a click will do, as the window item does. */
+    AppendMenuA(menu, MF_STRING, IDM_STOP,
+                GW_IsRunning() ? "S&top Gateway" : "S&tart Gateway");
     AppendMenuA(menu, MF_STRING | (startup_enabled() ? MF_CHECKED : 0),
                 IDM_STARTUP, "Start with &Windows");
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
@@ -221,15 +257,15 @@ static void tray_menu(void)
  */
 static HWND gAbout;
 
-static const char *kAboutLines[] = {
-    "A TLS 1.3 gateway and proxy that runs on the machine",
-    "it serves, so applications written before modern TLS",
-    "existed can reach the current web and current mail.",
+
+static const char *kAbout[] = {
+    "A TLS 1.3 gateway for Windows",
     "",
-    "HTTP proxy, mail splice, and Internet Archive proxy.",
-    "",
-    "MIT licence. TLS by Certainly over BearSSL.",
-    "No warranty: research software pointed at old systems."
+    "Bruno Castello",
+    "bfcastello@hotmail.com",
+    "Engineer: Claude Opus 5",
+    "\xA9 Castello Designs, 2026",
+    "Built with MinGW-w64"
 };
 
 static LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -257,17 +293,19 @@ static LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                             "MS Sans Serif");
 
         old = (HFONT)SelectObject(dc, bold);
-        TextOutA(dc, 68, 20, "Gateway " GW_VERSION_LONG,
-                 (int)strlen("Gateway " GW_VERSION_LONG));
+        TextOutA(dc, 68, 20, "Gateway " GW_VERSION_STRING,
+                 (int)strlen("Gateway " GW_VERSION_STRING));
 
+        /*
+         * The same lines the Mac build draws in ShowAbout(), with the platform
+         * words changed. They were different text until 0.3.1; two About boxes
+         * for one program should say one thing.
+         */
         SelectObject(dc, plain);
-        TextOutA(dc, 68, 42, "for Windows 95 OSR2 and later",
-                 (int)strlen("for Windows 95 OSR2 and later"));
-
-        y = 76;
-        for (i = 0; i < (int)(sizeof(kAboutLines) / sizeof(kAboutLines[0])); i++) {
-            TextOutA(dc, 20, y, kAboutLines[i], (int)strlen(kAboutLines[i]));
-            y += 15;
+        y = 44;
+        for (i = 0; i < (int)(sizeof(kAbout) / sizeof(kAbout[0])); i++) {
+            TextOutA(dc, 68, y, kAbout[i], (int)strlen(kAbout[i]));
+            y += 18;
         }
 
         SelectObject(dc, old);
@@ -367,6 +405,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         switch (LOWORD(wp)) {
         case IDM_SHOW:    window_show(!gShown); break;
         case IDM_STARTUP: startup_set(!startup_enabled()); break;
+        case IDM_STOP:    toggle_running(); break;
         case IDM_ABOUT:   about_show(); break;
         case IDM_QUIT:    PostMessage(hwnd, WM_DESTROY, 0, 0); break;
         default: break;
@@ -387,9 +426,36 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 {
     WNDCLASSA wc;
     MSG       msg;
+    HANDLE    once;
 
     (void)prev; (void)cmd; (void)show;
     gInst = inst;
+
+    /*
+     * One Gateway at a time.
+     *
+     * Two copies both try to bind the same ports and the second fails in a way
+     * that looks like a broken installation. It happens easily: a shortcut in
+     * the Startup group and the tray menu's "Start with Windows" are separate
+     * registration mechanisms that cannot see each other, so enabling both
+     * launches two at login. Double-clicking the executable while it is
+     * already in the tray does the same thing.
+     *
+     * A named mutex is the Windows 95 answer and needs nothing newer. The
+     * second instance surfaces the first one's window instead of starting, so
+     * the click still does something sensible.
+     */
+    once = CreateMutexA(NULL, TRUE, "GatewayRunningMutex");
+    if (once != NULL && GetLastError() == ERROR_ALREADY_EXISTS) {
+        HWND first = FindWindowA(GW_CLASS, NULL);
+
+        if (first != NULL) {
+            ShowWindow(first, SW_SHOW);
+            SetForegroundWindow(first);
+        }
+        CloseHandle(once);
+        return 0;
+    }
 
     memset(&wc, 0, sizeof(wc));
     wc.lpfnWndProc   = WndProc;
@@ -428,6 +494,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         window_show(1);
     }
 
+    /* After GW_Init, which starts the gateway: the icon reports the state it
+     * actually ended up in, not the one it had before trying. */
+    tray_set_icon();
+
     /*
      * The cooperative loop. Drain the queue, take one pass through the proxy,
      * then yield. Sleep(1) rather than a spin: a pass with nothing to do costs
@@ -452,5 +522,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 done:
     GW_Shutdown();
     tray_remove();
+    if (once != NULL) CloseHandle(once);
     return 0;
 }

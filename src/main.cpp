@@ -46,7 +46,8 @@ const short kFileMenuID  = 129;
 
 const short kAboutItem = 1;
 const short kHideItem  = 1;
-const short kQuitItem  = 3;
+const short kStopItem  = 2;
+const short kQuitItem  = 4;
 
 /*
  * Finder flags, from Finder.h. Written as literals so this file does not take
@@ -306,6 +307,8 @@ private:
         if (mFileMenu != nullptr) {
             ToPascal("Hide Window/H", title);
             AppendMenu(mFileMenu, title);
+            ToPascal("Stop Gateway/S", title);
+            AppendMenu(mFileMenu, title);
             ToPascal("(-", title);
             AppendMenu(mFileMenu, title);
             ToPascal("Quit/Q", title);
@@ -550,6 +553,27 @@ private:
         if (mFileMenu == nullptr) return;
         ToPascal(mWindow != nullptr ? "Hide Window" : "Show Window", title);
         SetMenuItemText(mFileMenu, kHideItem, title);
+
+        /* Same rule for the gateway itself: the item says what a click does. */
+        ToPascal(GW_IsRunning() ? "Stop Gateway" : "Start Gateway", title);
+        SetMenuItemText(mFileMenu, kStopItem, title);
+    }
+
+    /*
+     * Release the ports, or bind them again. The application stays up either
+     * way, so the log remains readable and the settings can be corrected
+     * before starting again -- which is the point of stopping rather than
+     * quitting.
+     */
+    void ToggleRunning()
+    {
+        if (GW_IsRunning()) {
+            GW_Stop();
+        } else if (!GW_Start()) {
+            gw_log("could not start: the ports may still be in use");
+        }
+        UpdateWindowMenuItem();
+        Redraw();
     }
 
     /* Put the window away, or bring it back. Either way Gateway keeps
@@ -743,6 +767,7 @@ private:
 
         case kFileMenuID:
             if (item == kHideItem) ToggleWindow();
+            else if (item == kStopItem) ToggleRunning();
             else if (item == kQuitItem) mDone = true;
             break;
 

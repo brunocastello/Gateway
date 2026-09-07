@@ -383,6 +383,9 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--preview")
     ap.add_argument("--ico", help="also write a Windows .ico here")
+    ap.add_argument("--ico-off", dest="ico_off",
+                    help="write a greyed Windows .ico here, for a tray icon "
+                         "that shows the gateway is stopped")
     ap.add_argument("--ascii", action="store_true")
     args = ap.parse_args()
 
@@ -392,6 +395,28 @@ def main():
     if args.ico:
         open(args.ico, "wb").write(ico({16: px16, 32: px32}))
         print("wrote", args.ico)
+    if args.ico_off:
+        # The same drawing with the colour taken out, so a stopped Gateway is
+        # recognisable in the tray as itself rather than as another icon.
+        # Luminance keeps the arch, the opening and the padlock distinct from
+        # one another, which a flat tint would not.
+        def grey(px):
+            out = []
+            for row in px:
+                r = []
+                for c in row:
+                    if c is CLEAR:
+                        r.append(CLEAR)
+                    else:
+                        v = int(luminance(c))
+                        # Lift it towards white: a disabled icon should read as
+                        # faded rather than merely dark.
+                        v = min(255, int(v * 0.55 + 110))
+                        r.append((v, v, v))
+                out.append(r)
+            return out
+        open(args.ico_off, "wb").write(ico({16: grey(px16), 32: grey(px32)}))
+        print("wrote", args.ico_off)
     if args.ascii:
         ascii_art(px32)
     if args.preview:

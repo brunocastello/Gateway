@@ -198,6 +198,34 @@ void GW_SetShowWindowPref(int show)
     GWConfig_Set("show_window", show ? "1" : "0");
 }
 
+static int sRunning;
+
+static int listeners_open(void);
+
+int GW_IsRunning(void)
+{
+    return sRunning;
+}
+
+/*
+ * Open the listeners and take the modules live. Split out of GW_Init so the
+ * user can stop and restart the gateway without quitting: the ports are
+ * released, in-flight sessions are dropped, and the application stays up with
+ * its log readable. Everything in GW_Init above this point is done once.
+ */
+int GW_Start(void)
+{
+    if (sRunning) return 1;
+
+    if (sProxyOn || sWaybackOn) GWProxy_Init();
+    if (sMailOn) {
+        GWMail_Init();
+        GWToken_Init();
+    }
+    return listeners_open();
+}
+
+/* One-time setup: the network stack, the TLS library, the settings. */
 int GW_Init(void)
 {
     OSStatus err;
@@ -285,6 +313,14 @@ int GW_Init(void)
     sWaybackSet.ct_encoding  = GWConfig_Num("wayback_ct_encoding", 1) != 0;
     sWaybackPort = (int)GWConfig_Num("wayback_port", 8888);
 
+    return GW_Start();
+}
+
+/*
+ * Bind the ports the enabled modules need and report what came up.
+ */
+static int listeners_open(void)
+{
     /*
      * The listen backlog is deeper than the session table on purpose. Now that
      * a full proxy stops accepting rather than refusing, the backlog is where
@@ -316,6 +352,7 @@ int GW_Init(void)
          */
         gw_log("every module is disabled in the prefs; nothing to serve");
         GW_SetStatus("all modules disabled");
+        sRunning = 1;
         return 1;
     }
 
@@ -356,11 +393,40 @@ int GW_Init(void)
             snprintf(line + n, sizeof(line) - n, "smtp :%d", sSmtpPort);
         GW_SetStatus("idle - %s", line);
     }
+    sRunning = 1;
     return 1;
+}
+
+/*
+ * Release the ports and drop everything in flight, without quitting.
+ *
+ * The module shutdowns free their session tables and reset each live session,
+ * which closes the client and upstream connections; their inits allocate
+ * again, so a stop and a later start leave no residue. The access token is
+ * deliberately kept: it is still valid, and re-fetching it on every restart
+ * would be a needless round trip to the provider.
+ */
+void GW_Stop(void)
+{
+    if (!sRunning) return;
+
+    if (sHttp)    { GWListener_Close(sHttp);    sHttp = NULL; }
+    if (sWayback) { GWListener_Close(sWayback); sWayback = NULL; }
+    if (sImap)    { GWListener_Close(sImap);    sImap = NULL; }
+    if (sPop)     { GWListener_Close(sPop);     sPop = NULL; }
+    if (sSmtp)    { GWListener_Close(sSmtp);    sSmtp = NULL; }
+
+    GWProxy_Shutdown();
+    GWMail_Shutdown();
+
+    sRunning = 0;
+    gw_log("gateway stopped");
+    GW_SetStatus("stopped");
 }
 
 void GW_Shutdown(void)
 {
+    GW_Stop();
     stop_file_log();
     if (sHttp) { GWListener_Close(sHttp); sHttp = NULL; }
     if (sWayback) { GWListener_Close(sWayback); sWayback = NULL; }
@@ -378,6 +444,9 @@ void GW_Shutdown(void)
 void GW_Poll(void)
 {
     GWConn *c;
+
+    /* Stopped means stopped: no listeners, no sessions, no token refresh. */
+    if (!sRunning) return;
 
     /*
      * Only take a connection off a proxy listener when there is somewhere to

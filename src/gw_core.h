@@ -20,6 +20,18 @@ extern "C" {
 int         GW_Init(void);
 void        GW_Shutdown(void);
 
+/*
+ * Stop and restart without quitting.
+ *
+ * GW_Stop() releases the ports and drops everything in flight; GW_Start()
+ * binds them again. Everything GW_Init() does once -- the network stack, the
+ * TLS library, the settings -- survives, so a restart costs only the listeners
+ * and the session tables. GW_Init() calls GW_Start() itself.
+ */
+int         GW_Start(void);
+void        GW_Stop(void);
+int         GW_IsRunning(void);
+
 /* One cooperative slice. Call once per pass of the WaitNextEvent loop. */
 void        GW_Poll(void);
 
