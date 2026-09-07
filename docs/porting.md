@@ -107,9 +107,23 @@ small vtable so one build of the TLS library can serve any host.
 
 ---
 
-## 3. Classic Windows — NT 4.0, 95, 98, Me, 2000, XP
+## 3. Classic Windows — 95 OSR2, 98, Me, NT 4.0, 2000, XP
 
-**Verdict: viable, and the smallest of the three ports if the UI is dropped.**
+**Done, in 0.3.0.** What follows was written before the port and has been left
+as it was, with the outcome noted where it differed.
+
+The estimate held: about 2,400 lines were platform-specific and the rest
+compiled unchanged. What it actually took was `gw_transport.h` and
+`certainly_transport.h` (the two interface splits), `gw_net_win32.c`,
+`transport_win32.c`, `entropy_win32.c`, `gw_plat_win32.c`, `main_win32.c` and a
+makefile — and `gw_stream.c`, which was expected to be per-platform and turned
+out to need only four accessors to become shared.
+
+The surprises were not in the port. Two bugs that had been latent in the Mac
+build for its whole life surfaced immediately on a different compiler and stack
+layout: an HKDF buffer overflow and a data-loss bug in the TLS read path. Both
+are recorded in `third_party/certainly/PATCHES.md` §19 and §20. Porting to a
+second platform was worth doing for that alone.
 
 ### Networking
 
