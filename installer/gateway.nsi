@@ -122,7 +122,10 @@ Section "Uninstall"
 
   ; The tray menu's "Start with Windows" writes this; leaving it behind would
   ; make Windows complain at every login about a program that is not there.
+  ; Both hives, because that is where it may have gone: Windows 95 without
+  ; user profiles has no per-user Run key, so the entry lands machine-wide.
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Gateway"
+  DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "Gateway"
 
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Gateway"
   DeleteRegKey HKLM "Software\Gateway"

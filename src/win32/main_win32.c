@@ -60,43 +60,104 @@ static const char kRunKey[] =
  * location moves between 95, NT 4 and 2000; HKCU\...\Run is the same string
  * everywhere in this range and needs no shell folder lookup.
  */
+/*
+ * Which hive holds our Run value, if either does.
+ *
+ * Both are checked because both are used. Windows 95 without user profiles
+ * makes HKEY_CURRENT_USER an alias of HKEY_USERS\.Default and does not create
+ * the Run key under it at all -- the system's own entries live in
+ * HKEY_LOCAL_MACHINE -- while NT and later expect a per-user entry and may
+ * refuse a machine-wide one to an ordinary account.
+ */
+static HKEY startup_hive(void)
+{
+    static const HKEY hives[2] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE };
+    int i;
+
+    for (i = 0; i < 2; i++) {
+        HKEY  key;
+        DWORD len = 0;
+
+        if (RegOpenKeyExA(hives[i], kRunKey, 0, KEY_QUERY_VALUE, &key)
+            != ERROR_SUCCESS)
+            continue;
+
+        if (RegQueryValueExA(key, "Gateway", NULL, NULL, NULL, &len)
+            == ERROR_SUCCESS) {
+            RegCloseKey(key);
+            return hives[i];
+        }
+        RegCloseKey(key);
+    }
+    return NULL;
+}
+
 static int startup_enabled(void)
 {
-    HKEY  key;
-    DWORD type, len = 0;
-    int   found = 0;
+    return startup_hive() != NULL;
+}
 
-    if (RegOpenKeyExA(HKEY_CURRENT_USER, kRunKey, 0, KEY_QUERY_VALUE, &key)
-        != ERROR_SUCCESS)
+/*
+ * RegCreateKeyEx, not RegOpenKeyEx: the key may not exist yet.
+ *
+ * This is what was wrong. Opening a key that Windows 95 never created failed,
+ * the function returned without saying anything, and the menu item then found
+ * no value to tick -- so it neither worked nor appeared to have been clicked.
+ */
+static int startup_write(HKEY hive, const char *exe)
+{
+    HKEY  key;
+    DWORD disp;
+    LONG  r;
+    char  quoted[MAX_PATH + 2];
+
+    if (RegCreateKeyExA(hive, kRunKey, 0, NULL, REG_OPTION_NON_VOLATILE,
+                        KEY_SET_VALUE, NULL, &key, &disp) != ERROR_SUCCESS)
         return 0;
 
-    if (RegQueryValueExA(key, "Gateway", NULL, &type, NULL, &len)
-        == ERROR_SUCCESS)
-        found = 1;
+    /* Quoted, so a path with a space in it is one argument rather than two.
+     * C:\Gateway has none, but the installer lets the user choose. */
+    wsprintfA(quoted, "\"%s\"", exe);
 
+    r = RegSetValueExA(key, "Gateway", 0, REG_SZ,
+                       (const BYTE *)quoted, (DWORD)strlen(quoted) + 1);
     RegCloseKey(key);
-    return found;
+    return r == ERROR_SUCCESS;
+}
+
+static void startup_remove(HKEY hive)
+{
+    HKEY key;
+
+    if (RegOpenKeyExA(hive, kRunKey, 0, KEY_SET_VALUE, &key) != ERROR_SUCCESS)
+        return;
+    RegDeleteValueA(key, "Gateway");
+    RegCloseKey(key);
 }
 
 static void startup_set(int on)
 {
-    HKEY key;
-    char exe[MAX_PATH];
+    char  exe[MAX_PATH];
+    DWORD n;
 
-    if (RegOpenKeyExA(HKEY_CURRENT_USER, kRunKey, 0, KEY_SET_VALUE, &key)
-        != ERROR_SUCCESS)
+    if (!on) {
+        /* Out of both, so a value written to either hive is really gone. */
+        startup_remove(HKEY_CURRENT_USER);
+        startup_remove(HKEY_LOCAL_MACHINE);
         return;
-
-    if (on) {
-        DWORD n = GetModuleFileNameA(NULL, exe, sizeof(exe));
-
-        if (n > 0 && n < sizeof(exe))
-            RegSetValueExA(key, "Gateway", 0, REG_SZ,
-                           (const BYTE *)exe, (DWORD)strlen(exe) + 1);
-    } else {
-        RegDeleteValueA(key, "Gateway");
     }
-    RegCloseKey(key);
+
+    n = GetModuleFileNameA(NULL, exe, sizeof(exe));
+    if (n == 0 || n >= sizeof(exe)) {
+        gw_log("start with Windows: could not find my own path");
+        return;
+    }
+
+    /* Per-user first; machine-wide when that will not take it, which is the
+     * ordinary case on Windows 95 with profiles off. */
+    if (!startup_write(HKEY_CURRENT_USER, exe) &&
+        !startup_write(HKEY_LOCAL_MACHINE, exe))
+        gw_log("start with Windows: the registry would not take the entry");
 }
 
 /* ------------------------------------------------------------------ */
