@@ -166,6 +166,15 @@ unsigned int MacTLS_GetAlert(const MacTLS_Context *ctx);
  */
 uint16_t     MacTLS_GetCipherSuite(const MacTLS_Context *ctx);
 
+/*
+ * Fingerprints of the client application key material where it was stashed and
+ * where it was installed. Equal means the stash survived; different means
+ * something wrote over it in between.
+ */
+void         MacTLS_GetAppKeyFingerprints(const MacTLS_Context *ctx,
+                                          unsigned long *stashed,
+                                          unsigned long *installed);
+
 size_t       MacTLS_GetPending(const MacTLS_Context *ctx,
                                unsigned char *head, size_t headcap);
 int          MacTLS_GetBearSSLError(const MacTLS_Context *ctx);

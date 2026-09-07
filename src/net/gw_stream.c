@@ -229,6 +229,16 @@ static const char *gw_tls_error_text(int err)
     }
 }
 
+void GWStream_KeyFingerprints(const GWStream *s,
+                              unsigned long *stashed, unsigned long *installed)
+{
+    if (stashed != NULL)   *stashed = 0;
+    if (installed != NULL) *installed = 0;
+
+    if (s != NULL && s->tls && s->sec != NULL)
+        MacTLS_GetAppKeyFingerprints(s->sec, stashed, installed);
+}
+
 unsigned int GWStream_CipherSuite(const GWStream *s)
 {
     if (s == NULL || !s->tls || s->sec == NULL) return 0;

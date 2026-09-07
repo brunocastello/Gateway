@@ -183,6 +183,14 @@ int           GWStream_PeerGone(const GWStream *s);
 void          GWStream_Counters(const GWStream *s,
                                 unsigned long *sent, unsigned long *received);
 
+/*
+ * Fingerprints of the client application key material at the two points it
+ * passes through. Equal means the stash survived intact.
+ */
+void          GWStream_KeyFingerprints(const GWStream *s,
+                                       unsigned long *stashed,
+                                       unsigned long *installed);
+
 /* The negotiated cipher suite, or 0. 0x1301 AES-128-GCM, 0x1303 ChaCha20. */
 unsigned int  GWStream_CipherSuite(const GWStream *s);
 
