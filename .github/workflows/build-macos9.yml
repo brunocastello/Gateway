@@ -9,20 +9,31 @@ on:
       - '**'
     tags:
       - 'v*'
-    # Documentation-only changes do not need a PowerPC build.
+    # Only what this build actually compiles. The shared core -- src/portable,
+    # src/proxy, Certainly -- is listed here and in build-win32.yml, so a
+    # change to it correctly builds both; everything Mac-specific builds only
+    # this one, and src/win32 builds only the other.
     #
-    # This filter also applies to tag pushes, so tagging a commit that only
-    # touched documentation skips the build and therefore the release. When
-    # that happens, publish it by hand against the tag:
+    # These filters also apply to tag pushes, so tagging a commit that touched
+    # nothing in the list skips the build and therefore the release. When that
+    # happens, publish it by hand against the tag:
     #
-    #     gh workflow run build.yml --ref v0.2.0
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
+    #     gh workflow run build-macos9.yml --ref v0.2.0
+    paths:
+      - 'src/**'
+      - '!src/win32/**'
+      - 'third_party/certainly/**'
+      - 'third_party/InterfacesAndLibraries/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/build-macos9.yml'
   pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
+    paths:
+      - 'src/**'
+      - '!src/win32/**'
+      - 'third_party/certainly/**'
+      - 'third_party/InterfacesAndLibraries/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/build-macos9.yml'
   workflow_dispatch:
 
 jobs:

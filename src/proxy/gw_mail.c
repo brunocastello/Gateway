@@ -10,7 +10,6 @@
 
 #include "gw_mail.h"
 
-#include <Memory.h>
 #include <string.h>
 #include <stdio.h>
 

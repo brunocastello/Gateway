@@ -1,6 +1,5 @@
 #include "gw_token.h"
 
-#include <Memory.h>
 #include <string.h>
 #include <stdio.h>
 

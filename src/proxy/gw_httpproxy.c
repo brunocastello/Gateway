@@ -15,7 +15,6 @@
 
 #include "gw_httpproxy.h"
 
-#include <Memory.h>
 #include <string.h>
 #include <stdio.h>
 

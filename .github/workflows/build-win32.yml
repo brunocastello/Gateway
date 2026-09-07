@@ -1,116 +1,89 @@
 name: Build (Windows 95 OSR2 and up)
 
-# The Windows port. Targets Windows 95 OSR2 through XP, which is the range in
-# which msvcrt.dll is present on the system, so no C runtime has to be shipped
-# alongside Gateway.
+# The Windows port, targeting Windows 95 OSR2 through XP.
 #
-# The first job here is a toolchain probe rather than a build: whether a
-# MinGW-w64 binary will even load on Windows 95 or NT 4.0 is decided by its
-# import table, and no amount of reasoning substitutes for reading it. Any
-# entry point that arrived after those systems means the loader refuses the
-# executable outright, before a line of Gateway runs.
+# 95 OSR2 is the floor because it is where msvcrt.dll starts shipping with the
+# system, so nothing has to be redistributed alongside Gateway. A probe run
+# against a minimal Win32 application confirmed the rest: MinGW-w64 imports
+# only KERNEL32 entry points that exist on Windows 95 and NT 4.0, and writes a
+# PE subsystem version of 4.0 by default, which is what those loaders expect.
+# docs/porting.md section 3 records the evidence.
+#
+# Paths are scoped so this and build-macos9.yml both run when the shared core
+# changes and only one runs otherwise.
 
 on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+    paths:
+      # Shared with the Mac build.
+      - 'src/portable/**'
+      - 'src/proxy/**'
+      - 'src/gw_core.*'
+      - 'src/gw_config.*'
+      - 'src/gw_platform.h'
+      - 'src/net/gw_transport.h'
+      - 'third_party/certainly/**'
+      # Windows only.
+      - 'src/win32/**'
+      - '.github/workflows/build-win32.yml'
+  pull_request:
+    paths:
+      - 'src/portable/**'
+      - 'src/proxy/**'
+      - 'src/gw_core.*'
+      - 'src/gw_config.*'
+      - 'src/gw_platform.h'
+      - 'src/net/gw_transport.h'
+      - 'third_party/certainly/**'
+      - 'src/win32/**'
+      - '.github/workflows/build-win32.yml'
   workflow_dispatch:
 
 jobs:
-  probe:
+  core:
+    name: Compile the shared core for Win32
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install the cross toolchain
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq gcc-mingw-w64-i686 binutils-mingw-w64-i686
           i686-w64-mingw32-gcc --version | head -1
 
-      - name: Build a minimal Win32 application
+      # The point of the transport split. src/proxy is 2,100 lines of state
+      # machine that should now compile against a Windows compiler without a
+      # single Open Transport header in reach; if that stops being true, this
+      # step says so long before anyone tries to link a Windows binary.
+      - name: Compile src/portable and src/proxy
         run: |
-          cat > probe.c <<'SRC'
-          /*
-           * The smallest thing that is still shaped like Gateway's Windows
-           * shell: a window class, a message loop, a tray icon and the C
-           * library calls the portable core actually makes.
-           */
-          #define WIN32_LEAN_AND_MEAN
-          #include <windows.h>
-          #include <shellapi.h>
-          #include <winsock.h>
-          #include <stdio.h>
-          #include <string.h>
-          #include <stdlib.h>
+          set -euo pipefail
+          mkdir -p obj
+          FLAGS="-D_WIN32_WINNT=0x0400 -DWINVER=0x0400 -Os -Wall -Wextra
+                 -Wno-unused-parameter -Isrc -Isrc/portable -c"
 
-          static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l)
-          {
-              if (m == WM_DESTROY) { PostQuitMessage(0); return 0; }
-              return DefWindowProc(h, m, w, l);
-          }
+          for f in src/portable/*.c src/proxy/*.c; do
+            echo "  $f"
+            i686-w64-mingw32-gcc $FLAGS -o "obj/$(basename "${f%.c}").o" "$f"
+          done
 
-          int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
-          {
-              WNDCLASS wc;
-              NOTIFYICONDATA ni;
-              WSADATA wsa;
-              SOCKET s;
-              char buf[64];
-              unsigned long nb = 1;
+          echo
+          echo "Objects produced:"
+          ls -1 obj | sed 's/^/  /'
 
-              WSAStartup(MAKEWORD(1, 1), &wsa);
-              s = socket(AF_INET, SOCK_STREAM, 0);
-              ioctlsocket(s, FIONBIO, &nb);
-              closesocket(s);
-              WSACleanup();
-
-              memset(&wc, 0, sizeof(wc));
-              wc.lpfnWndProc = WndProc;
-              wc.hInstance = inst;
-              wc.lpszClassName = "GatewayProbe";
-              RegisterClass(&wc);
-
-              memset(&ni, 0, sizeof(ni));
-              ni.cbSize = sizeof(ni);
-              ni.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-              Shell_NotifyIcon(NIM_ADD, &ni);
-
-              _snprintf(buf, sizeof(buf), "%s %d", "ticks", (int)GetTickCount());
-              free(malloc(16));
-              return (int)strlen(buf);
-          }
-          SRC
-
-          # 0x0400 is NT 4.0 / Windows 95. The ordinary CRT is deliberately
-          # linked: the point is to see what it drags in.
-          #
-          # wsock32, not ws2_32: Winsock 2 was a separate download for
-          # Windows 95, even on OSR2, while Winsock 1.1 is on every system in
-          # range and has everything Gateway needs -- select, non-blocking
-          # sockets and gethostbyname.
-          i686-w64-mingw32-gcc -D_WIN32_WINNT=0x0400 -DWINVER=0x0400 \
-            -Os -o probe.exe probe.c -lwsock32 -lshell32 -luser32 -lkernel32
-
-          ls -l probe.exe
-
-      - name: PE header versions, before and after pinning them
+      - name: Confirm nothing dragged in a Mac header
         run: |
-          # Windows 95 and NT 3.x check the subsystem version in the PE header
-          # and refuse anything newer than themselves, whatever the imports
-          # say. Discord Messenger patches offset 0xC8 by hand to get past
-          # this; the linker will simply write the right number if asked.
-          echo "=== default ==="
-          i686-w64-mingw32-objdump -p probe.exe \
-            | grep -Ei "MajorOSystemVersion|MinorOSystemVersion|MajorSubsystemVersion|MinorSubsystemVersion|Subsystem"
-
-          i686-w64-mingw32-gcc -D_WIN32_WINNT=0x0400 -DWINVER=0x0400 \
-            -Os -o pinned.exe probe.c \
-            -Wl,--major-subsystem-version=4 -Wl,--minor-subsystem-version=0 \
-            -Wl,--major-os-version=4 -Wl,--minor-os-version=0 \
-            -lwsock32 -lshell32 -luser32 -lkernel32
-
-          echo "=== pinned to 4.0 ==="
-          i686-w64-mingw32-objdump -p pinned.exe \
-            | grep -Ei "MajorOSystemVersion|MinorOSystemVersion|MajorSubsystemVersion|MinorSubsystemVersion|Subsystem"
-
-      - name: Read the import table
-        run: |
-          i686-w64-mingw32-objdump -p pinned.exe \
-            | sed -n '/The Import Tables/,/^The /p' \
-            | grep -Ev "^\s*$|vma:|The " 
+          # Belt and braces: the compile above would have failed, but a header
+          # can be silently satisfied by a same-named file. Name the ones that
+          # must never appear.
+          if grep -rlE '#include *<(OpenTransport|MacTypes|MacMemory|Memory|Files|Folders|Quickdraw|Windows)\.h>' \
+               src/portable src/proxy; then
+            echo "::error::a Mac header is included from shared code"
+            exit 1
+          fi
+          echo "clean"
