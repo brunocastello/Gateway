@@ -20,6 +20,7 @@ log_file        = 0
 http_port        = 8765
 follow_redirects = auto
 max_body_mb      = 0
+rewrite_https    = 1
 
 
 # --------------------------------------------------------- Wayback proxy
