@@ -18,6 +18,7 @@ SOURCES = \
 	$(PORTABLE)/gw_oauth.c \
 	$(PORTABLE)/gw_prefs.c \
 	$(PORTABLE)/gw_log.c \
+	$(PORTABLE)/gw_rewrite.c \
 	$(PORTABLE)/gw_wayback.c
 
 all: test

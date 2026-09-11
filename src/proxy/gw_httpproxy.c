@@ -22,6 +22,7 @@
 #include "../portable/gw_chunked.h"
 #include "../portable/gw_http.h"
 #include "../portable/gw_log.h"
+#include "../portable/gw_rewrite.h"
 #include "../portable/gw_url.h"
 #include "../portable/gw_util.h"
 #include "../portable/gw_wayback.h"
@@ -139,6 +140,19 @@ typedef struct {
 
     GWChunked     chunk;
     int           chunked;
+
+    /*
+     * Rewriting https:// to http:// on the way to the client.
+     *
+     * rwHold is the count of bytes at the tail of `out` that are an unfinished
+     * "https://" and must not be sent until the next read decides them. They
+     * are in the buffer and counted in outLen; session_flush stops short of
+     * them. At the end of the body there is nothing left to decide, so the
+     * hold is cleared and they go out as they are.
+     */
+    int           rewriting;
+    size_t        rwHold;
+
     long          bodyBytes;
     long          bodyCap;                  /* 0 means no ceiling */
     long          reqBodyLeft;
@@ -355,14 +369,29 @@ static void session_fail(GWHttpSession *s, const char *statusLine,
  * 0 when there is more to go, -1 on a dead client. */
 static int session_flush(GWHttpSession *s)
 {
-    while (s->outSent < s->outLen) {
+    /* Everything except the tail the rewriter is still undecided about. */
+    size_t limit = s->outLen - s->rwHold;
+
+    while (s->outSent < limit) {
         long n = GWStream_Write(&s->cli, s->out + s->outSent,
-                                s->outLen - s->outSent);
+                                limit - s->outSent);
         if (n < 0) return -1;
         if (n == 0) return 0;               /* flow controlled */
         s->outSent += (size_t)n;
         s->lastActivity = GWNet_Ticks();
     }
+    /*
+     * The held tail survives the drain. Zeroing outLen here would throw away
+     * the half of an "https://" that the next read is about to complete, and
+     * the loss would show up as one corrupt URL somewhere in a long page.
+     */
+    if (s->rwHold > 0) {
+        memmove(s->out, s->out + s->outLen - s->rwHold, s->rwHold);
+        s->outLen = s->rwHold;
+        s->outSent = 0;
+        return 1;
+    }
+
     s->outLen = 0;
     s->outSent = 0;
     return 1;
@@ -594,6 +623,14 @@ static void session_finish_body(GWHttpSession *s)
         pool_put(&s->up, s->upHost, s->upPort, s->upTls);
     else
         GWStream_Destroy(&s->up);
+
+    /*
+     * Release the held tail. There is no next read to finish an "https://"
+     * that got this far, so whatever is sitting there is ordinary text and the
+     * final flush has to send it -- a page ending in the literal characters
+     * "https:/" would otherwise lose them.
+     */
+    s->rwHold = 0;
 
     s->state = kHPFlushAndClose;
 }
@@ -927,13 +964,39 @@ static void step_recv_head(GWHttpSession *s)
         gw_log("#%ld passing %d to the client: %.60s",
                s->id, res.status, res.location);
 
+    /*
+     * Whether this body gets its https:// turned into http://.
+     *
+     * Only text, and only what a link can hide in -- HTML, CSS, JavaScript.
+     * Rewriting a JPEG that happens to contain those eight bytes would shorten
+     * it by one and the corruption would look like a decoder bug three layers
+     * away. The Content-Type comes straight out of the head rather than through
+     * GWResponse, which has no field for it and does not need one.
+     */
+    {
+        size_t      ctLen = 0;
+        const char *ct = gw_header_find(s->uhead, res.head_len,
+                                        "content-type", &ctLen);
+        char        type[64];
+
+        s->rewriting = 0;
+        s->rwHold = 0;
+        if (ct != NULL && GW_RewriteHttps()) {
+            gw_copy_n(type, sizeof(type), ct, ctLen);
+            s->rewriting = gw_rewrite_wants_type(type);
+        }
+    }
+
     {
         /* Keep the length whenever the body passes through untouched. It is
-         * only wrong to forward when de-chunking changes it. */
+         * only wrong to forward when de-chunking changes it -- or now when the
+         * rewriter does, which shortens the body by one byte per link and would
+         * otherwise leave the client waiting for bytes that were never coming.
+         * Media keeps its length because media is never rewritten. */
         GWFilterOpts opt;
         size_t filtered;
 
-        opt.keep_length = !res.chunked;
+        opt.keep_length = !res.chunked && !s->rewriting;
         opt.strip_charset = s->wayback && !GW_WaybackSettings()->ct_encoding;
         /* An archived snapshot never changes, so let the browser keep it. */
         opt.cache_forever = s->wayback && res.status == 200 &&
@@ -986,9 +1049,27 @@ static void step_recv_head(GWHttpSession *s)
 
 /* Move up to len bytes of raw body through the chunked decoder (or straight
  * through) into the pending client buffer. Returns bytes of input consumed. */
+/*
+ * Rewrite the bytes just added, together with whatever was held back last
+ * time. The two are contiguous -- the held tail is the end of `out` and the new
+ * bytes were appended straight after it -- so one pass over `out + from` sees a
+ * needle that straddles the two reads exactly as if it had arrived at once.
+ */
+static void body_rewrite(GWHttpSession *s, size_t from)
+{
+    size_t hold = 0;
+    size_t n;
+
+    if (!s->rewriting) return;
+
+    n = gw_rewrite_https(s->out + from, s->outLen - from, &hold);
+    s->outLen = from + n;
+    s->rwHold = hold;
+}
+
 static long body_emit(GWHttpSession *s, const char *data, size_t len)
 {
-    size_t room;
+    size_t room, from;
 
     if (s->outSent > 0) {
         memmove(s->out, s->out + s->outSent, s->outLen - s->outSent);
@@ -998,11 +1079,15 @@ static long body_emit(GWHttpSession *s, const char *data, size_t len)
     room = (size_t)GW_OUT_MAX - s->outLen;
     if (room == 0) return 0;
 
+    /* Where the rescan starts: the front of the undecided tail. */
+    from = s->outLen - s->rwHold;
+
     if (!s->chunked) {
         if (len > room) len = room;
         memcpy(s->out + s->outLen, data, len);
         s->outLen += len;
         s->bodyBytes += (long)len;
+        body_rewrite(s, from);
         return (long)len;
     }
 
@@ -1013,6 +1098,7 @@ static long body_emit(GWHttpSession *s, const char *data, size_t len)
         if (used < 0) return -1;
         s->outLen += produced;
         s->bodyBytes += (long)produced;
+        body_rewrite(s, from);
         return used;
     }
 }

@@ -51,6 +51,19 @@ int GW_RedirectPolicy(void)
     return 0;                                   /* auto */
 }
 
+/*
+ * Turn https:// into http:// in text bodies on the way to the client.
+ *
+ * On by default, because the browsers this exists for cannot be told to stop
+ * using CONNECT and cannot complete the handshake once they do. Off is for a
+ * client with its own modern TLS -- RetroZilla, or git -- where the rewrite
+ * buys nothing and costs a pass over every page.
+ */
+int GW_RewriteHttps(void)
+{
+    return GWConfig_Num("rewrite_https", 1) != 0;
+}
+
 long GW_MaxBodyBytes(void)
 {
     /*

@@ -34,8 +34,34 @@ as confusing as it sounds, so heed the warning.
 | Key | Default | Meaning |
 |---|---|---|
 | `http_port` | `8765` | Where browsers point for the live web. |
-| `follow_redirects` | `auto` | `auto` follows only what the client cannot — a redirect from `http://` to `https://`, which a browser with no modern TLS could never follow itself — and passes everything else back so the browser follows it with its own cookies. `always` follows every redirect inside Gateway, which discards `Set-Cookie` and breaks media players. `never` passes all of them back. |
+| `follow_redirects` | `auto` | `auto` follows every redirect whose destination is `https://`, because the client hop is always plaintext and a browser with no modern TLS could never follow one itself; a redirect to `http://` goes back to the browser, which follows it with its own cookies and knows where it ended up. `always` follows every redirect inside Gateway, which discards `Set-Cookie` and breaks media players. `never` passes all of them back. |
+| `rewrite_https` | `1` | Turn `https://` into `http://` in HTML, CSS and JavaScript on the way to the browser, so a link the user clicks comes back to Gateway instead of becoming a `CONNECT` tunnel the browser cannot complete. Set to `0` for a client with its own modern TLS — RetroZilla, or `git` — where it buys nothing. See below for what it does not reach. |
 | `max_body_mb` | `0` | Ceiling on a relayed response body, in MiB. `0` means none, which is the default: bodies stream through a 32 KB buffer and are never held, so a limit truncates downloads without saving memory. |
+
+### What `rewrite_https` does not reach
+
+A 1997 browser meeting an `https://` link does not ask Gateway for the page. It
+opens a `CONNECT` tunnel and attempts its own handshake against a 2026 server,
+which fails — Internet Explorer says *"an error occurred in the secure channel
+support"*, Netscape 4 says *"no common encryption algorithm(s)"*. Neither
+message mentions a proxy. Rewriting the links before the browser sees them is
+what avoids that, and the plaintext hop it creates is loopback on the machine
+Gateway is already running on.
+
+Four things it cannot help with:
+
+* **A URL typed by hand.** Type `https://…` in the address bar and the browser
+  goes straight to `CONNECT`; there is no content to have rewritten. Type the
+  `http://` form instead and Gateway takes it from there.
+* **`https://` built up in JavaScript**, or percent- and backslash-escaped
+  (`https%3A%2F%2F`, `https:\/\/`). Only the literal eight characters are
+  matched.
+* **Cookies marked `Secure`.** The browser now believes the connection is
+  plain, so it will not send them. Sites that mark a session cookie `Secure`
+  will not stay logged in.
+* **The padlock.** There isn't one, and there shouldn't be — as far as the
+  browser is concerned this is plain HTTP. The hop to the origin is still
+  TLS 1.3; what is gone is the browser's own indication and enforcement of it.
 
 ## Wayback proxy
 

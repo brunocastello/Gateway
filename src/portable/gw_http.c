@@ -346,11 +346,27 @@ int gw_http_should_follow(GWRedirectPolicy policy, int from_tls, int to_tls)
         return 1;
     default:
         /*
-         * Follow only the hop the client could not make for itself: plaintext
-         * to TLS, which a browser with no modern TLS cannot do. Everything
-         * else goes back to the client, which follows it with its own cookies
-         * and knows where it ended up.
+         * Follow only the hop the client could not make for itself -- which is
+         * every hop that ends in TLS, because the client hop is always
+         * plaintext. Everything else goes back to the client, which follows it
+         * with its own cookies and knows where it ended up.
+         *
+         * This used to read `!from_tls && to_tls`, asking where *Gateway* was
+         * rather than what the client can do, and the difference is a bug:
+         * once Gateway had followed one http->https hop it was itself on TLS,
+         * so a second https->https redirect failed the test and went back to
+         * the browser as a `Location: https://...` the browser could not
+         * fetch. Internet Explorer and Netscape 4 then opened a CONNECT
+         * tunnel, tried their own 1997 handshake against a 2026 server, and
+         * failed -- "an error occurred in the secure channel support", and
+         * "no common encryption algorithm(s)". Two redirects was all it took;
+         * lite.duckduckgo.com sends exactly two.
+         *
+         * from_tls is kept in the signature because `always` and `never` read
+         * better beside a rule that names both ends, and because a caller
+         * passing it is stating something true.
          */
-        return !from_tls && to_tls;
+        (void)from_tls;
+        return to_tls;
     }
 }

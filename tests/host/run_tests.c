@@ -16,6 +16,7 @@
 #include "gw_mailcmd.h"
 #include "gw_oauth.h"
 #include "gw_prefs.h"
+#include "gw_rewrite.h"
 #include "gw_url.h"
 #include "gw_util.h"
 #include "gw_wayback.h"
@@ -351,8 +352,17 @@ static void test_response(void)
               "auto follows http to https");
         check(gw_http_should_follow(kGWRedirectAuto, 0, 0) == 0,
               "auto passes http to http back to the client");
-        check(gw_http_should_follow(kGWRedirectAuto, 1, 1) == 0,
-              "auto passes https to https back to the client");
+        /*
+         * The second hop of a two-hop redirect. This asserted == 0 until the
+         * screenshots in Gateway#1 showed what that meant: the browser was
+         * handed an https:// Location it could not fetch, and went off to try
+         * its own handshake. The client hop is plaintext whichever side
+         * Gateway is on, so a destination on TLS is always ours to follow.
+         */
+        check(gw_http_should_follow(kGWRedirectAuto, 1, 1) == 1,
+              "auto follows https to https, because the client still cannot");
+        check(gw_http_should_follow(kGWRedirectAuto, 1, 0) == 0,
+              "auto passes https to http back to the client");
 
         check(gw_http_should_follow(kGWRedirectAlways, 0, 0) == 1,
               "always follows");
@@ -955,6 +965,112 @@ static void test_query(void)
           "a suffix of a field name does not match");
 }
 
+/*
+ * The https:// rewriter, and mostly the seam between chunks.
+ *
+ * A 32 KB read can end in the middle of "https://" and the naive version emits
+ * the fragment and then fails to match the rest -- which on a real page means
+ * one link in a few hundred silently keeps its scheme, sends the browser to
+ * CONNECT, and produces exactly the dialog this whole feature exists to avoid.
+ * Rare, invisible in testing, and impossible to explain from a bug report. So
+ * every split of the needle is checked here, not just the tidy cases.
+ */
+static void test_rewrite(void)
+{
+    char   buf[256];
+    size_t hold, n;
+
+    puts("gw_rewrite");
+
+    /* The ordinary case, and the length really does shrink by one per hit. */
+    strcpy(buf, "<a href=\"https://a.example/x\">");
+    n = gw_rewrite_https(buf, strlen(buf), &hold);
+    buf[n] = '\0';
+    check_str(buf, "<a href=\"http://a.example/x\">", "one link rewritten");
+    check(hold == 0, "nothing held when the buffer ends on a plain byte");
+
+    /* Several, including back to back with no separator. */
+    strcpy(buf, "https://a/ https://b/https://c/");
+    n = gw_rewrite_https(buf, strlen(buf), &hold);
+    buf[n] = '\0';
+    check_str(buf, "http://a/ http://b/http://c/", "three in a row");
+
+    /* Case is not consistent in hand-written HTML; the output always is. */
+    strcpy(buf, "HTTPS://A.EXAMPLE/ HtTpS://b/");
+    n = gw_rewrite_https(buf, strlen(buf), &hold);
+    buf[n] = '\0';
+    check_str(buf, "http://A.EXAMPLE/ http://b/",
+              "upper and mixed case match, output is lower");
+
+    /* http:// is left exactly alone, and so is anything that merely starts h. */
+    strcpy(buf, "http://plain/ httpx://no/ https:/notyet hhttps://x/");
+    n = gw_rewrite_https(buf, strlen(buf), &hold);
+    buf[n] = '\0';
+    check_str(buf, "http://plain/ httpx://no/ https:/notyet hhttp://x/",
+              "near misses survive untouched");
+
+    /* Every possible split of the needle across a chunk boundary. */
+    {
+        int cut;
+
+        for (cut = 1; cut <= 8; cut++) {
+            char   first[64], second[64], joined[128];
+            size_t n1, n2, h1, h2;
+            const char *whole = "x=https://h/y";
+            size_t at = 2 + (size_t)cut;     /* inside "https://" */
+
+            memcpy(first, whole, at);
+            n1 = gw_rewrite_https(first, at, &h1);
+
+            /* What the proxy does: emit n1 - h1, carry h1 to the next chunk. */
+            memcpy(second, first + (n1 - h1), h1);
+            strcpy(second + h1, whole + at);
+            n2 = gw_rewrite_https(second, h1 + strlen(whole + at), &h2);
+
+            memcpy(joined, first, n1 - h1);
+            memcpy(joined + (n1 - h1), second, n2);
+            joined[(n1 - h1) + n2] = '\0';
+
+            check_str(joined, "x=http://h/y",
+                      "a needle split across two chunks still matches");
+            check(h2 == 0, "and nothing is left held at the end");
+        }
+    }
+
+    /* A partial match at the very end of the body is held, then released. */
+    strcpy(buf, "trailing https:/");
+    n = gw_rewrite_https(buf, strlen(buf), &hold);
+    check(hold == 7, "seven bytes of a possible match are held");
+    check(n == strlen("trailing https:/"), "and none of them are dropped");
+    buf[n] = '\0';
+    check_str(buf, "trailing https:/",
+              "held bytes stay in the buffer for the caller to keep");
+
+    /* Nothing to do, and the degenerate inputs. */
+    strcpy(buf, "no urls here at all");
+    n = gw_rewrite_https(buf, strlen(buf), &hold);
+    check(n == strlen("no urls here at all") && hold == 0,
+          "a body with no match is returned whole");
+    check(gw_rewrite_https(buf, 0, &hold) == 0 && hold == 0,
+          "an empty chunk is not a match");
+    check(gw_rewrite_https(NULL, 10, &hold) == 0, "a null buffer is refused");
+
+    /* Which bodies are worth scanning. */
+    check(gw_rewrite_wants_type("text/html") == 1, "html is scanned");
+    check(gw_rewrite_wants_type("text/html; charset=utf-8") == 1,
+          "a charset parameter does not hide the type");
+    check(gw_rewrite_wants_type("TEXT/HTML") == 1, "type match is insensitive");
+    check(gw_rewrite_wants_type("text/css") == 1, "css is scanned");
+    check(gw_rewrite_wants_type("application/javascript") == 1,
+          "javascript is scanned");
+    check(gw_rewrite_wants_type("image/jpeg") == 0, "a jpeg is left alone");
+    check(gw_rewrite_wants_type("video/mp4") == 0, "video is left alone");
+    check(gw_rewrite_wants_type("application/json") == 0,
+          "json is left alone, deliberately");
+    check(gw_rewrite_wants_type("") == 0, "an empty type is not scanned");
+    check(gw_rewrite_wants_type(NULL) == 0, "a missing type is not scanned");
+}
+
 int main(void)
 {
     test_util();
@@ -969,6 +1085,7 @@ int main(void)
     test_glob();
     test_query();
     test_wayback();
+    test_rewrite();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;

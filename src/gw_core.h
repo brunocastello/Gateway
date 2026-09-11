@@ -51,6 +51,7 @@ int         GW_ActiveSessions(void);
 
 /* 0 auto, 1 always, 2 never. See GWRedirectPolicy in gw_http.h. */
 int         GW_RedirectPolicy(void);
+int         GW_RewriteHttps(void);
 
 /* Ceiling on a relayed response body, in bytes; 0 means no limit. */
 long        GW_MaxBodyBytes(void);
