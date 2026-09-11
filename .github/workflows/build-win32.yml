@@ -126,14 +126,28 @@ jobs:
           echo "  clean - Shell_NotifyIconA looked up at run time"
 
           echo "=== does our bundled msvcrt.dll export everything it wants? ==="
-          $DUMP | awk '/DLL Name:/{d=tolower($3)} \
-                       d=="msvcrt.dll" && NF>=2 && $NF ~ /^[A-Za-z_?]/ \
-                       {print $NF}' | grep -v "^DLL$" | sort -u > /tmp/want.txt
-          i686-w64-mingw32-objdump -p installer/redist/msvcrt.dll \
-            | awk '/Ordinal base/{o=1} o && NF==3 && $3 ~ /^[A-Za-z_?]/ {print $3}' \
-            | sort -u > /tmp/have.txt
+          # Imports: objdump prints "DLL Name: x.dll", then a header row, then
+          # one row per function as "<vma> <hint> <name>". Keying off a hex
+          # first field skips the header without having to match its wording.
+          $DUMP | awk '
+            /DLL Name:/           { d = tolower($3); next }
+            d == "msvcrt.dll" && $1 ~ /^[0-9a-f]+$/ && NF >= 3 { print $3 }
+          ' | sort -u > /tmp/want.txt
+          # Exports: the name table is "[<n>] <name>" under its own heading.
+          i686-w64-mingw32-objdump -p installer/redist/msvcrt.dll | awk '
+            /\[Ordinal\/Name Pointer\] Table/ { e = 1; next }
+            e && match($0, /\] /)             { print substr($0, RSTART + 2) }
+          ' | sort -u > /tmp/have.txt
           echo "  Gateway.exe wants $(wc -l < /tmp/want.txt) from msvcrt"
           echo "  our copy exports $(wc -l < /tmp/have.txt)"
+          # A parse that silently produced nothing would otherwise report every
+          # symbol as missing, which is what it did the first time this ran.
+          # An empty list here means the check is broken, not the DLL.
+          if [ ! -s /tmp/want.txt ] || [ "$(wc -l < /tmp/have.txt)" -lt 100 ]; then
+            echo "::error::could not read the import or export tables --"
+            echo "::error::this check is broken, not necessarily the build"
+            exit 1
+          fi
           if ! comm -23 /tmp/want.txt /tmp/have.txt | grep -q .; then
             echo "  every one is present"
           else
