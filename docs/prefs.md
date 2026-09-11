@@ -66,33 +66,39 @@ Four things it cannot help with:
 
 ### What `connect_mitm` needs from the browser
 
-**TLS 1.0, which Internet Explorer 4 does not have.** BearSSL implements TLS
-1.0, 1.1 and 1.2 and no SSL at all — `BR_SSL30` is a constant in its headers
-with no implementation behind it. IE 4 offers SSL 2.0 and SSL 3.0, so the
-handshake is refused before a certificate is ever sent, which is why no
-certificate warning appears:
+**"Use SSL 2.0" must be off.** This is the one that catches everybody, and it is
+a setting rather than a capability.
+
+A browser with SSL 2.0 enabled sends its ClientHello in SSL 2.0 framing — no
+TLS record header, just a length with its high bit set followed by message type
+`01`. BearSSL rejects that format outright (`ssl_engine.c`, and its own comment
+says so), because the byte it reads as a protocol version is a length byte. The
+handshake dies before a single field is parsed, which is why **no certificate
+warning appears** — there is no certificate yet to warn about.
+
+Internet Explorer ships with that box ticked. Untick it in **Tools → Internet
+Options → Advanced → Security**, leaving SSL 3.0 and TLS 1.0 ticked. Netscape
+4.7 has the same switch under **Security → Navigator → Configure SSL**.
+
+The log names it:
 
 ```
-#3 terminating TLS for lite.duckduckgo.com:443
-#3 handshake with the browser failed for lite.duckduckgo.com (BearSSL 3: ...)
-#6 handshake with the browser failed for lite.duckduckgo.com (BearSSL 582: ...)
+#3 handshake with the browser failed for lite.duckduckgo.com
+   (BearSSL 3: it sent an SSL 2.0-style hello -- untick "Use SSL 2.0" ...)
 ```
 
-`3` is `BR_ERR_UNSUPPORTED_VERSION`; `582` is 512 + 70, a `protocol_version`
-alert Gateway sent. No setting changes this — there is no TLS checkbox in IE 4
-to tick.
+**Then TLS 1.0, which BearSSL's floor requires.** BearSSL implements TLS 1.0,
+1.1 and 1.2 and no SSL at all — `BR_SSL30` is a header constant with nothing
+behind it. So IE 5.5 and IE 6 work once SSL 2.0 is off; IE 4, which has SSL 3.0
+and no TLS, is out of reach whatever its settings say.
 
-What does work:
+A browser with its own modern TLS — Classilla, RetroZilla — needs none of this
+and should leave `connect_mitm` off: `CONNECT` is a raw tunnel then, and the
+browser does its own handshake with the origin.
 
-* **Internet Explorer 5.01 or 5.5**, with Internet Options → Advanced → **Use
-  TLS 1.0** ticked. It is off by default.
-* **Netscape Communicator 4.7x**, with TLS enabled in its security settings.
-* A browser with its own modern TLS — RetroZilla — which does not need
-  `connect_mitm` at all and should leave it off.
-
-With IE 4, use `rewrite_https` instead and type addresses without a scheme.
-Links, redirects and subresources all work; only the address bar and `Secure`
-cookies do not.
+With a browser that cannot be brought to TLS 1.0, use `rewrite_https` and type
+addresses without a scheme. Links, redirects and subresources all work; only
+the address bar and `Secure` cookies do not.
 
 ## Wayback proxy
 

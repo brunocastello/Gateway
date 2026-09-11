@@ -1321,15 +1321,21 @@ static void step_mitm_wait(GWHttpSession *s)
             const char *why = "";
 
             /*
-             * 3 and 582 are what Internet Explorer 4 produces, and they are
-             * the same fact twice: it offered SSL 3.0, BearSSL's floor is
-             * TLS 1.0, and BearSSL said so with a protocol_version alert.
-             * There is no setting that fixes it -- IE 4 has no TLS at all --
-             * so the line says what to do instead of only what happened.
+             * 3 is the one every Internet Explorer produces, and it is not
+             * about which TLS versions the browser has. ssl_engine.c rejects
+             * a ClientHello sent in SSL 2.0 framing -- no record header, a
+             * length with the high bit set, then message type 01 -- so the
+             * byte it reads as a version major is a length byte. IE enables
+             * "Use SSL 2.0" by default and that framing is what it sends.
+             *
+             * Which makes this a setting rather than a limit, and worth
+             * saying in the line: IE 4, Netscape 4.7, IE 5.1 on Mac OS and
+             * IE 6 on Windows Me all failed here identically, and all of them
+             * had that box ticked.
              */
             if (err == 3)
-                why = ": it speaks a protocol older than TLS 1.0 "
-                      "(SSL 3.0?) -- needs IE 5 with TLS 1.0 enabled";
+                why = ": it sent an SSL 2.0-style hello -- untick "
+                      "\"Use SSL 2.0\" in Internet Options > Advanced";
             else if (err == 512 + 70 || err == 256 + 70)
                 why = ": protocol_version alert -- no version in common";
             else if (err == 16)
