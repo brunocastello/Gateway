@@ -1,13 +1,15 @@
-name: Build (Windows 95 OSR2 and up)
+name: Build (Windows 95 and up)
 
-# The Windows port, targeting Windows 95 OSR2 through XP.
+# The Windows port, targeting Windows 95 through XP.
 #
-# 95 OSR2 is the floor because it is where msvcrt.dll starts shipping with the
-# system, so nothing has to be redistributed alongside Gateway. A probe run
-# against a minimal Win32 application confirmed the rest: MinGW-w64 imports
-# only KERNEL32 entry points that exist on Windows 95 and NT 4.0, and writes a
-# PE subsystem version of 4.0 by default, which is what those loaders expect.
-# docs/porting.md section 3 records the evidence.
+# 95 OSR2 was the floor because that is where msvcrt.dll starts shipping with
+# the system. The installer now carries a copy for the machines that have none,
+# so RTM and OSR1 are in range too -- untested on either, and the checks below
+# are what stands in for a test: a name the loader cannot resolve rejects the
+# image before any of Gateway's own version handling runs, so the imports are
+# verified on every build. MinGW-w64 writes a PE subsystem version of 4.0,
+# which is what these loaders expect. docs/porting.md section 3 records the
+# original evidence and PATCHES.md 21 the rest.
 #
 # Paths are scoped so this and build-macos9.yml both run when the shared core
 # changes and only one runs otherwise.
@@ -37,6 +39,11 @@ on:
       - 'Makefile.win32'
       - 'installer/**'
       - 'docs/release-notes.md'
+      # Shipped as Gateway.ini by the installer and the zip, so editing
+      # it changes the artifact and has to rebuild. It did not, so a
+      # build carried a prefs file missing the setting its own docs
+      # described, and nothing said so.
+      - 'docs/prefs-example.txt'
       - '.github/workflows/build-win32.yml'
   pull_request:
     paths:
@@ -56,6 +63,11 @@ on:
       - 'Makefile.win32'
       - 'installer/**'
       - 'docs/release-notes.md'
+      # Shipped as Gateway.ini by the installer and the zip, so editing
+      # it changes the artifact and has to rebuild. It did not, so a
+      # build carried a prefs file missing the setting its own docs
+      # described, and nothing said so.
+      - 'docs/prefs-example.txt'
       - '.github/workflows/build-win32.yml'
   workflow_dispatch:
 
