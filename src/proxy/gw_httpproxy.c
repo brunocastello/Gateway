@@ -550,6 +550,24 @@ static int wayback_prepare(GWHttpSession *s)
     return 0;
 }
 
+/*
+ * Why the upstream leg failed, and to whom.
+ *
+ * The reason alone was not enough. "certificate is for another host" says the
+ * name Gateway asked for was not in the chain, but not what that name was --
+ * and the difference between a site whose certificate really does not cover it
+ * and Gateway having asked for the wrong thing is the whole diagnosis. So the
+ * host it validated against goes in the line.
+ */
+static const char *upstream_why(GWHttpSession *s, char *out, size_t cap)
+{
+    char desc[192];
+
+    snprintf(out, cap, "%s: %s", s->upHost[0] ? s->upHost : "upstream",
+             GWStream_Describe(&s->up, desc, sizeof(desc)));
+    return out;
+}
+
 static void session_start_upstream(GWHttpSession *s)
 {
     int ok;
@@ -862,7 +880,7 @@ static void step_recv_head(GWHttpSession *s)
             s->uheadLen += (size_t)n;
             s->lastActivity = GWNet_Ticks();
         } else if (n == -1) {
-            char why[192];
+            char why[320];
 
             if (s->uheadLen == 0 && session_retry_fresh(s)) return;
             /*
@@ -873,7 +891,7 @@ static void step_recv_head(GWHttpSession *s)
              */
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
-                         GWStream_Describe(&s->up, why, sizeof(why)));
+                         upstream_why(s, why, sizeof(why)));
             return;
         }
     }
@@ -885,7 +903,7 @@ static void step_recv_head(GWHttpSession *s)
                             "Connection: close\r\n\r\n",
                          "response head exceeded 16K");
         else if (s->up.eof) {
-            char why[160];
+            char why[320];
 
             if (s->uheadLen == 0 && session_retry_fresh(s)) return;
             /*
@@ -896,7 +914,7 @@ static void step_recv_head(GWHttpSession *s)
              */
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
-                         GWStream_Describe(&s->up, why, sizeof(why)));
+                         upstream_why(s, why, sizeof(why)));
         }
         return;
     }
@@ -1480,11 +1498,11 @@ static void session_step(GWHttpSession *s)
                 break;
             }
             {
-                char why[160];
+                char why[320];
                 session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                                 "Connection: close\r\n\r\n"
                                 "Gateway: could not reach the origin server.\r\n",
-                             GWStream_Describe(&s->up, why, sizeof(why)));
+                             upstream_why(s, why, sizeof(why)));
             }
         }
         break;
