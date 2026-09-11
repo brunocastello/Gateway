@@ -1317,13 +1317,34 @@ static void step_mitm_wait(GWHttpSession *s)
          * travel down the connection that just failed.
          */
         {
-            int err = GWStream_ServerError(&s->cli);
+            int         err = GWStream_ServerError(&s->cli);
+            const char *why = "";
+
+            /*
+             * 3 and 582 are what Internet Explorer 4 produces, and they are
+             * the same fact twice: it offered SSL 3.0, BearSSL's floor is
+             * TLS 1.0, and BearSSL said so with a protocol_version alert.
+             * There is no setting that fixes it -- IE 4 has no TLS at all --
+             * so the line says what to do instead of only what happened.
+             */
+            if (err == 3)
+                why = ": it speaks a protocol older than TLS 1.0 "
+                      "(SSL 3.0?) -- needs IE 5 with TLS 1.0 enabled";
+            else if (err == 512 + 70 || err == 256 + 70)
+                why = ": protocol_version alert -- no version in common";
+            else if (err == 16)
+                why = ": no cipher suite in common (a 40-bit browser?)";
+            else if (err == 4)
+                why = ": record version did not match the handshake";
+            else if (err == 8)
+                why = ": the engine had no randomness, which is our fault";
+            else if (err > 512)
+                why = ": we sent a fatal alert";
+            else if (err > 256)
+                why = ": the browser sent a fatal alert";
 
             gw_log("#%ld handshake with the browser failed for %s "
-                   "(BearSSL %d%s)", s->id, s->mitmHost, err,
-                   err == 4  ? ": it offered an older protocol than TLS 1.0" :
-                   err == 16 ? ": no cipher suite in common" :
-                   err == 8  ? ": the engine had no randomness" : "");
+                   "(BearSSL %d%s)", s->id, s->mitmHost, err, why);
         }
         s->state = kHPDone;
         break;

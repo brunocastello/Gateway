@@ -64,6 +64,36 @@ Four things it cannot help with:
   browser is concerned this is plain HTTP. The hop to the origin is still
   TLS 1.3; what is gone is the browser's own indication and enforcement of it.
 
+### What `connect_mitm` needs from the browser
+
+**TLS 1.0, which Internet Explorer 4 does not have.** BearSSL implements TLS
+1.0, 1.1 and 1.2 and no SSL at all — `BR_SSL30` is a constant in its headers
+with no implementation behind it. IE 4 offers SSL 2.0 and SSL 3.0, so the
+handshake is refused before a certificate is ever sent, which is why no
+certificate warning appears:
+
+```
+#3 terminating TLS for lite.duckduckgo.com:443
+#3 handshake with the browser failed for lite.duckduckgo.com (BearSSL 3: ...)
+#6 handshake with the browser failed for lite.duckduckgo.com (BearSSL 582: ...)
+```
+
+`3` is `BR_ERR_UNSUPPORTED_VERSION`; `582` is 512 + 70, a `protocol_version`
+alert Gateway sent. No setting changes this — there is no TLS checkbox in IE 4
+to tick.
+
+What does work:
+
+* **Internet Explorer 5.01 or 5.5**, with Internet Options → Advanced → **Use
+  TLS 1.0** ticked. It is off by default.
+* **Netscape Communicator 4.7x**, with TLS enabled in its security settings.
+* A browser with its own modern TLS — RetroZilla — which does not need
+  `connect_mitm` at all and should leave it off.
+
+With IE 4, use `rewrite_https` instead and type addresses without a scheme.
+Links, redirects and subresources all work; only the address bar and `Secure`
+cookies do not.
+
 ## Wayback proxy
 
 A second proxy port serving the web as it was, from the Internet Archive. The
