@@ -1,22 +1,21 @@
 /*
- * entropy_win32.c - entropy.h on Windows 95 OSR2 and up.
+ * entropy_win32.c - entropy.h on Windows 95 and up.
  *
  * The Mac implementation stirs Microseconds, TickCount, GetMouse, LMGetTicks
  * and ReadLocation into a pool. All five are Toolbox calls, so this is a
  * rewrite rather than a port, but it is the same shape and the same argument:
  * no single source here is good, and the pool is what makes them adequate.
  *
- * CryptGenRandom is deliberately not the only source. It exists from Windows
- * 95 OSR2 onward, which is exactly Gateway's floor, but it lives in
- * ADVAPI32 behind a CryptAcquireContext that can fail on a machine whose
- * default container was never created -- a real state on old systems. So it is
- * used when it works and mixed with the rest either way.
+ * The system PRNG is deliberately not the only source. It lives in ADVAPI32
+ * behind a CryptAcquireContext that can fail on a machine whose default
+ * container was never created -- a real state on old systems -- and on the
+ * oldest systems in range it is not there at all. So it is used when it works
+ * and mixed with the rest either way.
  */
 
 #include "entropy.h"
 
 #include <windows.h>
-#include <wincrypt.h>
 
 #include <string.h>
 
@@ -45,21 +44,136 @@ void entropy_add(const void *data, size_t len)
     }
 }
 
-static void add_crypt_api(void)
+/*
+ * The system PRNG, found at run time rather than imported.
+ *
+ * CryptoAPI arrived with Windows 95 OSR2 and NT 4.0. Naming CryptAcquireContextA
+ * in the source puts it in the import table, and a machine whose ADVAPI32 does
+ * not export it -- Windows 95 RTM, NT 3.51 -- refuses to load the image before
+ * a line of this code runs, so the in-function failure handling below would
+ * never get its chance. GetProcAddress is what turns "will not start" into
+ * "one source short". Reported as brunocastello/Gateway#1.
+ *
+ * The declarations are local for the same reason. <wincrypt.h> is not itself
+ * the problem, but with it included nothing stops a later edit from calling
+ * one of these directly and quietly restoring the import.
+ */
+typedef ULONG_PTR GW_HCRYPTPROV;
+
+#define GW_PROV_RSA_FULL       1
+#define GW_CRYPT_VERIFYCONTEXT 0xF0000000
+
+typedef BOOL (WINAPI *CryptAcquireContextA_fn)(GW_HCRYPTPROV *, LPCSTR, LPCSTR,
+                                               DWORD, DWORD);
+typedef BOOL (WINAPI *CryptReleaseContext_fn)(GW_HCRYPTPROV, DWORD);
+typedef BOOL (WINAPI *CryptGenRandom_fn)(GW_HCRYPTPROV, DWORD, BYTE *);
+typedef BOOLEAN (APIENTRY *RtlGenRandom_fn)(PVOID, ULONG);
+
+/* Which of the three states this machine is in, for one line in the log. */
+static const char *sSystemRng = "none -- timing pool only";
+
+static void add_system_rng(void)
 {
-    HCRYPTPROV prov = 0;
-    unsigned char buf[32];
+    HMODULE                 adv;
+    RtlGenRandom_fn         pRtlGenRandom;
+    CryptAcquireContextA_fn pAcquire;
+    CryptReleaseContext_fn  pRelease;
+    CryptGenRandom_fn       pGenRandom;
+    GW_HCRYPTPROV           prov = 0;
+    unsigned char           buf[32];
+
+    adv = LoadLibraryA("advapi32.dll");
+    if (adv == NULL)
+        return;
+
+    /*
+     * RtlGenRandom first. It is exported only by ordinal name on XP and later,
+     * where it is both the shortest path to the same generator and free of the
+     * key-container question below. Nothing older exports it, which is exactly
+     * the test we want.
+     */
+    pRtlGenRandom = (RtlGenRandom_fn)(void *)
+        GetProcAddress(adv, "SystemFunction036");
+    if (pRtlGenRandom != NULL) {
+        if (pRtlGenRandom(buf, (ULONG)sizeof(buf))) {
+            entropy_add(buf, sizeof(buf));
+            memset(buf, 0, sizeof(buf));
+            sSystemRng = "RtlGenRandom";
+            FreeLibrary(adv);
+            return;
+        }
+    }
+
+    pAcquire = (CryptAcquireContextA_fn)(void *)
+        GetProcAddress(adv, "CryptAcquireContextA");
+    pRelease = (CryptReleaseContext_fn)(void *)
+        GetProcAddress(adv, "CryptReleaseContext");
+    pGenRandom = (CryptGenRandom_fn)(void *)
+        GetProcAddress(adv, "CryptGenRandom");
+
+    if (pAcquire == NULL || pRelease == NULL || pGenRandom == NULL) {
+        FreeLibrary(adv);
+        return;
+    }
 
     /* VERIFYCONTEXT: no key container is created or needed, which is what
      * makes this work on a machine that has never had one. */
-    if (!CryptAcquireContextA(&prov, NULL, NULL, PROV_RSA_FULL,
-                              CRYPT_VERIFYCONTEXT))
-        return;
+    if (pAcquire(&prov, NULL, NULL, GW_PROV_RSA_FULL, GW_CRYPT_VERIFYCONTEXT)) {
+        if (pGenRandom(prov, (DWORD)sizeof(buf), buf)) {
+            entropy_add(buf, sizeof(buf));
+            memset(buf, 0, sizeof(buf));
+            sSystemRng = "CryptGenRandom";
+        }
+        pRelease(prov, 0);
+    }
 
-    if (CryptGenRandom(prov, sizeof(buf), buf))
-        entropy_add(buf, sizeof(buf));
+    /*
+     * Safe to release on every path: ADVAPI32 is already in the process from
+     * our own static imports of the Reg* family, so this drops a reference
+     * count rather than unmapping anything.
+     */
+    FreeLibrary(adv);
+}
 
-    CryptReleaseContext(prov, 0);
+/*
+ * Machine-specific state. None of this changes between two runs on the same
+ * box, so it contributes nothing to the difference between one handshake and
+ * the next -- what it does is separate this machine from an identical one
+ * installed from the same disk, which matters most on exactly the systems that
+ * have no system PRNG. NSS reaches further on that path, walking the shell
+ * folders and reading up to 250 KB of file contents; on a 95-era disk that
+ * would stall the cooperative loop for seconds, so this stops at the cheap
+ * sources.
+ */
+static void add_machine(void)
+{
+    char  name[MAX_COMPUTERNAME_LENGTH + 1];
+    DWORD len = sizeof(name);
+    DWORD drives, serial, complen, flags;
+    DWORD sectors, bytes, freeclusters, clusters;
+    char  volume[128], fsname[128];
+
+    drives = GetLogicalDrives();
+    entropy_add(&drives, sizeof(drives));
+
+    if (GetComputerNameA(name, &len))
+        entropy_add(name, len);
+
+    volume[0] = '\0';
+    fsname[0] = '\0';
+    if (GetVolumeInformationA(NULL, volume, sizeof(volume), &serial, &complen,
+                              &flags, fsname, sizeof(fsname))) {
+        entropy_add(volume, strlen(volume));
+        entropy_add(&serial, sizeof(serial));
+        entropy_add(fsname, strlen(fsname));
+    }
+
+    /* Free space moves with everything the machine has ever done. */
+    if (GetDiskFreeSpaceA(NULL, &sectors, &bytes, &freeclusters, &clusters)) {
+        entropy_add(&freeclusters, sizeof(freeclusters));
+        entropy_add(&clusters, sizeof(clusters));
+        entropy_add(&bytes, sizeof(bytes));
+    }
 }
 
 static void add_timing(void)
@@ -103,9 +217,16 @@ void entropy_init(void)
 {
     if (sReady) return;
 
-    add_crypt_api();
+    add_system_rng();
+    add_machine();
     add_timing();
     sReady = 1;
+}
+
+const char *entropy_system_source(void)
+{
+    entropy_init();
+    return sSystemRng;
 }
 
 void entropy_seed_engine(br_ssl_engine_context *eng)

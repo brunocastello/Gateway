@@ -194,4 +194,8 @@ MacTLS_Error   MacTLS_ConfigAddCA(MacTLS_Config *cfg,
 /* ── Entropy ── */
 void MacTLS_AddEntropy(const void *data, size_t len);
 
+/* Name of the operating-system random generator behind the pool, or NULL on
+ * a platform that has none. For the host application's log. */
+const char *MacTLS_EntropySource(void);
+
 #endif /* CERTAINLY_H */

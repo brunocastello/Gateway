@@ -268,6 +268,20 @@ int GW_Init(void)
     sWaybackOn = GWConfig_Num("wayback_enabled", 1) != 0;
 
     MacTLS_Init();
+
+    /*
+     * Which random generator the TLS seed came from, where there is a choice.
+     * Windows 95 RTM and NT 3.51 have no CryptoAPI, so the pool falls back to
+     * timing and machine state alone — weaker, and worth being able to read off
+     * a screenshot rather than inferring from the Windows version. NULL on Mac
+     * OS, which has never had one and so has nothing to report.
+     */
+    {
+        const char *rng = MacTLS_EntropySource();
+        if (rng != NULL)
+            gw_log("entropy: system PRNG %s", rng);
+    }
+
     {
         /*
          * One line, once, at startup. If the cipher cannot reproduce a

@@ -21,7 +21,18 @@ BEAR   = $(CERT)/bearssl
 # Stamped into the binary so a screenshot of the log identifies the build.
 GW_BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
+#
+# BearSSL's inner.h turns on BR_USE_WIN32_RAND for any _WIN32 target, which
+# compiles a CryptGenRandom-based seeder in src/rand/sysrng.c and puts a second
+# ADVAPI32 Crypt* import in the binary -- the one entropy_win32.c goes to
+# trouble to avoid, since a machine without CryptoAPI then refuses to load the
+# image at all (Gateway#1). We never use that seeder: certainly.c injects our
+# own pool into every engine before the handshake, which sets rng_init_done and
+# stops BearSSL consulting br_prng_seeder_system. The Mac OS 9 build has run in
+# exactly this configuration since day one, where no seeder is compiled in at
+# all, so switching it off here is the arrangement already in daily use.
 DEFS   = -D_WIN32_WINNT=0x0400 -DWINVER=0x0400 -D__USE_MINGW_ANSI_STDIO=1 \
+         -DBR_USE_WIN32_RAND=0 \
          -DGW_BUILD_ID=\"$(GW_BUILD_ID)\"
 INCS   = -Isrc -Isrc/portable -I$(CERT)/include -I$(CERT)/src \
          -I$(BEAR)/inc -I$(BEAR)/src

@@ -31,4 +31,13 @@ void entropy_seed_engine(br_ssl_engine_context *eng);
  */
 void entropy_add(const void *data, size_t len);
 
+/*
+ * Which operating-system random generator, if any, the pool was able to
+ * draw on — for the host application to log. NULL where the question does
+ * not arise: Mac OS has never had one, so the pool is the whole story and a
+ * line saying so every launch would be noise. On Windows it separates a
+ * machine with a real PRNG from one running on timing alone.
+ */
+const char *entropy_system_source(void);
+
 #endif /* CERTAINLY_ENTROPY_H */

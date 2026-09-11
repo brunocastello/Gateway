@@ -1364,3 +1364,8 @@ void MacTLS_AddEntropy(const void *data, size_t len)
 {
     entropy_add(data, len);
 }
+
+const char *MacTLS_EntropySource(void)
+{
+    return entropy_system_source();
+}

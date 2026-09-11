@@ -519,3 +519,74 @@ The test now subtracts the overhead, so an empty buffer always has room for a
 legal record. A record claiming more plaintext than the buffer can ever hold is
 treated as an error rather than waited on, since no amount of draining would
 make space for it.
+
+---
+
+## §21 — the CryptoAPI import kept the binary off Windows 95 RTM and NT 3.51
+
+*Gateway change, for older Windows than the port first aimed at. Not a bug fix
+on any system that already ran.*
+
+Reported as [brunocastello/Gateway#1](https://github.com/brunocastello/Gateway/issues/1)
+by roytam1, who had solved the same problem in RetroZilla.
+
+`entropy_win32.c` called `CryptAcquireContextA`, `CryptGenRandom` and
+`CryptReleaseContext` directly, and handled failure carefully — a machine whose
+default key container had never been created simply lost that one source. What
+it could not handle is the case where the functions are not there at all.
+CryptoAPI arrived with Windows 95 OSR2 and NT 4.0; on 95 RTM, 95 OSR1 and NT
+3.51 the ADVAPI32 that ships with the system exports none of it. Naming those
+functions in C puts them in the PE import table, and the loader resolves every
+import before the first instruction of the program runs. The result is not one
+missing entropy source, it is a dialog about a missing entry point and a
+process that never starts. No amount of in-function checking can reach that.
+
+The three names are now looked up with `LoadLibraryA` and `GetProcAddress`, and
+the source is skipped when any of them is absent. `<wincrypt.h>` is gone with
+them and the handful of types and constants are declared locally, so that a
+later edit cannot restore the import by reaching for the obvious spelling.
+`SystemFunction036` — `RtlGenRandom` — is tried first, since on XP it is the
+same generator without the key-container question; nothing older exports it,
+which makes the lookup its own version test.
+
+BearSSL carried a second copy of the same import. `src/inner.h` turns on
+`BR_USE_WIN32_RAND` for any `_WIN32` target, which compiles the CryptoAPI
+seeder in `src/rand/sysrng.c`. Gateway never used it — `certainly.c` injects
+our own pool into every engine before the handshake, which sets
+`rng_init_done` to 2 and stops `br_ssl_engine_init_rand` consulting
+`br_prng_seeder_system` at all. It is now switched off explicitly in
+`Makefile.win32`. The Mac OS 9 build has always run with no seeder compiled in,
+so this is not a new configuration, only a newly deliberate one.
+
+### What is left when there is no system PRNG
+
+The pool, which on those systems is the whole story: `QueryPerformanceCounter`,
+`GetTickCount`, a FILETIME, cursor position, process and thread IDs and
+`GlobalMemoryStatus`, hashed to 32 bytes per handshake. `add_machine()` now
+adds the cheap machine-specific sources NSS gathers for the same reason —
+volume serial, filesystem and volume names, free and total clusters, computer
+name, logical drive bitmap. None of it changes between two runs, so it does
+nothing for the difference between one handshake and the next; what it does is
+separate this machine from an identical one installed off the same disk.
+
+NSS goes considerably further on this path, walking the temp directory and
+shell folders and reading up to 250 KB of file contents into the pool. That is
+the right call for a library that cannot yield, and the wrong one here: on a
+95-era disk it would stall the cooperative loop for seconds at startup.
+
+Which of the three states a machine is in is now reported through
+`MacTLS_EntropySource()` and logged once at startup, so a screenshot of the log
+answers the question rather than the Windows version being used to guess at it.
+On Mac OS the function returns NULL and nothing is logged — there has never
+been a system generator to fall back from, so there is no second state to
+distinguish.
+
+### Not fixed here
+
+This does not by itself reach Windows 95 RTM. MinGW-w64 links `msvcrt.dll`,
+which only ships with the operating system from 95 OSR2 onward; before that the
+system runtime is `crtdll.dll`. That is the real floor, and the installer now
+carries a copy for machines that lack one. NT 3.51 needs more still: its
+`Shell_NotifyIcon` is an exported stub that fails with
+`ERROR_CALL_NOT_IMPLEMENTED`, so Gateway would run with no icon, no menu and no
+way to reach it.

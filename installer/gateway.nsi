@@ -69,6 +69,32 @@ Section "Gateway" SecMain
     Goto +2
   DetailPrint "Keeping the existing Gateway.ini"
 
+  ; MSVCRT.DLL, for Windows 95 RTM and OSR1 only.
+  ;
+  ; MinGW-w64 links against msvcrt.dll, and that DLL only starts shipping with
+  ; the operating system at Windows 95 OSR2 -- before which the system C
+  ; runtime is crtdll.dll. On an RTM machine that has never had IE3 or an
+  ; application that carried one, Gateway will not load at all, and the message
+  ; names the DLL rather than anything about Gateway. This is what actually
+  ; sets the 95 floor, not the missing CryptoAPI of Gateway#1.
+  ;
+  ; Two deliberate choices. It goes in $INSTDIR and not $SYSDIR, so Gateway
+  ; finds it through the application-directory search without a system file
+  ; being replaced by an older one; and it is skipped entirely when the system
+  ; already has one, so every machine from OSR2 forward keeps using its own.
+  ;
+  ; Pass -DMSVCRT=<path> to makensis to include it. Without that the installer
+  ; builds exactly as before, which keeps the choice of shipping someone else's
+  ; runtime an explicit one rather than a side effect of a file being staged.
+!ifdef MSVCRT
+  IfFileExists "$SYSDIR\msvcrt.dll" 0 +3
+    DetailPrint "System already has MSVCRT.DLL -- not installing ours"
+    Goto msvcrt_done
+  DetailPrint "No system MSVCRT.DLL (Windows 95 RTM?) -- installing one"
+  File "/oname=msvcrt.dll" "${MSVCRT}"
+  msvcrt_done:
+!endif
+
   CreateDirectory "$SMPROGRAMS\Gateway"
   CreateShortCut "$SMPROGRAMS\Gateway\Gateway.lnk" "$INSTDIR\Gateway.exe"
   CreateShortCut "$SMPROGRAMS\Gateway\Settings.lnk" "$INSTDIR\Gateway.ini"

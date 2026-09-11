@@ -252,3 +252,14 @@ void entropy_add(const void *data, size_t len)
 {
     pool_mix(data, len);
 }
+
+/*
+ * NULL, and not a name. Mac OS has no system random generator to fall back
+ * from, so there is no second state for a log line to distinguish — every
+ * launch would print the same sentence. The Win32 implementation has three
+ * states and returns which one it is in.
+ */
+const char *entropy_system_source(void)
+{
+    return NULL;
+}
