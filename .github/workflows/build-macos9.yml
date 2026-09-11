@@ -168,16 +168,40 @@ jobs:
           /tmp/sit-src/sit -T APPL -C GT9A -o package/Gateway.sit \
             package/Gateway "package/Gateway Prefs"
 
-          # The header of a SIT member is not compressed, so the name and type
-          # of what went in are readable in the output. Cheaper than unpacking,
-          # and it fails the build rather than shipping an archive holding one
-          # file when it should hold two.
+          # Read the archive's own directory rather than grepping it for
+          # strings. A grep passes on an archive whose prefs file was typed
+          # APPL by mistake, which is the failure actually worth catching --
+          # the member headers are uncompressed, so the real names and types
+          # are there to be read.
           echo "--- what went into Gateway.sit ---"
-          strings package/Gateway.sit | grep -E "Gateway" || true
-          for want in "Gateway Prefs" "TEXT" "APPL"; do
-            grep -qa "$want" package/Gateway.sit \
-              || { echo "::error::Gateway.sit does not contain $want"; exit 1; }
-          done
+          python3 - package/Gateway.sit <<'PY'
+          import struct, sys
+
+          d = open(sys.argv[1], "rb").read()
+          if d[0:4] != b"SIT!" or d[10:14] != b"rLau":
+              sys.exit("::error::not a StuffIt archive")
+
+          n = struct.unpack_from(">H", d, 4)[0]
+          want = {"Gateway": b"APPL", "Gateway Prefs": b"TEXT"}
+          seen = {}
+          off = 22
+          for _ in range(n):
+              name = d[off + 3 : off + 3 + d[off + 2]].decode("mac-roman")
+              typ, cre = d[off + 66 : off + 70], d[off + 70 : off + 74]
+              rlen, dlen, rcomp, dcomp = struct.unpack_from(">IIII", d, off + 84)
+              print(f"  {name!r:18} {typ.decode()}/{cre.decode()} "
+                    f"rsrc={rlen} data={dlen}")
+              seen[name] = typ
+              off += 112 + rcomp + dcomp
+
+          for name, typ in want.items():
+              if name not in seen:
+                  sys.exit(f"::error::{name} is not in the archive")
+              if seen[name] != typ:
+                  sys.exit(f"::error::{name} is typed {seen[name]}, "
+                           f"not {typ.decode()}")
+          print("  both members present and correctly typed")
+          PY
 
       - name: Upload disk image and application
         uses: actions/upload-artifact@v4
