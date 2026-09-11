@@ -128,10 +128,13 @@ jobs:
           echo "=== does our bundled msvcrt.dll export everything it wants? ==="
           # Imports: objdump prints "DLL Name: x.dll", then a header row, then
           # one row per function as "<vma> <hint> <name>". Keying off a hex
-          # first field skips the header without having to match its wording.
+          # first field skips the header without having to match its wording;
+          # requiring an identifier-shaped third field skips the import
+          # directory rows, which are all-hex and sit between the DLL blocks.
           $DUMP | awk '
-            /DLL Name:/           { d = tolower($3); next }
-            d == "msvcrt.dll" && $1 ~ /^[0-9a-f]+$/ && NF >= 3 { print $3 }
+            /DLL Name:/ { d = tolower($3); next }
+            d == "msvcrt.dll" && $1 ~ /^[0-9a-f]+$/ && NF >= 3 &&
+            $3 ~ /^[A-Za-z_?]/ { print $3 }
           ' | sort -u > /tmp/want.txt
           # Exports: the name table is "[<n>] <name>" under its own heading.
           i686-w64-mingw32-objdump -p installer/redist/msvcrt.dll | awk '
