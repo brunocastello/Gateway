@@ -586,7 +586,14 @@ distinguish.
 This does not by itself reach Windows 95 RTM. MinGW-w64 links `msvcrt.dll`,
 which only ships with the operating system from 95 OSR2 onward; before that the
 system runtime is `crtdll.dll`. That is the real floor, and the installer now
-carries a copy for machines that lack one. NT 3.51 needs more still: its
-`Shell_NotifyIcon` is an exported stub that fails with
-`ERROR_CALL_NOT_IMPLEMENTED`, so Gateway would run with no icon, no menu and no
-way to reach it.
+carries a copy for machines that lack one.
+
+NT 3.51 needed a third thing, outside Certainly: its `Shell_NotifyIcon` is an
+exported stub that fails with `ERROR_CALL_NOT_IMPLEMENTED`, so Gateway would
+have run with no icon, no menu and no way to reach it. `main_win32.c` now looks
+that function up rather than importing it, checks what `NIM_ADD` returns, and
+falls back to a menu bar on the log window. The lesson of this patch generalised
+further than the patch did.
+
+None of it has been run on either system. The imports are checked on every
+build; the behaviour is not, and cannot be from here.

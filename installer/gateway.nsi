@@ -129,6 +129,9 @@ Section "Uninstall"
   Delete "$INSTDIR\Settings.md"
   Delete "$INSTDIR\LICENSE.txt"
   Delete "$INSTDIR\Gateway.log"
+  ; Only ever written inside $INSTDIR, so removing it cannot disturb a system
+  ; copy or anything else that depends on one.
+  Delete "$INSTDIR\msvcrt.dll"
   Delete "$INSTDIR\Uninstall.exe"
 
   ; The configuration is the user's, not ours: it holds their password and

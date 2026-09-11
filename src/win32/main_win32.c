@@ -6,10 +6,18 @@
  * once, then yields. Nothing in the core blocks, so a pass is short and the
  * proxy stays responsive without a thread per connection.
  *
- * Targets Windows 95 OSR2 and up, so nothing here is newer than that: no
+ * Targets Windows 95 and up, so nothing here is newer than that: no
  * HWND_MESSAGE for the hidden window (2000 and later only), no
  * NOTIFYICONDATA fields past the Windows 95 shell's, and no common controls
  * beyond the listbox that has always been there.
+ *
+ * There is one system older than the tray in range. Windows NT 3.51 is Program
+ * Manager: it has no notification area, and its shell32 exports
+ * Shell_NotifyIcon only as a stub that fails with ERROR_CALL_NOT_IMPLEMENTED.
+ * So the tray is treated as a feature that may be absent rather than as the
+ * program's only face. When it is missing, the log window keeps a menu bar and
+ * stays visible, and minimising it leaves an icon on the desktop -- which is
+ * where a background utility lived before there was anywhere else to put one.
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -45,6 +53,29 @@ static HINSTANCE gInst;
 static NOTIFYICONDATAA gTray;
 static int   gShown;
 static long  gSeenGeneration = -1;
+
+/*
+ * Whether this shell gave us a tray icon. Everything about how Gateway can be
+ * reached hangs off it: with one, the window is optional and hiding it is
+ * safe; without one, the window and its menu bar are the only way in and
+ * hiding it would strand the program.
+ */
+static int   gHaveTray;
+static HMENU gMenuBar;
+
+/*
+ * Shell_NotifyIconA, looked up rather than imported -- the same argument as
+ * the Crypt* functions in entropy_win32.c (Gateway#1). NT 3.51 does export it,
+ * so an import would probably resolve; "probably" is the problem. If any shell
+ * in range turns out not to export it under this exact name, a static import
+ * means the loader rejects Gateway before it can discover it has no tray and
+ * put up the window instead -- which is the whole point of the fallback. The
+ * lookup costs one call and removes the question.
+ *
+ * shell32.dll is deliberately never freed: the pointer outlives tray_add().
+ */
+typedef BOOL (WINAPI *Shell_NotifyIconA_fn)(DWORD, NOTIFYICONDATAA *);
+static Shell_NotifyIconA_fn pShell_NotifyIconA;
 
 static const char kRunKey[] =
     "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -204,6 +235,15 @@ static void log_refresh(void)
 
 static void window_show(int show)
 {
+    /*
+     * Without a tray there is nothing left to click once this window is gone,
+     * so the request to hide is refused rather than obeyed. Minimising is the
+     * equivalent gesture there and WM_CLOSE does that instead; the saved
+     * preference is left alone, so a machine that does have a tray still
+     * honours it.
+     */
+    if (!show && !gHaveTray) return;
+
     gShown = show ? 1 : 0;
     ShowWindow(gMain, gShown ? SW_SHOW : SW_HIDE);
     if (gShown) {
@@ -218,8 +258,17 @@ static void window_show(int show)
 /* Tray                                                                */
 /* ------------------------------------------------------------------ */
 
-static void tray_add(void)
+static int tray_add(void)
 {
+    HMODULE shell;
+
+    shell = LoadLibraryA("shell32.dll");
+    if (shell == NULL) return 0;
+
+    pShell_NotifyIconA = (Shell_NotifyIconA_fn)(void *)
+        GetProcAddress(shell, "Shell_NotifyIconA");
+    if (pShell_NotifyIconA == NULL) return 0;
+
     memset(&gTray, 0, sizeof(gTray));
     /*
      * sizeof(NOTIFYICONDATAA) on a modern SDK describes a struct the Windows
@@ -235,8 +284,15 @@ static void tray_add(void)
     gTray.hIcon  = LoadIcon(gInst, MAKEINTRESOURCE(GW_ICON_ON));
     strcpy(gTray.szTip, "Gateway");
 
-    Shell_NotifyIconA(NIM_ADD, &gTray);
+    /*
+     * The return matters here and nowhere else. On NT 3.51 this is a stub that
+     * sets ERROR_CALL_NOT_IMPLEMENTED and returns FALSE, having drawn nothing;
+     * taking it at its word is what tells us to put up a menu bar instead.
+     */
+    return pShell_NotifyIconA(NIM_ADD, &gTray) ? 1 : 0;
 }
+
+static void menubar_sync(void);
 
 /*
  * The tray icon says whether the gateway is running: the opening under the
@@ -249,10 +305,16 @@ static void tray_add(void)
  */
 static void tray_set_icon(void)
 {
+    if (!gHaveTray) {
+        /* No icon to recolour, so the menu carries the state instead. */
+        menubar_sync();
+        return;
+    }
+
     gTray.uFlags = NIF_ICON;
     gTray.hIcon  = LoadIcon(gInst, MAKEINTRESOURCE(
                        GW_IsRunning() ? GW_ICON_ON : GW_ICON_OFF));
-    Shell_NotifyIconA(NIM_MODIFY, &gTray);
+    pShell_NotifyIconA(NIM_MODIFY, &gTray);
     gTray.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 }
 
@@ -273,7 +335,59 @@ static void toggle_running(void)
 
 static void tray_remove(void)
 {
-    Shell_NotifyIconA(NIM_DELETE, &gTray);
+    if (gHaveTray) pShell_NotifyIconA(NIM_DELETE, &gTray);
+}
+
+/* ------------------------------------------------------------------ */
+/* Menu bar -- the tray's stand-in where there is no tray              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The same commands the tray menu offers, in the two menus a Windows program
+ * of this era would have put them in. They carry the same IDM_ values,
+ * so WndProc's WM_COMMAND handling serves both and there is one implementation
+ * of each action rather than two.
+ *
+ * "Show Window" has no meaning here -- the window is how you are reading this
+ * -- so it is the one item that does not appear.
+ */
+static void menubar_build(void)
+{
+    HMENU file, help;
+
+    gMenuBar = CreateMenu();
+    file     = CreatePopupMenu();
+    help     = CreatePopupMenu();
+
+    if (gMenuBar == NULL || file == NULL || help == NULL) return;
+
+    AppendMenuA(file, MF_STRING, IDM_STOP,    "S&top Gateway");
+    AppendMenuA(file, MF_STRING, IDM_STARTUP, "Start with &Windows");
+    AppendMenuA(file, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(file, MF_STRING, IDM_QUIT,    "E&xit");
+    AppendMenuA(help, MF_STRING, IDM_ABOUT,   "&About Gateway...");
+
+    AppendMenuA(gMenuBar, MF_POPUP, (UINT_PTR)file, "&File");
+    AppendMenuA(gMenuBar, MF_POPUP, (UINT_PTR)help, "&Help");
+
+    SetMenu(gMain, gMenuBar);
+}
+
+/*
+ * Both stateful items, after anything that could have changed them. The Mac
+ * build and the tray menu both rebuild their menu at the moment it is opened;
+ * a menu bar is always open, so it has to be kept current instead.
+ */
+static void menubar_sync(void)
+{
+    if (gMenuBar == NULL) return;
+
+    ModifyMenuA(gMenuBar, IDM_STOP, MF_BYCOMMAND | MF_STRING, IDM_STOP,
+                GW_IsRunning() ? "S&top Gateway" : "S&tart Gateway");
+    CheckMenuItem(gMenuBar, IDM_STARTUP,
+                  MF_BYCOMMAND | (startup_enabled() ? MF_CHECKED
+                                                    : MF_UNCHECKED));
+    DrawMenuBar(gMain);
 }
 
 static void tray_menu(void)
@@ -385,10 +499,19 @@ static LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         GetClientRect(hwnd, &area);
         midX = (area.right - area.left) / 2;
 
-        /* The application icon, centred, where the Mac plots its own. */
+        /*
+         * The application icon, centred, where the Mac plots its own.
+         *
+         * DrawIcon and not DrawIconEx. LoadIcon returns the SM_CXICON image,
+         * which is the 32 by 32 the Ex call was asking for, so the two draw
+         * the same pixels here -- but DrawIcon has been in user32 since
+         * Windows 3.0 and DrawIconEx arrived with Win32 4.0. On a version
+         * that lacks the latter the import would stop Gateway loading at all,
+         * which is a steep price for an argument list.
+         */
         icon = LoadIcon(gInst, MAKEINTRESOURCE(GW_ICON_APP));
         if (icon != NULL)
-            DrawIconEx(dc, midX - 16, 14, icon, 32, 32, 0, NULL, DI_NORMAL);
+            DrawIcon(dc, midX - 16, 14, icon);
 
         dpi = GetDeviceCaps(dc, LOGPIXELSY);
         title = about_font(dpi, 12, FW_BOLD);    /* the application name */
@@ -502,8 +625,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     case WM_CLOSE:
         /* Closing hides; Gateway is a background program and quitting it by
-         * accident would take the proxy down with the window. */
-        window_show(0);
+         * accident would take the proxy down with the window. Where there is
+         * no tray to hide into, it minimises instead -- to a desktop icon
+         * under Program Manager, which is the same gesture and the same
+         * result, and leaves File > Exit as the only way to actually quit. */
+        if (gHaveTray) window_show(0);
+        else           ShowWindow(hwnd, SW_MINIMIZE);
         return 0;
 
     case GW_TRAY_MSG:
@@ -514,7 +641,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IDM_SHOW:    window_show(!gShown); break;
-        case IDM_STARTUP: startup_set(!startup_enabled()); break;
+        case IDM_STARTUP: startup_set(!startup_enabled()); menubar_sync(); break;
         case IDM_STOP:    toggle_running(); break;
         case IDM_ABOUT:   about_show(); break;
         case IDM_QUIT:    PostMessage(hwnd, WM_DESTROY, 0, 0); break;
@@ -592,17 +719,27 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                           NULL, NULL, inst, NULL);
     if (gMain == NULL) return 1;
 
-    tray_add();
+    /*
+     * The tray first, because whether there is one decides what the window is
+     * for. With a tray the window is a log viewer that can be dismissed;
+     * without one it is the program's only face and needs a menu bar.
+     */
+    gHaveTray = tray_add();
+    if (!gHaveTray) menubar_build();
 
     /* Settings first: whether a window appears at all is one of them. */
     GW_LoadSettings();
-    window_show(GW_ShowWindowPref());
+    window_show(gHaveTray ? GW_ShowWindowPref() : 1);
 
     if (!GW_Init()) {
         /* Something is wrong enough that there is nothing to serve, but the
          * window says what, so it stays up rather than vanishing. */
         window_show(1);
     }
+
+    if (!gHaveTray)
+        gw_log("no notification area -- using the window menu "
+               "(Windows NT 3.51?)");
 
     /* After GW_Init, which starts the gateway: the icon reports the state it
      * actually ended up in, not the one it had before trying. */

@@ -57,7 +57,13 @@ CFLAGS = $(DEFS) $(INCS) $(OPT) -ffunction-sections -fdata-sections \
 LDFLAGS = -mwindows -Wl,--gc-sections \
           -Wl,--major-subsystem-version=4 -Wl,--minor-subsystem-version=0 \
           -Wl,--major-os-version=4 -Wl,--minor-os-version=0
-LIBS    = -lwsock32 -lshell32 -luser32 -lgdi32 -ladvapi32 -lkernel32
+# No -lshell32. The one function Gateway wants from it, Shell_NotifyIconA, is
+# looked up at run time so that a shell without a notification area leaves us
+# short an icon rather than unable to load. Leaving the import library out
+# turns that into something the linker enforces: if a shell32 call is ever
+# added back by hand, the build fails here instead of the binary quietly
+# growing an import that only fails on hardware nobody here owns.
+LIBS    = -lwsock32 -luser32 -lgdi32 -ladvapi32 -lkernel32
 
 SRC = \
   $(wildcard src/portable/*.c) \

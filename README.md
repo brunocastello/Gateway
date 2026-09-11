@@ -4,7 +4,7 @@ A TLS 1.3 gateway and proxy that runs **on** the vintage machine, not in front
 of it.
 
 Gateway is a native Classic Toolbox (pre-Carbon) application for PowerPC Macs,
-and a native Win32 application for Windows 95 OSR2 and later.
+and a native Win32 application for Windows 95 and later.
 It sits in the background, listens on a few local ports, and terminates modern
 TLS on behalf of applications that were written before it existed — Classilla,
 Outlook Express 5, `git`. The vintage side of every connection stays plaintext
@@ -15,7 +15,7 @@ and stays on the same machine; only the modern side crosses the network.
   for the Toolbox shell and C99 for everything else
 * **TLS:** [Certainly](https://github.com/minorbug/certainly) over
   [BearSSL](https://bearssl.org), vendored and patched
-* **Windows:** MinGW-w64, Winsock 1.1, nothing newer than Windows 95 OSR2
+* **Windows:** MinGW-w64, Winsock 1.1, nothing newer than Windows 95
 * **Builds in CI only** — `build-macos9.yml` and `build-win32.yml`
 
 > This is a hobby project pointed at a 27-year-old operating system with no
@@ -35,6 +35,7 @@ and stays on the same machine; only the modern side crosses the network.
 | OAuth refresh, including rotated tokens | working |
 | Gmail as a provider | implemented, not yet tried against a live account |
 | Windows 95 OSR2 – XP | working — all three modules, verified on Windows Me |
+| Windows 95 RTM and NT 3.51 | should load; never run on either — see below |
 | Wayback proxy (Module 3) on `:8888` | working — archived pages load in IE 5 and iCab |
 | Streaming media (Flash video) | working — clear the browser cache once after upgrading |
 
@@ -193,9 +194,27 @@ thing moves on a floppy. Every setting is the one documented in
 platform works on the other. `log_file = 1` writes `Gateway.log` beside the
 executable.
 
-**Windows 95 needs OSR2 or later.** That is where `msvcrt.dll` starts shipping
-with the system, so nothing has to be installed alongside Gateway. The binary
-imports nothing newer; `docs/porting.md` §3 lists every entry point it uses.
+**Windows 95 RTM and NT 3.51 — untested, but no longer ruled out.** Three
+things used to stop them and all three have been dealt with, none of them
+verified on hardware:
+
+* **CryptoAPI**, absent before 95 OSR2 and NT 4.0. Gateway named
+  `CryptAcquireContextA` in its entropy pool, which made it an import, which
+  made the loader reject the whole executable. Looked up with `GetProcAddress`
+  now, so its absence costs one entropy source instead of the program. Raised
+  by [roytam1](https://github.com/brunocastello/Gateway/issues/1), who had hit
+  the same thing in RetroZilla.
+* **`msvcrt.dll`**, which only ships with the system from OSR2 onward — before
+  that the system C runtime is `crtdll.dll`, which MinGW does not target. The
+  installer carries a copy and drops it beside `Gateway.exe`, but only on a
+  machine whose `SYSTEM` directory has none.
+* **The notification area**, which NT 3.51 does not have — it is Program
+  Manager, and its `Shell_NotifyIcon` is an exported stub that fails. Gateway
+  now checks, and where there is no tray the log window keeps a menu bar and
+  minimises to a desktop icon instead of hiding.
+
+Everything from **95 OSR2 to XP** is the tested range, on Windows Me.
+`docs/porting.md` §3 lists every entry point the binary uses.
 
 ## Building
 

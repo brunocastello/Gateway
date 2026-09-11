@@ -100,6 +100,48 @@ jobs:
           fi
           echo "  not imported from msvcrt - libmingwex supplied it"
 
+      # The floor is an import question, not a source question: a name the
+      # loader cannot resolve rejects the image before any of Gateway's own
+      # version handling runs. Both of these were real (Gateway#1), so both are
+      # now checked on every build rather than reasoned about.
+      - name: Will it load on Windows 95 RTM and NT 3.51
+        run: |
+          set -euo pipefail
+          DUMP="i686-w64-mingw32-objdump -p build-win32/Gateway.exe"
+
+          echo "=== no CryptoAPI import (absent before 95 OSR2 / NT 4.0) ==="
+          if $DUMP | grep -qE "[[:space:]]Crypt[A-Za-z]+$"; then
+            echo "::error::static Crypt* import is back - see PATCHES.md 21"
+            $DUMP | grep -E "[[:space:]]Crypt[A-Za-z]+$"
+            exit 1
+          fi
+          echo "  clean - looked up at run time"
+
+          echo "=== no SHELL32 import (no notification area on NT 3.51) ==="
+          if $DUMP | grep -qi "DLL Name: SHELL32"; then
+            echo "::error::static shell32 import is back; Shell_NotifyIconA"
+            echo "::error::must stay a GetProcAddress so the fallback can run"
+            exit 1
+          fi
+          echo "  clean - Shell_NotifyIconA looked up at run time"
+
+          echo "=== does our bundled msvcrt.dll export everything it wants? ==="
+          $DUMP | awk '/DLL Name:/{d=tolower($3)} \
+                       d=="msvcrt.dll" && NF>=2 && $NF ~ /^[A-Za-z_?]/ \
+                       {print $NF}' | grep -v "^DLL$" | sort -u > /tmp/want.txt
+          i686-w64-mingw32-objdump -p installer/redist/msvcrt.dll \
+            | awk '/Ordinal base/{o=1} o && NF==3 && $3 ~ /^[A-Za-z_?]/ {print $3}' \
+            | sort -u > /tmp/have.txt
+          echo "  Gateway.exe wants $(wc -l < /tmp/want.txt) from msvcrt"
+          echo "  our copy exports $(wc -l < /tmp/have.txt)"
+          if ! comm -23 /tmp/want.txt /tmp/have.txt | grep -q .; then
+            echo "  every one is present"
+          else
+            echo "::error::the bundled msvcrt.dll is missing:"
+            comm -23 /tmp/want.txt /tmp/have.txt
+            exit 1
+          fi
+
       # NSIS produces the installer, rather than a third-party one being
       # patched: the same toolchain-from-source rule the rest of this follows.
       # The stub has to be the ANSI one, since the Unicode build will not load
@@ -107,8 +149,13 @@ jobs:
       - name: Build the installer
         run: |
           set -euo pipefail
+          # -DMSVCRT carries a runtime for Windows 95 RTM and OSR1, which have
+          # crtdll.dll and not the msvcrt.dll MinGW links. The installer only
+          # drops it on a machine whose SYSTEM directory has none, so nothing
+          # from OSR2 forward is touched.
           makensis -V2 -DVERSION="$(sed -n 's/.*GW_VERSION_LONG   "\(.*\)"/\1/p' src/gw_version.h)" \
-                   -DSRC=../build-win32 installer/gateway.nsi
+                   -DSRC=../build-win32 -DMSVCRT=redist/msvcrt.dll \
+                   installer/gateway.nsi
           mv installer/Setup.exe build-win32/Setup.exe
           ls -l build-win32/Setup.exe
 
