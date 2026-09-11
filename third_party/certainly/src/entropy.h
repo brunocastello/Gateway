@@ -32,6 +32,20 @@ void entropy_seed_engine(br_ssl_engine_context *eng);
 void entropy_add(const void *data, size_t len);
 
 /*
+ * Draw bytes from the pool.
+ *
+ * Added for RSA key generation, which needs a seeded PRNG of its own rather
+ * than an SSL engine to inject into. The pool is hashed rather than handed
+ * over, and stirred between blocks, so a caller asking for a long run does
+ * not learn the pool state and does not get the same block twice.
+ *
+ * This is the pool, so it is exactly as good as entropy_init() managed to
+ * make it -- see entropy_system_source() for whether that included an
+ * operating-system generator. Do not treat it as one.
+ */
+void entropy_get(void *buf, size_t len);
+
+/*
  * Which operating-system random generator, if any, the pool was able to
  * draw on — for the host application to log. NULL where the question does
  * not arise: Mac OS has never had one, so the pool is the whole story and a

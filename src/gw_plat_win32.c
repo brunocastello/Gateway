@@ -173,3 +173,50 @@ void GWPlat_CloseLog(void)
         sLogFile = NULL;
     }
 }
+
+/* ------------------------------------------------------------------ */
+/* A named file beside the executable                                  */
+/* ------------------------------------------------------------------ */
+
+long GWPlat_ReadFile(const char *leaf, void *buf, size_t cap)
+{
+    char   path[MAX_PATH];
+    FILE  *f;
+    size_t n;
+
+    if (leaf == NULL || buf == NULL) return -1;
+    if (!path_beside_exe(leaf, path, sizeof(path))) return -1;
+
+    f = fopen(path, "rb");
+    if (f == NULL) return -1;
+
+    n = fread(buf, 1, cap, f);
+    fclose(f);
+    return (long)n;
+}
+
+int GWPlat_WriteFile(const char *leaf, const void *buf, long len)
+{
+    char   path[MAX_PATH];
+    FILE  *f;
+    size_t n;
+
+    if (leaf == NULL || buf == NULL || len < 0) return 0;
+    if (!path_beside_exe(leaf, path, sizeof(path))) return 0;
+
+    f = fopen(path, "wb");
+    if (f == NULL) {
+        gw_log("cannot write %s: %lu", path, (unsigned long)GetLastError());
+        return 0;
+    }
+
+    n = fwrite(buf, 1, (size_t)len, f);
+    fclose(f);
+
+    if (n != (size_t)len) {
+        gw_log("cannot write %s: %lu of %ld bytes written",
+               path, (unsigned long)n, len);
+        return 0;
+    }
+    return 1;
+}

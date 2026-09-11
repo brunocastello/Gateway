@@ -253,3 +253,38 @@ void entropy_seed_engine(br_ssl_engine_context *eng)
     entropy_add(seed, sizeof(seed));
     memset(seed, 0, sizeof(seed));
 }
+
+void entropy_get(void *buf, size_t len)
+{
+    unsigned char    *p = (unsigned char *)buf;
+    unsigned char     block[32];
+    br_sha256_context sha;
+    unsigned long     counter = 0;
+
+    if (buf == NULL) return;
+    entropy_init();
+
+    while (len > 0) {
+        size_t n = (len < sizeof(block)) ? len : sizeof(block);
+
+        /*
+         * Stirred per block, and the counter is hashed in, so two blocks
+         * cannot come out equal even if nothing in the pool changed between
+         * them -- which on a machine with no system generator and a stopped
+         * clock is a real possibility rather than a theoretical one.
+         */
+        add_timing();
+        br_sha256_init(&sha);
+        br_sha256_update(&sha, sPool, sizeof(sPool));
+        br_sha256_update(&sha, &counter, sizeof(counter));
+        br_sha256_out(&sha, block);
+
+        memcpy(p, block, n);
+        entropy_add(block, sizeof(block));
+
+        p += n;
+        len -= n;
+        counter++;
+    }
+    memset(block, 0, sizeof(block));
+}

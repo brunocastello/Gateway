@@ -37,6 +37,25 @@ int GWPlat_WritePrefs(const char *buf, long len);
  * `want` is the log_file preference verbatim, so a platform can accept a path
  * as well as a switch. Returns 1 if the file is open.
  */
+/*
+ * A named file beside the preferences, read and written whole.
+ *
+ * Added for the local certificate authority, which is the first thing Gateway
+ * keeps that is neither settings nor a log: an RSA key it generated itself and
+ * the certificate over it. Whole-file rather than streaming because the thing
+ * being stored is under two kilobytes and there is no reason to hold a file
+ * open across the cooperative loop.
+ *
+ * `leaf` is a bare name -- "Gateway CA", not a path. Each platform puts it
+ * where its settings already live: beside the executable on Windows, in the
+ * Preferences folder on Mac OS.
+ *
+ * ReadFile returns the byte count, or -1 if there is no such file. WriteFile
+ * returns non-zero on success.
+ */
+long GWPlat_ReadFile(const char *leaf, void *buf, size_t cap);
+int  GWPlat_WriteFile(const char *leaf, const void *buf, long len);
+
 int  GWPlat_OpenLog(const char *want);
 void GWPlat_WriteLog(const char *line);
 void GWPlat_CloseLog(void);

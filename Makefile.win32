@@ -68,7 +68,7 @@ LIBS    = -lwsock32 -luser32 -lgdi32 -ladvapi32 -lkernel32
 SRC = \
   $(wildcard src/portable/*.c) \
   $(wildcard src/proxy/*.c) \
-  src/gw_core.c src/gw_config.c src/gw_plat_win32.c \
+  src/gw_core.c src/gw_config.c src/gw_plat_win32.c src/gw_ca.c \
   src/net/gw_stream.c src/net/gw_net_win32.c \
   src/win32/main_win32.c \
   $(CERT)/src/certainly.c \

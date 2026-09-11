@@ -163,12 +163,21 @@ add_library(gw_net STATIC
     src/gw_core.c
     src/gw_config.c
     src/gw_plat_mac.c
+    src/gw_ca.c
     src/proxy/gw_httpproxy.c
     src/proxy/gw_mail.c
     src/proxy/gw_token.c
 )
 target_include_directories(gw_net BEFORE PRIVATE ${GW_UNIV_INC})
 target_include_directories(gw_net PUBLIC src)
+# gw_ca.c generates the local authority's key and signs with it, so this one
+# library needs BearSSL's headers and Certainly's entropy pool. Both are
+# PRIVATE: nothing above gw_net has any business seeing them, least of all
+# src/main.cpp, which is a Multiversal translation unit.
+target_include_directories(gw_net PRIVATE
+    ${CERTAINLY_DIR}/bearssl/inc
+    ${CERTAINLY_DIR}/src
+)
 target_link_libraries(gw_net PUBLIC certainly gw_portable)
 target_compile_options(gw_net PRIVATE -Wall -Wno-unused-parameter)
 

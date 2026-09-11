@@ -170,3 +170,101 @@ void GWPlat_CloseLog(void)
         sLogRef = 0;
     }
 }
+
+/* ------------------------------------------------------------------ */
+/* A named file in the Preferences folder                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * C string to Pascal, in a static, because FSMakeFSSpec wants a StringPtr and
+ * the callers here pass literals. Names are Gateway's own and short; anything
+ * longer than an HFS name is refused rather than truncated, since a truncated
+ * name would silently read and write the wrong file.
+ */
+static int pascal_name(const char *leaf, Str63 out)
+{
+    size_t n = strlen(leaf);
+
+    if (n == 0 || n > 63) return 0;
+    out[0] = (unsigned char)n;
+    memcpy(out + 1, leaf, n);
+    return 1;
+}
+
+static int prefs_spec(const char *leaf, FSSpec *spec)
+{
+    short vRefNum;
+    long  dirID;
+    Str63 name;
+    OSErr err;
+
+    if (!pascal_name(leaf, name)) return 0;
+
+    err = FindFolder(kOnSystemDisk, kPreferencesFolderType,
+                     kDontCreateFolder, &vRefNum, &dirID);
+    if (err != noErr) return 0;
+
+    err = FSMakeFSSpec(vRefNum, dirID, name, spec);
+    /* fnfErr still fills in the spec, which is what a write needs. */
+    return (err == noErr || err == fnfErr);
+}
+
+long GWPlat_ReadFile(const char *leaf, void *buf, size_t cap)
+{
+    FSSpec spec;
+    short  refNum;
+    long   count;
+    OSErr  err;
+
+    if (leaf == NULL || buf == NULL) return -1;
+    if (!prefs_spec(leaf, &spec)) return -1;
+
+    err = FSpOpenDF(&spec, fsRdPerm, &refNum);
+    if (err != noErr) return -1;
+
+    count = (long)cap;
+    err = FSRead(refNum, &count, buf);
+    FSClose(refNum);
+
+    if (err != noErr && err != eofErr) return -1;
+    return count;
+}
+
+int GWPlat_WriteFile(const char *leaf, const void *buf, long len)
+{
+    FSSpec spec;
+    short  refNum;
+    long   count = len;
+    OSErr  err;
+
+    if (leaf == NULL || buf == NULL || len < 0) return 0;
+    if (!prefs_spec(leaf, &spec)) return 0;
+
+    /*
+     * Created with Gateway's own creator so the Finder shows it as ours, and
+     * type 'BINA' because it is not text -- an RSA key opened in SimpleText by
+     * a curious double-click would be offered for editing, and saved back
+     * mangled.
+     */
+    err = FSpCreate(&spec, 'GT9A', 'BINA', 0 /* smRoman */);
+    if (err != noErr && err != dupFNErr) {
+        gw_log("cannot create %s: %d", leaf, (int)err);
+        return 0;
+    }
+
+    err = FSpOpenDF(&spec, fsRdWrPerm, &refNum);
+    if (err != noErr) {
+        gw_log("cannot open %s: %d", leaf, (int)err);
+        return 0;
+    }
+
+    err = SetEOF(refNum, 0);
+    if (err == noErr) err = FSWrite(refNum, &count, buf);
+    FSClose(refNum);
+
+    if (err != noErr || count != len) {
+        gw_log("cannot write %s: %d", leaf, (int)err);
+        return 0;
+    }
+    return 1;
+}

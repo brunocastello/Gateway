@@ -263,3 +263,40 @@ const char *entropy_system_source(void)
 {
     return NULL;
 }
+
+void entropy_get(void *buf, size_t len)
+{
+    uint8_t          *p = (uint8_t *)buf;
+    uint8_t           block[32];
+    br_sha256_context sha;
+    uint32_t          counter = 0;
+
+    if (buf == NULL) return;
+    entropy_init();
+
+    while (len > 0) {
+        size_t n = (len < sizeof(block)) ? len : sizeof(block);
+
+        /*
+         * Stirred per block, and the counter is hashed in, so two blocks
+         * cannot come out equal even if nothing in the pool changed between
+         * them. On Mac OS 9 there is no system generator at all, which makes
+         * that the ordinary case rather than a corner of it.
+         */
+        gather_sources();
+        harvest_timer_jitter();
+
+        br_sha256_init(&sha);
+        br_sha256_update(&sha, g_pool, POOL_SIZE);
+        br_sha256_update(&sha, &counter, sizeof(counter));
+        br_sha256_out(&sha, block);
+
+        memcpy(p, block, n);
+        pool_mix(block, sizeof(block));
+
+        p += n;
+        len -= n;
+        counter++;
+    }
+    memset(block, 0, sizeof(block));
+}
