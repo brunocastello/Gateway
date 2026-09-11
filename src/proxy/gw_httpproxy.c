@@ -5,7 +5,8 @@
  *
  *   GET http://host/path       plain forward proxy
  *   GET https://host/path      Gateway terminates TLS with Certainly
- *   CONNECT host:443           raw bounce, Gateway stays out of the TLS
+ *   CONNECT host:443           raw bounce, or Gateway terminates the TLS
+ *                              itself when connect_mitm is on
  *
  * The client hop is always HTTP/1.0 with Connection: close, so the response
  * body is EOF-delimited and a chunked origin has to be decoded on the way
@@ -22,6 +23,7 @@
 #include "../portable/gw_chunked.h"
 #include "../portable/gw_http.h"
 #include "../portable/gw_log.h"
+#include "../gw_ca.h"
 #include "../portable/gw_rewrite.h"
 #include "../portable/gw_url.h"
 #include "../portable/gw_util.h"
@@ -94,6 +96,7 @@ typedef enum {
     kHPBody,
     kHPTunnelConnect,
     kHPTunnel,
+    kHPMitmWait,
     kHPRetryWait,
     kHPConnectWait,
     kHPFlushAndClose,
@@ -152,6 +155,20 @@ typedef struct {
      */
     int           rewriting;
     size_t        rwHold;
+
+    /*
+     * A CONNECT that Gateway terminated rather than tunnelled.
+     *
+     * Once the handshake with the browser is up, the request it sends inside
+     * is an ordinary origin-form GET -- so the session rejoins the normal path
+     * at kHPRecvRequest and everything downstream is unchanged. What the
+     * normal path cannot know is that the browser believes it is speaking
+     * https, so `mitm` forces TLS on the upstream leg and `mitmHost` supplies
+     * the authority for a request whose Host header is missing.
+     */
+    int           mitm;
+    char          mitmHost[GW_MAX_HOST];
+    UInt16        mitmPort;
 
     long          bodyBytes;
     long          bodyCap;                  /* 0 means no ceiling */
@@ -668,6 +685,20 @@ static void step_recv_request(GWHttpSession *s)
                         "Gateway: could not parse that request.\r\n",
                      "malformed request");
         return;
+    }
+
+    /*
+     * Inside a terminated CONNECT the browser sends origin form, which the
+     * parser reads as plaintext on port 80 because that is what origin form
+     * means everywhere else. Here it means https on the host the CONNECT
+     * named, and the Host header -- if there is one -- is that same host.
+     */
+    if (s->mitm) {
+        s->req.url.tls  = 1;
+        s->req.url.port = s->mitmPort;
+        if (s->req.url.host[0] == '\0')
+            gw_copy_n(s->req.url.host, sizeof(s->req.url.host),
+                      s->mitmHost, strlen(s->mitmHost));
     }
 
     gw_log("#%ld %s %s%s:%u%.48s%s", s->id, s->req.method,
@@ -1202,9 +1233,91 @@ static void step_tunnel_connect(GWHttpSession *s)
         if (flushed < 0) { s->state = kHPDone; return; }
         if (flushed == 0) return;
     }
+    /*
+     * Terminate the TLS ourselves, or get out of the way.
+     *
+     * Getting out of the way is what a proxy is supposed to do and it is
+     * useless to the browsers this exists for: they answer "200 Connection
+     * Established" by starting a 1997 handshake against a 2026 server, which
+     * fails with "an error occurred in the secure channel support" or "no
+     * common encryption algorithm(s)". So when connect_mitm is on, Gateway
+     * presents a certificate it minted for the host and speaks TLS 1.0 to the
+     * browser while speaking TLS 1.3 to the origin.
+     *
+     * Off by default. A client with its own modern TLS -- RetroZilla, git --
+     * wants the tunnel and nothing else, and the 3DES that is the only cipher
+     * IE 4 and BearSSL share is slow enough on this hardware to be worth not
+     * paying for unless it buys something.
+     */
+    if (GW_ConnectMitm()) {
+        const unsigned char *leaf, *ca;
+        size_t leafLen = 0, caLen = 0;
+
+        leaf = GWCa_Leaf(s->req.url.host, &leafLen);
+        ca   = GWCa_Cert(&caLen);
+
+        if (leaf != NULL && GWCa_Key() != NULL &&
+            GWStream_UpgradeToTLSServer(&s->cli, leaf, leafLen, ca, caLen,
+                                        GWCa_Key())) {
+            gw_copy_n(s->mitmHost, sizeof(s->mitmHost),
+                      s->req.url.host, strlen(s->req.url.host));
+            s->mitmPort = s->req.url.port;
+            s->mitm = 1;
+            /* The upstream connection opened for the tunnel is not wanted:
+             * the request inside will say what to fetch, and it may not even
+             * be this host once redirects are followed. */
+            GWStream_Destroy(&s->up);
+            gw_log("#%ld terminating TLS for %s:%u", s->id, s->mitmHost,
+                   (unsigned)s->mitmPort);
+            s->state = kHPMitmWait;
+            return;
+        }
+
+        gw_log("#%ld no certificate for %s -- tunnelling instead",
+               s->id, s->req.url.host);
+    }
+
     gw_log("#%ld tunnel open to %s:%u", s->id, s->req.url.host,
            (unsigned)s->req.url.port);
     s->state = kHPTunnel;
+}
+
+/*
+ * Wait for the browser's handshake to finish, then rejoin the ordinary path.
+ *
+ * Everything the client sent before this point was the CONNECT head, and the
+ * bytes after it were its ClientHello -- which Certainly has already taken
+ * over along with the socket. So the request buffer starts empty and the
+ * session reads a fresh request, as if the browser had just connected.
+ */
+static void step_mitm_wait(GWHttpSession *s)
+{
+    switch (GWStream_Pump(&s->cli)) {
+    case kGWStreamReady:
+        s->cheadLen = 0;
+        s->cheadSent = 0;
+        s->state = kHPRecvRequest;
+        break;
+
+    case kGWStreamError:
+    case kGWStreamClosed:
+        /*
+         * Ordinary rather than exceptional: this is what the browser refusing
+         * the certificate looks like, and what pressing Stop looks like. There
+         * is nothing to send an error page down -- the connection it would go
+         * on is the one that just failed.
+         */
+        gw_log("#%ld %s did not accept the certificate", s->id, s->mitmHost);
+        s->state = kHPDone;
+        break;
+
+    default:
+        if (GWNet_Ticks() - s->cli.startTicks > GW_IDLE_TIMEOUT) {
+            gw_log("#%ld handshake with the browser timed out", s->id);
+            s->state = kHPDone;
+        }
+        break;
+    }
 }
 
 static void step_tunnel(GWHttpSession *s)
@@ -1373,6 +1486,10 @@ static void session_step(GWHttpSession *s)
 
     case kHPTunnel:
         step_tunnel(s);
+        break;
+
+    case kHPMitmWait:
+        step_mitm_wait(s);
         break;
 
     case kHPFlushAndClose: {

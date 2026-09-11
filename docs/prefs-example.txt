@@ -21,6 +21,7 @@ http_port        = 8765
 follow_redirects = auto
 max_body_mb      = 0
 rewrite_https    = 1
+connect_mitm     = 0
 
 
 # --------------------------------------------------------- Wayback proxy

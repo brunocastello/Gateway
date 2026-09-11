@@ -88,6 +88,46 @@ int GWStream_UpgradeToTLS(GWStream *s, const char *host)
     return 1;
 }
 
+/*
+ * The same detach, with Gateway answering the handshake instead of starting
+ * it. The browser has just been told "200 Connection Established" and is about
+ * to send a ClientHello; from here the socket belongs to Certainly's server
+ * side, and every GWStream operation on it goes through MacTLS_Server.
+ */
+int GWStream_UpgradeToTLSServer(GWStream *s,
+                                const unsigned char *leaf, size_t leaf_len,
+                                const unsigned char *ca, size_t ca_len,
+                                const void *key)
+{
+    CTSocket sock;
+
+    if (s == NULL || s->tls || s->plain == NULL) return 0;
+    if (GWConn_GetState(s->plain) != kGWConnReady ||
+        GWConn_PeerClosed(s->plain)) return 0;
+
+    sock = GWConn_DetachSocket(s->plain);
+    GWConn_Destroy(s->plain);
+    s->plain = NULL;
+
+    if (sock == CT_SOCKET_NONE) {
+        s->state = kGWStreamError;
+        return 0;
+    }
+
+    /* Certainly owns the connection from here, including on failure. */
+    s->srv = MacTLS_ServerCreate(sock, leaf, leaf_len, ca, ca_len, key);
+    if (s->srv == NULL || MacTLS_ServerState(s->srv) == kMacTLS_Error) {
+        s->state = kGWStreamError;
+        return 0;
+    }
+
+    s->tls = true;
+    s->eof = false;
+    s->startTicks = GWNet_Ticks();
+    s->state = kGWStreamConnecting;
+    return 1;
+}
+
 GWStreamState GWStream_Pump(GWStream *s)
 {
     if (s == NULL) return kGWStreamError;
@@ -95,8 +135,13 @@ GWStreamState GWStream_Pump(GWStream *s)
     if (s->tls) {
         MacTLS_State st;
 
-        if (s->sec == NULL) return s->state = kGWStreamError;
-        st = MacTLS_Pump(s->sec);
+        if (s->srv != NULL) {
+            st = MacTLS_ServerPump(s->srv);
+        } else if (s->sec != NULL) {
+            st = MacTLS_Pump(s->sec);
+        } else {
+            return s->state = kGWStreamError;
+        }
         switch (st) {
         case kMacTLS_Connected: s->state = kGWStreamReady;   break;
         case kMacTLS_Closed:    s->state = kGWStreamClosed;  break;
@@ -125,8 +170,13 @@ long GWStream_Write(GWStream *s, const void *buf, size_t len)
     if (s == NULL) return -1;
     if (s->tls) {
         int n;
-        if (s->sec == NULL) return -1;
-        n = MacTLS_Write(s->sec, buf, len);
+        if (s->srv != NULL) {
+            n = MacTLS_ServerWrite(s->srv, buf, len);
+        } else if (s->sec != NULL) {
+            n = MacTLS_Write(s->sec, buf, len);
+        } else {
+            return -1;
+        }
         return (n < 0) ? -1 : (long)n;
     }
     return GWConn_Send(s->plain, buf, len);
@@ -135,6 +185,18 @@ long GWStream_Write(GWStream *s, const void *buf, size_t len)
 long GWStream_Read(GWStream *s, void *buf, size_t len)
 {
     if (s == NULL) return -1;
+
+    if (s->tls && s->srv != NULL) {
+        int n = MacTLS_ServerRead(s->srv, buf, len);
+
+        if (n > 0) return n;
+        if (n < 0) return -1;
+        if (MacTLS_ServerState(s->srv) == kMacTLS_Closed) {
+            s->eof = true;
+            return -2;
+        }
+        return 0;
+    }
 
     if (s->tls) {
         int n;
@@ -162,6 +224,10 @@ void GWStream_Close(GWStream *s)
 {
     if (s == NULL) return;
     if (s->tls) {
+        if (s->srv != NULL) {
+            MacTLS_ServerClose(s->srv);
+            s->srv = NULL;
+        }
         if (s->sec != NULL) {
             MacTLS_Close(s->sec);
             s->sec = NULL;
@@ -175,6 +241,10 @@ void GWStream_Close(GWStream *s)
 void GWStream_Destroy(GWStream *s)
 {
     if (s == NULL) return;
+    if (s->srv != NULL) {
+        MacTLS_ServerClose(s->srv);
+        s->srv = NULL;
+    }
     if (s->sec != NULL) {
         MacTLS_Close(s->sec);
         s->sec = NULL;

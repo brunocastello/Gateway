@@ -139,6 +139,13 @@ typedef struct GWStream {
     Boolean                tls;
     GWConn                *plain;
     struct MacTLS_Context *sec;
+    /*
+     * The same stream, with Gateway as the server rather than the client.
+     * Set only by GWStream_UpgradeToTLSServer(), for the browser side of a
+     * MITM'd CONNECT; `tls` is true alongside it, and every operation that
+     * reaches for `sec` checks this first.
+     */
+    struct MacTLS_Server  *srv;
     GWStreamState          state;
     Boolean                eof;
     unsigned long          startTicks;
@@ -156,6 +163,21 @@ void          GWStream_Adopt(GWStream *s, GWConn *c);
  * in a state that can be upgraded.
  */
 int           GWStream_UpgradeToTLS(GWStream *s, const char *host);
+
+/*
+ * The same upgrade with the roles reversed: Gateway answers the handshake
+ * instead of starting it, presenting `leaf` for whatever host the client
+ * asked for. For the browser side of a CONNECT that Gateway terminates.
+ *
+ * `key` is a `const br_rsa_private_key *` -- void so this header stays clear
+ * of BearSSL, as it already stays clear of Certainly. The DER is not copied.
+ */
+int           GWStream_UpgradeToTLSServer(GWStream *s,
+                                          const unsigned char *leaf,
+                                          size_t leaf_len,
+                                          const unsigned char *ca,
+                                          size_t ca_len,
+                                          const void *key);
 GWStreamState GWStream_Pump(GWStream *s);
 
 /* Same conventions as GWConn_Send / GWConn_Recv. */

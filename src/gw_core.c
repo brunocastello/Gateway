@@ -64,6 +64,25 @@ int GW_RewriteHttps(void)
     return GWConfig_Num("rewrite_https", 1) != 0;
 }
 
+/*
+ * Terminate TLS on the browser's side of a CONNECT instead of tunnelling.
+ *
+ * Off by default, for two reasons. The browser sees a certificate Gateway
+ * signed itself, so it warns until the authority from GWCa_Cert() has been
+ * installed -- a dialog with a Yes button on the clients this is for, but a
+ * dialog. And the only cipher IE 4 and BearSSL have in common is 3DES, which
+ * on a Pentium is slow enough to notice against the plaintext loopback hop
+ * that link rewriting already gives most browsing.
+ *
+ * Turn it on to type https:// in the address bar, to keep a session alive on
+ * a site that marks its cookie Secure, or for anything the rewriter cannot
+ * reach.
+ */
+int GW_ConnectMitm(void)
+{
+    return GWConfig_Num("connect_mitm", 0) != 0;
+}
+
 long GW_MaxBodyBytes(void)
 {
     /*
