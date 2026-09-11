@@ -5,3 +5,4 @@ build/
 package/
 tests/host/run_tests
 .DS_Store
+tests/host/*.der

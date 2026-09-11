@@ -22,6 +22,38 @@ jobs:
       - name: Build and run the portable unit tests
         run: make -C tests/host test
 
+      # Hand-written DER passes every assertion its author thought of and is
+      # then rejected by the one parser that matters. openssl has no stake in
+      # ours being correct, so it is the reader whose opinion counts. The test
+      # binary writes the two certificates; this reads them back.
+      - name: Can openssl read the certificates we emit
+        run: |
+          set -euo pipefail
+          cd tests/host
+          for f in gw_ca.der gw_leaf.der; do
+            echo "=== $f ==="
+            # -noout so a parse failure is the only thing that can fail here.
+            openssl x509 -in "$f" -inform DER -noout -text \
+              | sed -n '1,24p'
+          done
+
+          echo "=== the fields that matter ==="
+          leaf=$(openssl x509 -in gw_leaf.der -inform DER -noout -text)
+          ca=$(openssl x509 -in gw_ca.der -inform DER -noout -text)
+
+          # A leaf that claims to be a CA would let any host Gateway has served
+          # sign for any other, so this is the one worth failing over.
+          echo "$leaf" | grep -q "CA:FALSE" \
+            || { echo "::error::the leaf does not say CA:FALSE"; exit 1; }
+          echo "$ca"   | grep -q "CA:TRUE" \
+            || { echo "::error::the CA does not say CA:TRUE"; exit 1; }
+          echo "$leaf" | grep -q "DNS:lite.duckduckgo.com" \
+            || { echo "::error::the leaf has no subjectAltName"; exit 1; }
+          # SHA-1, deliberately: IE 4 and Netscape 4 cannot verify SHA-2.
+          echo "$leaf" | grep -q "sha1WithRSAEncryption" \
+            || { echo "::error::the signature algorithm is not SHA-1/RSA"; exit 1; }
+          echo "  all present"
+
       - name: Check that the portable sources stay portable
         run: |
           set -euo pipefail

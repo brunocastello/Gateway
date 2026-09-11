@@ -17,6 +17,7 @@
 #include "gw_oauth.h"
 #include "gw_prefs.h"
 #include "gw_rewrite.h"
+#include "gw_x509write.h"
 #include "gw_url.h"
 #include "gw_util.h"
 #include "gw_wayback.h"
@@ -1071,6 +1072,147 @@ static void test_rewrite(void)
     check(gw_rewrite_wants_type(NULL) == 0, "a missing type is not scanned");
 }
 
+/*
+ * The certificate writer.
+ *
+ * Hand-written DER is exactly the kind of code that looks right, passes every
+ * assertion its author thought to make, and is then rejected by the one parser
+ * that matters. So the real test is not here: these checks confirm the shape,
+ * and the files written at the end are handed to openssl by CI, which has no
+ * stake in this being correct.
+ */
+static void test_x509write(void)
+{
+    /* A 1024-bit modulus with the top bit set, which is the case that needs a
+     * leading zero byte or the INTEGER reads as negative. */
+    static unsigned char mod[128];
+    static const unsigned char exp3[] = { 0x01, 0x00, 0x01 };
+    static const unsigned char serial[] = { 0x4A, 0x17, 0x02, 0x31 };
+    static unsigned char buf[4096];
+    static unsigned char cert[4096];
+    GWCertReq req;
+    size_t    n, off, cn, coff;
+    size_t    i;
+
+    puts("gw_x509write");
+
+    for (i = 0; i < sizeof(mod); i++) mod[i] = (unsigned char)(0x80 + i);
+
+    memset(&req, 0, sizeof(req));
+    req.cn         = "lite.duckduckgo.com";
+    req.issuer_cn  = "Gateway Local CA";
+    req.is_ca      = 0;
+    req.serial     = serial;
+    req.serial_len = sizeof(serial);
+    req.mod        = mod;
+    req.mod_len    = sizeof(mod);
+    req.exp        = exp3;
+    req.exp_len    = sizeof(exp3);
+    req.not_before = "980101000000Z";
+    req.not_after  = "370101000000Z";
+
+    n = gw_x509_tbs(&req, buf, sizeof(buf), &off);
+    check(n > 0, "a leaf TBSCertificate is produced");
+    check(buf[off] == 0x30, "it is a SEQUENCE");
+    /* Tag, then a long-form length: two content bytes for anything this size. */
+    check(buf[off + 1] == 0x82, "with a two-byte length");
+    check(((size_t)buf[off + 2] << 8 | buf[off + 3]) == n - 4,
+          "and the length matches what was written");
+    /* A0 03 02 01 02: an explicit [0] holding INTEGER 2. */
+    check(memcmp(buf + off + 4, "\xA0\x03\x02\x01\x02", 5) == 0,
+          "version is [0] INTEGER 2, so v3");
+    check(memmem(buf + off, n, "lite.duckduckgo.com", 19) != NULL,
+          "the subject name is in there");
+    check(memmem(buf + off, n, "Gateway Local CA", 16) != NULL,
+          "and so is the issuer");
+    /* The modulus must have gained a 0x00 in front of its 0x80 first byte. */
+    check(memmem(buf + off, n, "\x02\x81\x81\x00\x80", 5) != NULL,
+          "a high-bit modulus is padded so the INTEGER stays positive");
+
+    /* The same key as a CA: different extensions, no subjectAltName. */
+    {
+        static unsigned char ca[4096];
+        size_t caoff, can;
+
+        req.is_ca = 1;
+        req.cn    = "Gateway Local CA";
+        can = gw_x509_tbs(&req, ca, sizeof(ca), &caoff);
+        check(can > 0, "a CA TBSCertificate is produced");
+        /* BasicConstraints cA TRUE, inside its OCTET STRING. */
+        check(memmem(ca + caoff, can, "\x30\x03\x01\x01\xFF", 5) != NULL,
+              "the CA says cA TRUE");
+        check(memmem(ca + caoff, can, "\x03\x02\x01\x06", 4) != NULL,
+              "with keyCertSign and cRLSign");
+        req.is_ca = 0;
+        req.cn    = "lite.duckduckgo.com";
+    }
+
+    /* Wrapping it with a signature. The bytes are not a real signature; this
+     * checks the envelope, and CI checks that openssl can read it. */
+    {
+        static unsigned char sig[128];
+
+        for (i = 0; i < sizeof(sig); i++) sig[i] = (unsigned char)(i * 7);
+        cn = gw_x509_cert(buf + off, n, sig, sizeof(sig),
+                          cert, sizeof(cert), &coff);
+        check(cn > n, "a Certificate is larger than the TBS it wraps");
+        check(cert[coff] == 0x30, "and is itself a SEQUENCE");
+        check(memcmp(cert + coff + 4, buf + off, n) == 0,
+              "the TBS bytes are copied in verbatim, so the hash still matches");
+    }
+
+    /* Refusals. A caller that gets these wrong must not get a certificate. */
+    {
+        GWCertReq bad = req;
+
+        bad.not_before = "98010100000Z";      /* 12 characters, not 13 */
+        check(gw_x509_tbs(&bad, buf, sizeof(buf), &off) == 0,
+              "a UTCTime of the wrong length is refused");
+        bad = req;
+        bad.mod_len = 0;
+        check(gw_x509_tbs(&bad, buf, sizeof(buf), &off) == 0,
+              "an empty modulus is refused");
+        bad = req;
+        check(gw_x509_tbs(&bad, buf, 64, &off) == 0,
+              "a buffer too small is refused rather than overrun");
+    }
+
+    /*
+     * Written out for CI to hand to openssl, which is the only reader here
+     * with no stake in this being right. Everything above confirms the bytes
+     * are what this file meant to write; openssl confirms they are a
+     * certificate.
+     */
+    {
+        FILE *f = fopen("gw_leaf.der", "wb");
+
+        if (f != NULL) {
+            fwrite(cert + coff, 1, cn, f);
+            fclose(f);
+        }
+    }
+    {
+        static unsigned char ca[4096], cacert[4096];
+        static unsigned char sig[128];
+        size_t caoff, can, ccoff, ccn;
+
+        for (i = 0; i < sizeof(sig); i++) sig[i] = (unsigned char)(0xFF - i);
+        req.is_ca = 1;
+        req.cn    = "Gateway Local CA";
+        can = gw_x509_tbs(&req, ca, sizeof(ca), &caoff);
+        ccn = gw_x509_cert(ca + caoff, can, sig, sizeof(sig),
+                           cacert, sizeof(cacert), &ccoff);
+        if (ccn > 0) {
+            FILE *f = fopen("gw_ca.der", "wb");
+
+            if (f != NULL) {
+                fwrite(cacert + ccoff, 1, ccn, f);
+                fclose(f);
+            }
+        }
+    }
+}
+
 int main(void)
 {
     test_util();
@@ -1086,6 +1228,7 @@ int main(void)
     test_query();
     test_wayback();
     test_rewrite();
+    test_x509write();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;

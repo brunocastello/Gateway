@@ -99,6 +99,30 @@ jobs:
           ls -la
           EOF
 
+      # The .dsk is what gets mounted in an emulator, so a prefs file sitting
+      # next to the application on it is the difference between reading the
+      # settings reference and having the file already there to edit. Retro68
+      # sizes the image for the application, so this can run out of room -- if
+      # it does, hcopy says so and the build stops rather than shipping an
+      # image that silently lost the file.
+      - name: Put a starting Gateway Prefs on the disk image
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq hfsutils
+
+          # build/ was created inside the Retro68 container and is root-owned.
+          sudo chown "$(id -u):$(id -g)" build/Gateway.dsk
+
+          hmount build/Gateway.dsk
+          # -t converts the line endings to CR on the way in, which is what a
+          # classic Mac text editor wants.
+          hcopy -t docs/prefs-example.txt ":Gateway Prefs"
+          hattrib -t TEXT -c ttxt ":Gateway Prefs"
+          echo "--- what is on the image now ---"
+          hdir -a
+          humount
+
       - name: Package release assets (.sit archive)
         run: |
           set -euo pipefail
@@ -115,7 +139,45 @@ jobs:
           # "%Gateway.ad"; sit wants the AppleDouble sidecar named "._Gateway".
           cp build/Gateway.ad package/Gateway
           cp "build/%Gateway.ad" package/._Gateway
-          /tmp/sit-src/sit -T APPL -C GT9A -o package/Gateway.sit package/Gateway
+
+          # A starting Gateway Prefs beside the application, so a first run has
+          # something to read and every setting is visible without going to the
+          # repository for it. Line endings become CR, which is what a classic
+          # Mac text editor expects -- sit's own -u does this but would apply to
+          # the application too, so it is done here instead.
+          tr '\n' '\r' < docs/prefs-example.txt > "package/Gateway Prefs"
+
+          # sit's -T/-C only apply to files it found no metadata for, so
+          # without this the prefs file would be typed APPL/GT9A alongside the
+          # application and the Finder would show it as a second copy of
+          # Gateway. An xbin .info sidecar carries its real type: TEXT, created
+          # by ttxt so double-clicking opens SimpleText.
+          python3 - <<'PY'
+          # 100 bytes, xbin .info layout.
+          name = b"Gateway Prefs"
+          info = (b"\0\0"                                  # res0
+                  + bytes([len(name)]) + name + b"\0" * (63 - len(name))
+                  + b"TEXT" + b"ttxt"                      # type, creator
+                  + b"\0\0"                                # Finder flags
+                  + b"\0" * 8                              # res1
+                  + b"\0" * 16)                            # dlen/rlen/ctime/mtime
+          assert len(info) == 100, len(info)
+          open("package/Gateway Prefs.info", "wb").write(info)
+          PY
+
+          /tmp/sit-src/sit -T APPL -C GT9A -o package/Gateway.sit \
+            package/Gateway "package/Gateway Prefs"
+
+          # The header of a SIT member is not compressed, so the name and type
+          # of what went in are readable in the output. Cheaper than unpacking,
+          # and it fails the build rather than shipping an archive holding one
+          # file when it should hold two.
+          echo "--- what went into Gateway.sit ---"
+          strings package/Gateway.sit | grep -E "Gateway" || true
+          for want in "Gateway Prefs" "TEXT" "APPL"; do
+            grep -qa "$want" package/Gateway.sit \
+              || { echo "::error::Gateway.sit does not contain $want"; exit 1; }
+          done
 
       - name: Upload disk image and application
         uses: actions/upload-artifact@v4
