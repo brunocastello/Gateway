@@ -107,6 +107,7 @@ target_include_directories(bearssl
 add_library(certainly STATIC
     ${CERTAINLY_DIR}/src/certainly.c
     ${CERTAINLY_DIR}/src/transport_ot.c
+    ${CERTAINLY_DIR}/src/server.c
     ${CERTAINLY_DIR}/src/entropy.c
     ${CERTAINLY_DIR}/src/ca_roots.c
     ${CERTAINLY_DIR}/src/tls13_keysched.c

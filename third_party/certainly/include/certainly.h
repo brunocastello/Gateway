@@ -191,6 +191,35 @@ void           MacTLS_ConfigFree(MacTLS_Config *cfg);
 MacTLS_Error   MacTLS_ConfigAddCA(MacTLS_Config *cfg,
                                   const void *der, size_t len);
 
+/* ── Server side (Gateway patch, PATCHES.md) ── */
+
+/*
+ * The other side of a handshake, for MITM of a CONNECT tunnel: a browser too
+ * old to reach a modern server asked for https://host, so Gateway presents a
+ * certificate it minted for that host and terminates the TLS itself.
+ *
+ * `sock` must already be accepted, and is taken over unconditionally -- a
+ * failure here closes it rather than handing it back. `leaf` and `ca` are DER
+ * and are NOT copied, so they must outlive the handshake. `key` is a
+ * `const br_rsa_private_key *`, void here so that callers who only have a
+ * certificate to pass along need not see BearSSL's headers.
+ *
+ * Pinned to TLS 1.0 through 1.2 by BearSSL's full RSA server profile, whose
+ * cipher list includes TLS_RSA_WITH_3DES_EDE_CBC_SHA -- the only suite these
+ * browsers and BearSSL have in common.
+ */
+typedef struct MacTLS_Server MacTLS_Server;
+
+MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
+                                   const unsigned char *leaf, size_t leaf_len,
+                                   const unsigned char *ca, size_t ca_len,
+                                   const void *key);
+MacTLS_State   MacTLS_ServerPump(MacTLS_Server *s);
+MacTLS_State   MacTLS_ServerState(const MacTLS_Server *s);
+int            MacTLS_ServerRead(MacTLS_Server *s, void *buf, size_t cap);
+int            MacTLS_ServerWrite(MacTLS_Server *s, const void *data, size_t len);
+void           MacTLS_ServerClose(MacTLS_Server *s);
+
 /* ── Entropy ── */
 void MacTLS_AddEntropy(const void *data, size_t len);
 
