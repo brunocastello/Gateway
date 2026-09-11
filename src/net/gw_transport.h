@@ -194,6 +194,7 @@ void          GWStream_Destroy(GWStream *s);
  * For a client connection this means the browser has gone -- navigated away,
  * stopped, or quit -- and any work still being done on its behalf is wasted.
  */
+int           GWStream_ServerError(const GWStream *s);
 int           GWStream_PeerGone(const GWStream *s);
 
 /* 0 when unknown or plain, otherwise 12 or 13. */

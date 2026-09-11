@@ -1307,7 +1307,24 @@ static void step_mitm_wait(GWHttpSession *s)
          * is nothing to send an error page down -- the connection it would go
          * on is the one that just failed.
          */
-        gw_log("#%ld %s did not accept the certificate", s->id, s->mitmHost);
+        /*
+         * The number is the diagnosis, so it goes in the line. With a client
+         * this old the two that matter are BearSSL's 4, meaning it offered a
+         * protocol version older than TLS 1.0 -- which for Internet Explorer 4
+         * means SSL 3.0, all it has -- and 16, meaning it offered no cipher
+         * suite BearSSL implements, which an export-grade build will not.
+         * Neither can be reported any other way: an error page would have to
+         * travel down the connection that just failed.
+         */
+        {
+            int err = GWStream_ServerError(&s->cli);
+
+            gw_log("#%ld handshake with the browser failed for %s "
+                   "(BearSSL %d%s)", s->id, s->mitmHost, err,
+                   err == 4  ? ": it offered an older protocol than TLS 1.0" :
+                   err == 16 ? ": no cipher suite in common" :
+                   err == 8  ? ": the engine had no randomness" : "");
+        }
         s->state = kHPDone;
         break;
 

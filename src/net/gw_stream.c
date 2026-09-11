@@ -256,6 +256,19 @@ void GWStream_Destroy(GWStream *s)
     s->state = kGWStreamIdle;
 }
 
+/*
+ * BearSSL's error number from a failed server-side handshake, or 0. The proxy
+ * logs it because with a 1997 client the number is the diagnosis: 4 means the
+ * browser offered a protocol version older than BearSSL will speak, which for
+ * Internet Explorer 4 means SSL 3.0, and 16 means it offered no cipher suite
+ * BearSSL has.
+ */
+int GWStream_ServerError(const GWStream *s)
+{
+    if (s == NULL || s->srv == NULL) return 0;
+    return MacTLS_ServerLastError(s->srv);
+}
+
 int GWStream_PeerGone(const GWStream *s)
 {
     if (s == NULL) return 1;

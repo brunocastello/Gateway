@@ -243,6 +243,17 @@ MacTLS_State MacTLS_ServerState(const MacTLS_Server *s)
     return (s == NULL) ? kMacTLS_Error : s->state;
 }
 
+int MacTLS_ServerLastError(const MacTLS_Server *s)
+{
+    if (s == NULL) return -1;
+    /*
+     * const off: br_ssl_engine_last_error takes a mutable pointer although it
+     * reads one field. Casting here keeps the const on this function, which is
+     * the honest signature -- asking what went wrong changes nothing.
+     */
+    return br_ssl_engine_last_error((br_ssl_engine_context *)&s->sc.eng);
+}
+
 void MacTLS_ServerClose(MacTLS_Server *s)
 {
     if (s == NULL) return;

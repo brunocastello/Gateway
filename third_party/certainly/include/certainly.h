@@ -216,6 +216,11 @@ MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
                                    const void *key);
 MacTLS_State   MacTLS_ServerPump(MacTLS_Server *s);
 MacTLS_State   MacTLS_ServerState(const MacTLS_Server *s);
+/* BearSSL's error number, for a handshake that failed. The distinction
+ * between "no cipher in common" and "that version is too old" is the
+ * whole diagnosis with a client this vintage, and an error page cannot
+ * carry it -- the connection it would travel on is the one that broke. */
+int            MacTLS_ServerLastError(const MacTLS_Server *s);
 int            MacTLS_ServerRead(MacTLS_Server *s, void *buf, size_t cap);
 int            MacTLS_ServerWrite(MacTLS_Server *s, const void *data, size_t len);
 void           MacTLS_ServerClose(MacTLS_Server *s);
