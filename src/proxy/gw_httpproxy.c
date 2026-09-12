@@ -1276,7 +1276,19 @@ static void step_tunnel_connect(GWHttpSession *s)
      * IE 4 and BearSSL share is slow enough on this hardware to be worth not
      * paying for unless it buys something.
      */
-    if (GW_ConnectMitm()) {
+    /*
+     * Port 443 only, whatever connect_mitm says.
+     *
+     * A CONNECT names a port and nothing obliges it to be a TLS one. Asked
+     * about `CONNECT host:80`, this used to terminate it anyway -- present a
+     * certificate to a client that was not going to start a handshake, then
+     * force TLS on the upstream leg and try it against port 80, which does not
+     * speak it. Every other use of CONNECT is a raw tunnel by design: git, ssh
+     * through a proxy, anything that wants bytes moved. 443 is the one port
+     * where TLS is certain, so it is the only one worth taking over, and
+     * everything else is left exactly as it was.
+     */
+    if (GW_ConnectMitm() && s->req.url.port == 443) {
         const unsigned char *leaf, *ca;
         size_t leafLen = 0, caLen = 0;
 

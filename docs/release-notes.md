@@ -37,7 +37,7 @@ Not a setting and not a bug. Those browsers have SSL 3.0 and no TLS; BearSSL has
 
 ## Typing an https:// URL
 
-With `connect_mitm = 1`, a `CONNECT` is no longer a pipe Gateway stays out of. Gateway answers it, presents a certificate it made for that host, and speaks TLS 1.0 to the browser while speaking TLS 1.3 to the site.
+With `connect_mitm = 1`, a `CONNECT` **to port 443** is no longer a pipe Gateway stays out of. Any other port stays a raw tunnel, because nothing obliges a `CONNECT` to be a TLS one — `git`, ssh through a proxy and anything else that only wants bytes moved keep working exactly as before. Gateway answers it, presents a certificate it made for that host, and speaks TLS 1.0 to the browser while speaking TLS 1.3 to the site.
 
 The certificates are Gateway's own and are made **on the vintage machine**. Nothing outside it takes part and nothing is downloaded. The first time it is needed, Gateway generates a 1024-bit RSA key and a self-signed authority, and keeps them beside the preferences as `Gateway CA`. That generation blocks Gateway while it runs — it is looking for two 512-bit primes on period hardware — and happens once; the log reports how long it took. Certificates for individual hosts are minted from that key as they are asked for, which is fast, and signed with SHA-1 because the browsers this exists for cannot verify anything newer.
 
