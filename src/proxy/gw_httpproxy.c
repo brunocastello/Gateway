@@ -935,8 +935,17 @@ static void step_recv_head(GWHttpSession *s)
         gw_log("#%ld <- %d %s %ld bytes", s->id, res.status,
                s->req.url.host, res.content_length);
     else
+        /*
+         * "no length" is true of a 304 and reads like a fault, which is the
+         * opposite of what it is: a 304 has no body by definition, so it can
+         * no more carry a length than it can carry content. A cached page
+         * revalidating thirty assets produces thirty of these lines, and a
+         * log full of something that looks wrong while everything works is
+         * worse than a log that says nothing.
+         */
         gw_log("#%ld <- %d %s%s", s->id, res.status, s->req.url.host,
-               res.chunked ? " chunked" : " no length");
+               res.status == 304 ? " not modified" :
+               res.chunked      ? " chunked" : " no length");
 
     /*
      * Redirects. Gateway follows one only when the client could not have: see
