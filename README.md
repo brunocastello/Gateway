@@ -31,6 +31,7 @@ and stays on the same machine; only the modern side crosses the network.
 |---|---|
 | HTTP proxy, `http://` and `https://` | working, in daily use |
 | `CONNECT` tunnel | working — verified with RetroZilla on Windows Me |
+| Typed `https://` in an old browser | working — `connect_mitm`, verified in IE 5/98, IE 6/Me, Classilla, RetroZilla |
 | IMAP, POP3 and SMTP splices | working, verified end to end against Outlook.com |
 | OAuth refresh, including rotated tokens | working |
 | Gmail as a provider | implemented, not yet tried against a live account |
@@ -60,9 +61,53 @@ Upstream, connections are kept alive and pooled, which on this hardware matters
 more than anything else: a reused connection skips a TLS handshake, and the
 handshake is most of the cost of a request.
 
-`CONNECT` is different on purpose: Gateway answers `200 Connection
-Established` and then does nothing but bounce bytes through a 32 KB buffer. The
-client's own TLS runs end to end, and Gateway never sees inside it.
+`CONNECT` does one of two things. By default Gateway answers `200 Connection
+Established` and then bounces bytes through a 32 KB buffer: the client's own
+TLS runs end to end and Gateway never sees inside it. That is right for a
+client with modern TLS of its own — RetroZilla, `git` — and useless to a
+browser from 1997, which answers the `200` by starting a handshake a 2026
+server will not complete. With `connect_mitm = 1` Gateway terminates that TLS
+too, presenting a certificate it minted for the host.
+
+### Getting an old browser onto `https://`
+
+Two settings, and they are alternatives rather than companions. Which one you
+want depends on whether the browser can reach TLS 1.0 at all.
+
+| Prefs | For | What you get |
+|---|---|---|
+| `connect_mitm = 1`, `rewrite_https = 0` | IE 5, IE 6, Classilla, RetroZilla | Type `https://` and it works. Real https to the browser: padlock, `Secure` cookies, the URL it asked for. |
+| `rewrite_https = 1`, `connect_mitm = 0` | IE 4, Netscape 4.x, IE 5.1 on Mac OS 9 | Type `http://` or no scheme. Links, redirects and subresources all work; the address bar and `Secure` cookies do not. |
+
+**If you use `connect_mitm`, untick "Use SSL 2.0" in the browser.** In Internet
+Explorer it is under Tools → Internet Options → Advanced → Security, and it is
+on by default. A browser with SSL 2.0 enabled sends its ClientHello in SSL 2.0
+framing, which BearSSL rejects before reading a single field — so the handshake
+fails with no certificate warning at all, and the log says `BearSSL 3`. Leave
+SSL 3.0 and TLS 1.0 ticked. Netscape 4.7 has the same switch under Security →
+Navigator → Configure SSL.
+
+**IE 4 and Netscape 4 cannot use `connect_mitm` at all.** They have SSL 3.0 and
+no TLS; BearSSL has TLS 1.0 and no SSL. There is no overlap and no setting that
+creates one, so those browsers want `rewrite_https` instead.
+
+Gateway generates its own certificate authority the first time `connect_mitm`
+needs one — a 1024-bit RSA key and a self-signed certificate, made on the
+vintage machine, stored beside the preferences as `Gateway CA`. Nothing outside
+that machine takes part. Generating the key blocks Gateway for a while and
+happens once; the log says how long it took. Certificates for individual hosts
+are minted from that key as they are asked for, signed with SHA-1 because the
+browsers this exists for cannot verify anything newer.
+
+The browser will warn that it does not know the issuer, with a Yes button to
+continue. Installing `Gateway CA` stops the warning — worth doing, because
+subresources on other hosts tend to fail silently rather than prompt.
+
+**Why not by default:** the only cipher these browsers and BearSSL share is
+3DES, so with `connect_mitm` every byte of every page is encrypted three times
+over on a hop that never leaves the machine. `rewrite_https` costs a single
+pass over each page and gives most browsers most of the benefit, which is why
+it is the one that ships on.
 
 **Classilla setup:** point the HTTP proxy at Gateway's address and port `8765`,
 then set `network.http.proxy.use-http-proxy-for-https` to `true` in
