@@ -29,6 +29,9 @@ on:
       - 'src/gw_platform.h'
       - 'src/gw_plat.h'
       - 'src/gw_plat_win32.c'
+      # Compiled into Gateway.exe by Makefile.win32 and easy to miss,
+      # being neither core nor platform nor portable.
+      - 'src/gw_ca.*'
       - 'src/net/gw_transport.h'
       - 'src/net/gw_stream.c'
       - 'src/net/gw_net_win32.*'
@@ -54,6 +57,9 @@ on:
       - 'src/gw_platform.h'
       - 'src/gw_plat.h'
       - 'src/gw_plat_win32.c'
+      # Compiled into Gateway.exe by Makefile.win32 and easy to miss,
+      # being neither core nor platform nor portable.
+      - 'src/gw_ca.*'
       - 'src/net/gw_transport.h'
       - 'src/net/gw_stream.c'
       - 'src/net/gw_net_win32.*'
