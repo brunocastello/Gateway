@@ -9,7 +9,6 @@
 #include <bearssl.h>
 
 #include "gw_plat.h"
-#include "net/gw_transport.h"
 #include "portable/gw_log.h"
 #include "portable/gw_url.h"
 #include "portable/gw_util.h"
@@ -209,7 +208,6 @@ static int generate(void)
 {
     br_hmac_drbg_context drbg;
     unsigned char        seed[64];
-    unsigned long        started;
     static unsigned char tbsbuf[GW_CA_CERT_MAX];
     size_t               tbslen, tbsoff, certoff;
     GWCertReq            req;
@@ -223,15 +221,11 @@ static int generate(void)
     br_hmac_drbg_init(&drbg, &br_sha256_vtable, seed, sizeof(seed));
     memset(seed, 0, sizeof(seed));
 
-    started = GWNet_Ticks();
     if (!br_rsa_keygen_get_default()(&drbg.vtable, &sSk, sSkBuf, &sPk, sPkBuf,
                                      GW_CA_BITS, 0)) {
         gw_log("certificate authority: key generation failed");
         return 0;
     }
-    /* Ticks are sixtieths on both platforms. */
-    gw_log("certificate authority: key ready in %ld seconds",
-           (long)((GWNet_Ticks() - started) / 60));
 
     memset(&req, 0, sizeof(req));
     req.cn         = GW_CA_NAME;
@@ -377,8 +371,6 @@ const unsigned char *GWCa_Leaf(const char *host, size_t *len)
     memmove(slot->der, slot->der + certoff, certlen);
     slot->len = certlen;
     gw_copy_n(slot->host, sizeof(slot->host), host, strlen(host));
-
-    gw_log("certificate for %s (%lu bytes)", host, (unsigned long)certlen);
 
     if (len != NULL) *len = certlen;
     return slot->der;
