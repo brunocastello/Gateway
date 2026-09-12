@@ -303,6 +303,16 @@ static const char *gw_tls_error_text(int err)
     case 62: return "certificate not trusted";  /* BR_ERR_X509_NOT_TRUSTED */
     case 54: return "certificate expired";      /* BR_ERR_X509_EXPIRED */
     case 56: return "certificate is for another host";
+    /*
+     * BR_ERR_X509_DN_MISMATCH. Seen on macintoshgarden.org from IE 5. The
+     * minimal validator walks the chain in the order the server sent it and
+     * wants each certificate's issuer DN to equal the next one's subject DN;
+     * a browser builds the chain itself and does not care about the order. So
+     * this is usually a server sending an out-of-order or redundant chain
+     * rather than anything wrong with the certificates in it -- hence naming
+     * the chain in the text, so it does not read as "bad certificate".
+     */
+    case 55: return "certificate chain out of order";
     case 51: return "bad certificate signature";
     case 34: return "server sent no certificate";
     case 52: return "certificate dates unknown";

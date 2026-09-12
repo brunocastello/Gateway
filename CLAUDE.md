@@ -33,6 +33,7 @@
 * Redirects: follow every hop whose destination is `https://`, pass the rest back. `follow_redirects = auto|always|never`. The test is what the *client* can do, not where Gateway currently is — the client hop is always plaintext, so a second `https → https` hop is still ours. Following them all internally discards `Set-Cookie` and hides the final URL, which breaks media.
 * Rewrite `https://` → `http://` in `text/*`, XHTML and JavaScript bodies (`rewrite_https`, default 1). A 1997 browser meeting an `https://` link opens a `CONNECT` tunnel and fails its own handshake, so the link is changed before it is seen. Never rewrite binary — a JPEG containing those bytes would be corrupted by one. Hold back up to 7 bytes at a chunk boundary so a split `https://` still matches.
 * Body ceiling is `max_body_mb`, default 0 (none). The original 2 MiB cap protected nothing — bodies stream through a 32 KB buffer — and made video impossible.
+* `connect_mitm` (default 0) terminates TLS on the browser's side of a `CONNECT` rather than bouncing bytes, so a typed `https://` URL works. Gateway generates a 1024-bit RSA key and a self-signed authority on first use (`gw_ca.c`), keeps them beside the prefs as `Gateway CA`, and mints a per-host leaf signed with SHA-1 — IE 4 and Netscape 4 cannot verify SHA-2. One key serves as the authority's and as every leaf's, so the slow step happens once. `rewrite_https` and `connect_mitm` are alternatives, not companions: with both on, a page fetched over real https has its links rewritten to `http://` for nothing.
 * Forward `Content-Length` to the client whenever the body is not de-chunked **and not rewritten** — rewriting shortens the body by a byte per link, so the length would strand the client. Media keeps its length because media is never rewritten; players will not start without it.
 
 ### Module 2 — Mail Splice (`:1993` / `:1587`)
@@ -58,7 +59,8 @@
 * Transparent intercept (no pf on OS 9)
 * Carbon, OpenSSL, writing TLS 1.3 from scratch
 * Completing OAuth consent inside Classilla
-* HTTP/2, HTTP/3, CONNECT tunnels speaking TLS on the *client* side (Gateway terminates TLS)
+* HTTP/2, HTTP/3
+* SSL 2.0 and SSL 3.0 on the client side. BearSSL implements TLS 1.0 and up and nothing older (`BR_SSL30` is a header constant with no implementation), so a browser that cannot reach TLS 1.0 — IE 4, Netscape 4 — cannot be served by `connect_mitm` and must use `rewrite_https` instead. A browser that *can* must have "Use SSL 2.0" switched off, because its SSL 2.0-framed ClientHello is rejected before any field is read.
 
 ---
 
