@@ -38,16 +38,34 @@
 #include "gw_core.h"
 #include "gw_version.h"
 #include "portable/gw_log.h"   /* GW_LOG_LINES, for scroll limits */
+#include "ui/gw_prefswin.h"
 
 namespace {
 
 const short kAppleMenuID = 128;
 const short kFileMenuID  = 129;
+const short kEditMenuID  = 130;
 
 const short kAboutItem = 1;
 const short kHideItem  = 1;
 const short kStopItem  = 2;
-const short kQuitItem  = 4;
+const short kPrefsItem = 4;
+const short kQuitItem  = 6;
+
+/*
+ * The Edit menu exists for the Preferences window's entry fields and for
+ * nothing else -- there is no other editable text in Gateway. Its items are
+ * therefore grey whenever no field has the focus, which is most of the time,
+ * and the desk accessories still get their crack at the standard positions:
+ * a DA in front expects Cut at item 3, Copy at 4 and Paste at 5, counting the
+ * Undo and the separator above them.
+ */
+const short kUndoItem      = 1;
+const short kCutItem       = 3;
+const short kCopyItem      = 4;
+const short kPasteItem     = 5;
+const short kClearItem     = 6;
+const short kSelectAllItem = 7;
 
 /*
  * Finder flags, from Finder.h. Written as literals so this file does not take
@@ -228,6 +246,7 @@ class GatewayApp {
 public:
     GatewayApp()
         : mWindow(nullptr), mAppleMenu(nullptr), mFileMenu(nullptr),
+          mEditMenu(nullptr),
           mDone(false), mRunning(false), mSeenGeneration(-1),
           mScrollBack(0), mScroll(nullptr), mShownLines(0) {}
 
@@ -265,8 +284,15 @@ public:
             EventRecord event;
             long sleep = (GW_ActiveSessions() > 0) ? 1L : 10L;
 
-            if (WaitNextEvent(everyEvent, &event, sleep, nullptr))
-                HandleEvent(event);
+            if (WaitNextEvent(everyEvent, &event, sleep, nullptr)) {
+                /* The Preferences window gets first refusal on everything
+                 * addressed to it; anything it declines is the log window's
+                 * or the menu bar's. */
+                if (!GWPrefsWin_HandleEvent(&event))
+                    HandleEvent(event);
+                UpdateEditMenu();
+            }
+            GWPrefsWin_Idle();
 
             /* One cooperative slice per pass; every OT and TLS step inside
              * yields rather than spinning (CLAUDE.md rule 6). */
@@ -279,6 +305,7 @@ public:
 
     void Stop()
     {
+        GWPrefsWin_Close();
         GW_Shutdown();
         if (mWindow != nullptr) DisposeWindow(mWindow);
     }
@@ -311,10 +338,35 @@ private:
             AppendMenu(mFileMenu, title);
             ToPascal("(-", title);
             AppendMenu(mFileMenu, title);
+            ToPascal("Preferences.../;", title);
+            AppendMenu(mFileMenu, title);
+            ToPascal("(-", title);
+            AppendMenu(mFileMenu, title);
             ToPascal("Quit/Q", title);
             AppendMenu(mFileMenu, title);
             InsertMenu(mFileMenu, 0);
         }
+
+        ToPascal("Edit", title);
+        mEditMenu = NewMenu(kEditMenuID, title);
+        if (mEditMenu != nullptr) {
+            ToPascal("Undo/Z", title);
+            AppendMenu(mEditMenu, title);
+            ToPascal("(-", title);
+            AppendMenu(mEditMenu, title);
+            ToPascal("Cut/X", title);
+            AppendMenu(mEditMenu, title);
+            ToPascal("Copy/C", title);
+            AppendMenu(mEditMenu, title);
+            ToPascal("Paste/V", title);
+            AppendMenu(mEditMenu, title);
+            ToPascal("Clear", title);
+            AppendMenu(mEditMenu, title);
+            ToPascal("Select All/A", title);
+            AppendMenu(mEditMenu, title);
+            InsertMenu(mEditMenu, 0);
+        }
+        UpdateEditMenu();
         DrawMenuBar();
     }
 
@@ -546,6 +598,35 @@ private:
      * takes the string literally and would put the characters in the menu.
      * The command key set at creation survives a text change.
      */
+    /*
+     * Grey unless there is something to edit.
+     *
+     * Called after anything that can change the answer: opening or closing
+     * the Preferences window, and every pass of the main loop, since clicking
+     * from one field to another changes it without going through a menu.
+     */
+    void UpdateEditMenu()
+    {
+        bool on = GWPrefsWin_CanEdit() != 0;
+
+        if (mEditMenu == nullptr) return;
+        if (on) {
+            EnableItem(mEditMenu, kCutItem);
+            EnableItem(mEditMenu, kCopyItem);
+            EnableItem(mEditMenu, kPasteItem);
+            EnableItem(mEditMenu, kClearItem);
+            EnableItem(mEditMenu, kSelectAllItem);
+        } else {
+            DisableItem(mEditMenu, kCutItem);
+            DisableItem(mEditMenu, kCopyItem);
+            DisableItem(mEditMenu, kPasteItem);
+            DisableItem(mEditMenu, kClearItem);
+            DisableItem(mEditMenu, kSelectAllItem);
+        }
+        /* Undo is always grey: TextEdit has no undo to offer. */
+        DisableItem(mEditMenu, kUndoItem);
+    }
+
     void UpdateWindowMenuItem()
     {
         Str255 title;
@@ -768,7 +849,26 @@ private:
         case kFileMenuID:
             if (item == kHideItem) ToggleWindow();
             else if (item == kStopItem) ToggleRunning();
-            else if (item == kQuitItem) mDone = true;
+            else if (item == kPrefsItem) {
+                GWPrefsWin_Open();
+                UpdateEditMenu();
+            } else if (item == kQuitItem) mDone = true;
+            break;
+
+        case kEditMenuID:
+            /*
+             * Undo is never ours: TextEdit has none, and leaving the item in
+             * place at its standard position is what lets a desk accessory in
+             * front find Cut where it expects it.
+             */
+            switch (item) {
+            case kCutItem:       GWPrefsWin_EditCommand(kGWEditCut);       break;
+            case kCopyItem:      GWPrefsWin_EditCommand(kGWEditCopy);      break;
+            case kPasteItem:     GWPrefsWin_EditCommand(kGWEditPaste);     break;
+            case kClearItem:     GWPrefsWin_EditCommand(kGWEditClear);     break;
+            case kSelectAllItem: GWPrefsWin_EditCommand(kGWEditSelectAll); break;
+            default: break;
+            }
             break;
 
         default:
@@ -920,6 +1020,7 @@ private:
     WindowPtr     mWindow;
     MenuHandle    mAppleMenu;
     MenuHandle    mFileMenu;
+    MenuHandle    mEditMenu;
     bool          mDone;
     bool          mRunning;
     long          mSeenGeneration;

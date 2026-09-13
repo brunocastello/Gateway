@@ -40,6 +40,14 @@ long        GWConfig_Num(const char *key, long def);
 int         GWConfig_GetNth(const char *key, int n, char *out, size_t cap);
 
 /*
+ * Replace every occurrence of a repeated key with `count` values, writing the
+ * file once. GWConfig_Set() would rewrite the first and leave the others, so
+ * a list saved that way keeps entries nobody can see any more.
+ */
+int         GWConfig_SetList(const char *key, const char *const *values,
+                             int count);
+
+/*
  * Rewrite one setting and save the file, keeping every other line, its
  * comments and its line endings intact. Returns 1 on success.
  *
