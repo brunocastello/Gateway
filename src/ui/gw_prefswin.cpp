@@ -425,6 +425,11 @@ void PrefsWindow::MakeControls(int group)
     mGroupCtl = NewControl(reinterpret_cast<WindowPtr>(mDialog), &box, title,
                            true, static_cast<short>(group + 1),
                            kGroupMenuID, 0, kPopupMenuProc, 0);
+    /* Set again after the fact: the value handed to NewControl does not stick
+     * on this definition, which is why the popup kept saying "Modules" while
+     * the pane below it was Wayback. */
+    if (mGroupCtl != 0)
+        SetControlValue(mGroupCtl, static_cast<short>(group + 1));
 
     for (i = 0; i < count && row < mRowCount; i++) {
         Row *r;
@@ -585,20 +590,15 @@ void PrefsWindow::AlignLabels()
 
         if (mRows[i].field == 0) continue;
 
-        /* A checkbox carries its own title, so its rectangle is its text
-         * plus the box -- not the width of the pane. */
-        if (mRows[i].field->kind == kGWFieldFlag) {
-            if (mRows[i].item == 0) continue;
-            GetDialogItem(mDialog, mRows[i].item, &type, &h, &box);
-            ToPascal(mRows[i].field->label, s);
-            box.right = static_cast<short>(box.left + 22 + StringWidth(s));
-            SetDialogItem(mDialog, mRows[i].item, type, h, &box);
-            if (h != 0)
-                SizeControl(reinterpret_cast<ControlHandle>(h),
-                            static_cast<short>(box.right - box.left),
-                            static_cast<short>(box.bottom - box.top));
-            continue;
-        }
+        /*
+         * Checkboxes are left the full width of the pane. Measuring them here
+         * cut "Web proxy" to "Web pro": StringWidth answers in the port's
+         * font and the control draws its title in the system font, which is
+         * wider, so every title lost its tail. The white bars that shrinking
+         * them was meant to cure were the port's background, and that is
+         * fixed where it belongs.
+         */
+        if (mRows[i].field->kind == kGWFieldFlag) continue;
 
         if (mRows[i].labelItem == 0) continue;
         if (mRows[i].field->kind == kGWFieldList) continue;
@@ -708,7 +708,7 @@ void PrefsWindow::BuildGroup(int group)
         }
 
         if (f[i].kind == kGWFieldList)
-            v = static_cast<short>(v + 15 + kListHeight + 4);
+            v = static_cast<short>(v + 15 + kListHeight + 12);
         else
             v = static_cast<short>(v + kRowHeight);
 
