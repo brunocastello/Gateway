@@ -575,7 +575,8 @@ static void session_serve_pac(GWHttpSession *s)
                      "auto-configuration script would not fit");
         return;
     }
-    gw_log("#%ld proxy.pac for %s", s->id, s->req.url.host);
+    gw_log("#%ld proxy.pac for %s: %s", s->id, s->req.url.host,
+           s->wayback ? "the archive" : "the live web");
     session_serve(s, GW_PAC_CONTENT_TYPE, page, n);
 }
 
@@ -803,7 +804,18 @@ static void step_recv_request(GWHttpSession *s)
                       s->mitmHost, strlen(s->mitmHost));
     }
 
-    gw_log("#%ld %s %s%s:%u%.48s%s", s->id, s->req.method,
+    /*
+     * The listener the session arrived on leads the line.
+     *
+     * It is the one fact that decides whether a request is served from the
+     * archive or the live web, and the log had never carried it -- so a
+     * browser still pointed at :8888 after its configuration was changed
+     * looked exactly like Gateway ignoring the change, with nothing in the
+     * log to separate the two. It is the first thing on the line because it
+     * is the first thing worth checking.
+     */
+    gw_log("#%ld :%d %s %s%s:%u%.40s%s", s->id,
+           s->wayback ? GW_WaybackPort() : GW_HttpPort(), s->req.method,
            s->req.url.tls ? "https " : "", s->req.url.host,
            (unsigned)s->req.url.port, s->req.url.path,
            s->req.shape == kGWShapeConnect ? " (CONNECT)" : "");
