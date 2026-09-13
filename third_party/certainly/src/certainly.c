@@ -448,8 +448,37 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
                 return ctx->state;
             }
 
+            /*
+             * Re-arm the engine before resetting the client, or the
+             * fallback is dead on arrival (PATCHES.md §23).
+             *
+             * br_ssl_engine_fail() sets iomode = BR_IO_FAILED *and* err,
+             * and br_ssl_engine_hs_reset() -- which is all
+             * br_ssl_client_reset() calls -- clears neither. So a client
+             * context that failed once stays failed through every reset,
+             * reporting the same stale code for the rest of its life.
+             * br_ssl_engine_set_buffer() is the only entry point that puts
+             * iomode back to BR_IO_INOUT and err back to BR_ERR_OK, so it
+             * has to run first. Suites, versions, trust anchors and the
+             * seeded RNG all survive it; only the record state is reset.
+             */
+            br_ssl_engine_set_buffer(&ctx->sc.eng, ctx->iobuf,
+                                     sizeof(ctx->iobuf), 0);
+
             /* Re-init BearSSL for TLS 1.2 (the T0 engine will drive) */
-            br_ssl_client_reset(&ctx->sc, ctx->host, 0);
+            if (!br_ssl_client_reset(&ctx->sc, ctx->host, 0)) {
+                /*
+                 * Nothing is retryable past this point: the reset only
+                 * fails on a name too long for the engine or an RNG that
+                 * will not seed, and neither improves by trying again.
+                 * Report it rather than looping on a context that can no
+                 * longer handshake, which is what hid this in the first
+                 * place.
+                 */
+                ctx->state = kMacTLS_Error;
+                ctx->error = kMacTLS_ErrHandshake;
+                return ctx->state;
+            }
 
             /* Mark as NOT TLS 1.3 — future pumps use BearSSL path */
             ctx->tls13_active = false;
@@ -1312,6 +1341,12 @@ uint32_t MacTLS_GetResolvedAddress(const MacTLS_Context *ctx)
 {
     if (ctx == NULL || ctx->transport == NULL) return 0;
     return ct_transport_peer_ipv4(ctx->transport);
+}
+
+int MacTLS_GetTls13Error(const MacTLS_Context *ctx)
+{
+    if (ctx == NULL) return 0;
+    return ctx->hs13.error;
 }
 
 int MacTLS_GetBearSSLError(const MacTLS_Context *ctx)

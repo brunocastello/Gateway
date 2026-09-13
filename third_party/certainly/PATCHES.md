@@ -695,3 +695,67 @@ normal TLS header is still accepted; a `0x0002` version still fails
 `UNSUPPORTED_VERSION`; a second SSLv2 header fails `UNEXPECTED`. What remains
 untested on both sides is the part that only a real browser can exercise: a
 complete handshake through a converted hello, Finished included.
+
+---
+
+## §23 — the TLS 1.2 fallback could not revive a failed engine
+
+*Certainly patch, in `src/certainly.c`.*
+
+Certainly attempts TLS 1.3 with its own state machine and falls back to
+BearSSL's T0 engine when the server will not do 1.3 — by closing the
+connection, reconnecting, and calling `br_ssl_client_reset()`. That reset is
+not enough on its own, and the fallback discarded what it returned.
+
+`br_ssl_engine_fail()` sets two things:
+
+```c
+if (rc->iomode != BR_IO_FAILED) {
+        rc->iomode = BR_IO_FAILED;
+        rc->err = err;
+}
+```
+
+`br_ssl_client_reset()` calls `br_ssl_engine_hs_reset()`, which clears the
+handshake state, the T0 stacks, `alert` and `shutdown_recv` — and neither
+`iomode` nor `err`. It then ends with
+
+```c
+return br_ssl_engine_last_error(&cc->eng) == BR_ERR_OK;
+```
+
+so against an engine that has ever failed it returns 0 and leaves it failed.
+The only entry point that puts `iomode` back to `BR_IO_INOUT` and `err` back
+to `BR_ERR_OK` is `br_ssl_engine_set_buffers_bidi()`, reached through
+`br_ssl_engine_set_buffer()`. The fallback never called it, so a client
+context that failed once reported the same stale number for the rest of its
+life, and the caller — which ignored the return — went on driving it.
+
+The fallback now re-arms the buffer before resetting the client and treats a
+failed reset as fatal rather than looping on a context that can no longer
+handshake. Suites, versions, trust anchors and the seeded RNG all survive
+`set_buffer`; only the record state is reset, which is exactly what a
+reconnect wants.
+
+### Telling the two handshakes apart
+
+`MacTLS_GetBearSSLError()` reports whichever leg failed, and both use
+`BR_ERR_*` numbering, so `TLS 1` in the log could be the 1.3 parser rejecting
+a ServerHello field or the 1.2 engine refusing to start — opposite faults with
+the same number. `MacTLS_GetTls13Error()` now says which, and `gw_stream.c`
+puts it in the line: `TLS 1 1.3` against `TLS 1 1.2`.
+
+### What this does and does not explain
+
+It was found looking for why `www.floodgap.com` fails. That host has no TLS
+1.3 at all — a 1.3 ClientHello draws a `handshake_failure` alert — so it
+always takes this path, where almost nothing else goes, and the log shows four
+identical reconnects each ending in `TLS 1`. A sticky error reproduces exactly
+like that, where a genuine protocol failure would tend to vary.
+
+That is a motive, not a proof. Nothing here establishes that `err` was
+actually non-zero at the moment of the fallback; the engine's handshake is
+deliberately never started before then (`certainly.c`, the note above
+`MacTLS_Create`), so it should be pristine. The defect is real and worth
+fixing on its own terms either way, and the new log marker is what will
+identify the leg next time rather than leaving it to inference.

@@ -159,6 +159,11 @@ long         MacTLS_GetTransportError(const MacTLS_Context *ctx);
 unsigned int MacTLS_GetAlert(const MacTLS_Context *ctx);
 
 int          MacTLS_GetBearSSLError(const MacTLS_Context *ctx);
+/* Non-zero when the failure came from the TLS 1.3 state machine rather than
+ * from BearSSL's TLS 1.2 engine. MacTLS_GetBearSSLError() reports whichever
+ * of the two failed, using the same BR_ERR_* numbering for both, so this is
+ * how a caller tells them apart -- and the two want opposite fixes. */
+int          MacTLS_GetTls13Error(const MacTLS_Context *ctx);
 
 /* Returns the negotiated protocol version, or kMacTLS_VersionUnknown
  * before the handshake completes (state != kMacTLS_Connected). */
