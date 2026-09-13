@@ -1440,8 +1440,44 @@ static void test_prefsform(void)
 
     check(gw_prefsform_find("http_port") != NULL, "a key can be looked up");
     check(gw_prefsform_find("HTTP_PORT") != NULL, "case-insensitively");
-    check(gw_prefsform_find("refresh_token") == NULL,
-          "and a secret is deliberately not in the form");
+
+    /*
+     * Every key Gateway reads has to be in the form. The list is the output
+     * of
+     *
+     *   grep -rhoE 'GWConfig_(Num|Str|GetNth|Set)\("[a-z_]+"' src/ \
+     *     | grep -oE '"[a-z_]+"' | tr -d '"' | sort -u
+     *
+     * so adding a preference and not adding it to the window fails here
+     * rather than being noticed by whoever goes looking for it.
+     */
+    {
+        static const char *const kAllKeys[] = {
+            "connect_mitm", "follow_redirects", "http_enabled", "http_port",
+            "imap_host", "imap_port", "imap_upstream_port", "local_password",
+            "log_file", "mail_enabled", "max_body_mb", "max_connects",
+            "max_sessions", "oauth_client_id", "oauth_client_secret",
+            "oauth_host", "oauth_path", "oauth_scope", "oauth_user",
+            "pop_host", "pop_port", "pop_upstream_port", "provider",
+            "refresh_token", "rewrite_https", "show_window", "smtp_host",
+            "smtp_port", "smtp_starttls", "smtp_upstream_port",
+            "wayback_cache", "wayback_connects", "wayback_ct_encoding",
+            "wayback_date", "wayback_enabled", "wayback_geocities",
+            "wayback_live", "wayback_port", "wayback_quick_images",
+            "wayback_settings", "wayback_tolerance", NULL
+        };
+        int k;
+
+        for (k = 0; kAllKeys[k] != NULL; k++) {
+            if (gw_prefsform_find(kAllKeys[k]) == NULL) {
+                sFailures++;
+                printf("  FAIL  %s is read by Gateway and missing from the "
+                       "Preferences window\n", kAllKeys[k]);
+            }
+            sChecks++;
+        }
+        check(count == k, "and the form carries nothing that is not a key");
+    }
 
     /* Flags. */
     f = gw_prefsform_find("rewrite_https");

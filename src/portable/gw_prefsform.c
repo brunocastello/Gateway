@@ -20,6 +20,8 @@ static const char *kGroupNames[kGWGroupCount] = {
     "Web proxy",
     "Wayback",
     "Mail",
+    "Mail upstream",
+    "OAuth",
     "Log"
 };
 
@@ -39,44 +41,69 @@ const char *gw_prefsform_group_name(int group)
  * loading and the next page obeys.
  */
 static const GWPrefField kFields[] = {
-/*  key                 label                    kind             group            def      min   max  choices                needs  hint */
-{ "http_enabled",     "Web proxy",              kGWFieldFlag,   kGWGroupModules, "1",       0,    0, NULL,                   1, NULL },
-{ "mail_enabled",     "Mail",                   kGWFieldFlag,   kGWGroupModules, "1",       0,    0, NULL,                   1, NULL },
-{ "wayback_enabled",  "Wayback",                kGWFieldFlag,   kGWGroupModules, "1",       0,    0, NULL,                   1, NULL },
-{ "max_sessions",     "Concurrent connections", kGWFieldNumber, kGWGroupModules, "12",      2,   16, NULL,                   1,
+/*  key                     label                          kind            group             def                          min  max    choices              rst  hint */
+{ "http_enabled",         "Web proxy",                   kGWFieldFlag,   kGWGroupModules, "1",                          0,     0, NULL,                 1, NULL },
+{ "mail_enabled",         "Mail",                        kGWFieldFlag,   kGWGroupModules, "1",                          0,     0, NULL,                 1, NULL },
+{ "wayback_enabled",      "Wayback",                     kGWFieldFlag,   kGWGroupModules, "1",                          0,     0, NULL,                 1, NULL },
+{ "max_sessions",         "Concurrent connections",      kGWFieldNumber, kGWGroupModules, "12",                         2,    16, NULL,                 1,
   "Each costs about 110 KB." },
 
-{ "http_port",        "Port",                   kGWFieldNumber, kGWGroupWeb,     "8765",    1, 65535, NULL,                  1, NULL },
-{ "rewrite_https",    "Rewrite https:// links to http://", kGWFieldFlag, kGWGroupWeb, "1", 0, 0, NULL,                       0,
+{ "http_port",            "Port",                        kGWFieldNumber, kGWGroupWeb,     "8765",                       1, 65535, NULL,                 1, NULL },
+{ "rewrite_https",        "Rewrite https:// to http://", kGWFieldFlag,   kGWGroupWeb,     "1",                          0,     0, NULL,                 0,
   "For a browser with no modern TLS of its own." },
-{ "connect_mitm",     "Terminate TLS for a typed https:// URL", kGWFieldFlag, kGWGroupWeb, "0", 0, 0, NULL,                  0,
+{ "connect_mitm",         "Terminate TLS for a typed https:// URL", kGWFieldFlag, kGWGroupWeb, "0",                      0,     0, NULL,                 0,
   "Needs the Gateway CA installed in the browser." },
-{ "follow_redirects", "Follow redirects",       kGWFieldChoice, kGWGroupWeb,     "auto",    0,    0, "auto|always|never",    0,
+{ "follow_redirects",     "Follow redirects",            kGWFieldChoice, kGWGroupWeb,     "auto",                       0,     0, "auto|always|never",  0,
   "auto follows the hops the browser could not." },
-{ "max_body_mb",      "Largest response (MB)",  kGWFieldNumber, kGWGroupWeb,     "0",       0, 1024, NULL,                   0,
+{ "max_body_mb",          "Largest response (MB)",       kGWFieldNumber, kGWGroupWeb,     "0",                          0,  1024, NULL,                 0,
   "0 for no limit." },
-{ "max_connects",     "Connections opening at once", kGWFieldNumber, kGWGroupWeb, "8",      1,    8, NULL,                   0, NULL },
+{ "max_connects",         "Connections opening at once", kGWFieldNumber, kGWGroupWeb,     "8",                          1,     8, NULL,                 0, NULL },
 
-{ "wayback_port",     "Port",                   kGWFieldNumber, kGWGroupArchive, "8888",    1, 65535, NULL,                  1, NULL },
-{ "wayback_date",     "Era (YYYYMMDD)",         kGWFieldText,   kGWGroupArchive, "19991128",0,    0, NULL,                   0,
+{ "wayback_port",         "Port",                        kGWFieldNumber, kGWGroupArchive, "8888",                       1, 65535, NULL,                 1, NULL },
+{ "wayback_date",         "Era (YYYYMMDD)",              kGWFieldText,   kGWGroupArchive, "19991128",                   0,     0, NULL,                 0,
   "Also settable from the browser." },
-{ "wayback_tolerance","Days newer allowed",     kGWFieldNumber, kGWGroupArchive, "730",     0, 36500, NULL,                  0, NULL },
-{ "wayback_connects", "Connections opening at once", kGWFieldNumber, kGWGroupArchive, "1",  1,    8, NULL,                   0,
+{ "wayback_tolerance",    "Days newer allowed",          kGWFieldNumber, kGWGroupArchive, "730",                        0, 36500, NULL,                 0, NULL },
+{ "wayback_connects",     "Connections opening at once", kGWFieldNumber, kGWGroupArchive, "1",                          1,     8, NULL,                 0,
   "The archive refuses bursts." },
-{ "wayback_geocities","GeoCities fix",          kGWFieldFlag,   kGWGroupArchive, "1",       0,    0, NULL,                   0, NULL },
-{ "wayback_cache",    "Let the browser keep snapshots", kGWFieldFlag, kGWGroupArchive, "1", 0,    0, NULL,                   0, NULL },
-{ "wayback_settings", "Serve the settings page", kGWFieldFlag,  kGWGroupArchive, "1",       0,    0, NULL,                   0, NULL },
+{ "wayback_geocities",    "GeoCities fix",               kGWFieldFlag,   kGWGroupArchive, "1",                          0,     0, NULL,                 0, NULL },
+{ "wayback_cache",        "Let the browser keep snapshots", kGWFieldFlag, kGWGroupArchive, "1",                         0,     0, NULL,                 0, NULL },
+{ "wayback_settings",     "Serve the settings page",     kGWFieldFlag,   kGWGroupArchive, "1",                          0,     0, NULL,                 0, NULL },
+{ "wayback_ct_encoding",  "Charset in Content-Type",     kGWFieldFlag,   kGWGroupArchive, "1",                          0,     0, NULL,                 0,
+  "Off strips it; some period browsers choke." },
+{ "wayback_quick_images", "Quick images",                kGWFieldFlag,   kGWGroupArchive, "1",                          0,     0, NULL,                 0,
+  "Accepted for settings-page compatibility; does nothing." },
+{ "wayback_live",         "Fetched live, not archived",  kGWFieldList,   kGWGroupArchive, "",                           0,     0, NULL,                 0,
+  "One host per line. A plain name covers its subdomains." },
 
-{ "provider",         "Provider",               kGWFieldChoice, kGWGroupMail,    "outlook", 0,    0, "outlook|gmail",        1, NULL },
-{ "oauth_user",       "Address",                kGWFieldText,   kGWGroupMail,    "",        0,    0, NULL,                   1, NULL },
-{ "local_password",   "Password for the mail client", kGWFieldSecret, kGWGroupMail, "",     0,    0, NULL,                   0,
+{ "provider",             "Provider",                    kGWFieldChoice, kGWGroupMail,    "outlook",                    0,     0, "outlook|gmail|custom", 1,
+  "Supplies the hosts and OAuth endpoint below." },
+{ "oauth_user",           "Address",                     kGWFieldText,   kGWGroupMail,    "",                           0,     0, NULL,                 1, NULL },
+{ "local_password",       "Password for the mail client", kGWFieldSecret, kGWGroupMail,   "",                           0,     0, NULL,                 0,
   "Checked here; never leaves the machine." },
-{ "imap_port",        "IMAP port",              kGWFieldNumber, kGWGroupMail,    "1993",    1, 65535, NULL,                  1, NULL },
-{ "pop_port",         "POP port",               kGWFieldNumber, kGWGroupMail,    "1995",    1, 65535, NULL,                  1, NULL },
-{ "smtp_port",        "SMTP port",              kGWFieldNumber, kGWGroupMail,    "1587",    1, 65535, NULL,                  1, NULL },
+{ "imap_port",            "IMAP port",                   kGWFieldNumber, kGWGroupMail,    "1993",                       1, 65535, NULL,                 1, NULL },
+{ "pop_port",             "POP port",                    kGWFieldNumber, kGWGroupMail,    "1995",                       1, 65535, NULL,                 1, NULL },
+{ "smtp_port",            "SMTP port",                   kGWFieldNumber, kGWGroupMail,    "1587",                       1, 65535, NULL,                 1, NULL },
 
-{ "show_window",      "Show the log window at launch", kGWFieldFlag, kGWGroupLog, "1",      0,    0, NULL,                   0, NULL },
-{ "log_file",         "Also write the log to a file", kGWFieldFlag, kGWGroupLog, "0",       0,    0, NULL,                   1,
+{ "imap_host",            "IMAP host",                   kGWFieldText,   kGWGroupUpstream, "outlook.office365.com",     0,     0, NULL,                 0, NULL },
+{ "imap_upstream_port",   "IMAP port",                   kGWFieldNumber, kGWGroupUpstream, "993",                       1, 65535, NULL,                 0, NULL },
+{ "pop_host",             "POP host",                    kGWFieldText,   kGWGroupUpstream, "outlook.office365.com",     0,     0, NULL,                 0, NULL },
+{ "pop_upstream_port",    "POP port",                    kGWFieldNumber, kGWGroupUpstream, "995",                       1, 65535, NULL,                 0, NULL },
+{ "smtp_host",            "SMTP host",                   kGWFieldText,   kGWGroupUpstream, "smtp-mail.outlook.com",     0,     0, NULL,                 0, NULL },
+{ "smtp_upstream_port",   "SMTP port",                   kGWFieldNumber, kGWGroupUpstream, "587",                       1, 65535, NULL,                 0, NULL },
+{ "smtp_starttls",        "STARTTLS on the SMTP port",   kGWFieldFlag,   kGWGroupUpstream, "1",                         0,     0, NULL,                 0,
+  "Off for port 465, which is TLS from the first byte." },
+
+{ "oauth_host",           "Token host",                  kGWFieldText,   kGWGroupOAuth,   "login.microsoftonline.com",  0,     0, NULL,                 0, NULL },
+{ "oauth_path",           "Token path",                  kGWFieldText,   kGWGroupOAuth,   "/common/oauth2/v2.0/token",  0,     0, NULL,                 0, NULL },
+{ "oauth_scope",          "Scope",                       kGWFieldText,   kGWGroupOAuth,   "",                           0,     0, NULL,                 0, NULL },
+{ "oauth_client_id",      "Client ID",                   kGWFieldText,   kGWGroupOAuth,   "",                           0,     0, NULL,                 0, NULL },
+{ "oauth_client_secret",  "Client secret",               kGWFieldSecret, kGWGroupOAuth,   "",                           0,     0, NULL,                 0,
+  "Google issues one even for desktop clients." },
+{ "refresh_token",        "Refresh token",               kGWFieldSecret, kGWGroupOAuth,   "",                           0,     0, NULL,                 0,
+  "Rewritten by Gateway when the provider rotates it." },
+
+{ "show_window",          "Show the log window at launch", kGWFieldFlag, kGWGroupLog,     "1",                          0,     0, NULL,                 0, NULL },
+{ "log_file",             "Also write the log to a file", kGWFieldFlag,  kGWGroupLog,     "0",                          0,     0, NULL,                 1,
   "The window keeps only the last 200 lines." }
 };
 
@@ -178,6 +205,13 @@ int gw_prefsform_validate(const GWPrefField *f, const char *value,
         return 0;
     }
 
+    case kGWFieldList:
+        /*
+         * The control holds one value per line and the caller splits it, so
+         * what arrives here is a single entry. An empty one is dropped rather
+         * than refused: a trailing newline in a list box is not a mistake
+         * worth a sheet.
+         */
     case kGWFieldText:
     case kGWFieldSecret:
     default:

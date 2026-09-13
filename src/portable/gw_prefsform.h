@@ -26,7 +26,8 @@ typedef enum {
     kGWFieldNumber,     /* numeric entry, clamped to [min,max]             */
     kGWFieldText,       /* free text                                       */
     kGWFieldSecret,     /* free text, shown as bullets                     */
-    kGWFieldChoice      /* one of `choices`, a '|'-separated list          */
+    kGWFieldChoice,     /* one of `choices`, a '|'-separated list          */
+    kGWFieldList        /* a repeated key: one value per line in the control */
 } GWFieldKind;
 
 /*
@@ -40,6 +41,8 @@ typedef enum {
     kGWGroupWeb,
     kGWGroupArchive,
     kGWGroupMail,
+    kGWGroupUpstream,
+    kGWGroupOAuth,
     kGWGroupLog,
     kGWGroupCount
 } GWFieldGroup;
