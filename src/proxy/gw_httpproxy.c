@@ -1045,7 +1045,27 @@ static void step_recv_head(GWHttpSession *s)
                               GWStream_TlsVersion(&s->up) == 12 ? "1.2" : "?")
                            : "-",
                  res.status, s->req.url.host);
-    if (res.has_content_length)
+    if (res.status == 206) {
+        /*
+         * A partial response is the browser's cache talking, not the site's:
+         * it asked for a range because it already holds part of the entity.
+         * The range is the whole content of the answer, so a line reporting
+         * only the byte count says nothing about whether the right bytes
+         * came back -- which is the only question a broken image raises.
+         */
+        size_t      crLen = 0;
+        const char *cr = gw_header_find(s->uhead, res.head_len,
+                                        "content-range", &crLen);
+        char        range[64];
+
+        if (cr != NULL) {
+            gw_copy_n(range, sizeof(range), cr, crLen);
+            gw_log("#%ld <- 206 %s %s", s->id, s->req.url.host, range);
+        } else {
+            gw_log("#%ld <- 206 %s with no Content-Range, which is a fault",
+                   s->id, s->req.url.host);
+        }
+    } else if (res.has_content_length)
         gw_log("#%ld <- %d %s %ld bytes", s->id, res.status,
                s->req.url.host, res.content_length);
     else
