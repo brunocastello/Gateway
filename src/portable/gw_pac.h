@@ -19,6 +19,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * Fetches allow-list pattern number `index` into `out`, returning 0 when
  * there are no more. The patterns are globs against a host name, the same
@@ -59,5 +63,9 @@ int gw_pac_is_request(const char *path);
 /* What the script has to be served as. Internet Explorer and Netscape both
  * want this exact type and neither accepts text/plain. */
 #define GW_PAC_CONTENT_TYPE "application/x-ns-proxy-autoconfig"
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* GW_PAC_H */

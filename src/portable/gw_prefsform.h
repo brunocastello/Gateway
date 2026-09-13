@@ -21,6 +21,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
     kGWFieldFlag = 0,   /* checkbox; value is "1" or "0"                   */
     kGWFieldNumber,     /* numeric entry, clamped to [min,max]             */
@@ -94,5 +98,9 @@ int gw_prefsform_validate(const GWPrefField *f, const char *value,
  * spelling intact for every line nobody touched.
  */
 int gw_prefsform_changed(const char *current, const char *value);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* GW_PREFSFORM_H */
