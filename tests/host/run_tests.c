@@ -17,6 +17,7 @@
 #include "gw_oauth.h"
 #include "gw_pac.h"
 #include "gw_prefs.h"
+#include "gw_prefsform.h"
 #include "gw_rewrite.h"
 #include "gw_x509write.h"
 #include "gw_url.h"
@@ -1361,6 +1362,126 @@ static void test_prefs_list(void)
                        buf, sizeof(buf)) == 1, "gw_prefs_get is unchanged");
 }
 
+/* ------------------------------------------------------------------ */
+
+static void test_prefs_list_write(void)
+{
+    static const char text[] =
+        "# the hosts fetched live\n"
+        "wayback_live = old.example\n"
+        "wayback_live = gone.example\n"
+        "http_port = 8765\n";
+    static const char *vals[] = { "frogfind.com", "68k.news", "floodgap.com" };
+    char out[1024];
+    size_t n;
+
+    printf("gw_prefs_set_list\n");
+
+    n = gw_prefs_set_list(text, sizeof(text) - 1, "wayback_live",
+                          vals, 3, out, sizeof(out));
+    check(n > 0 && n < sizeof(out), "the list is written");
+    out[n] = '\0';
+    check_str(out,
+        "# the hosts fetched live\n"
+        "wayback_live = frogfind.com\n"
+        "wayback_live = 68k.news\n"
+        "wayback_live = floodgap.com\n"
+        "http_port = 8765\n",
+        "every old entry is replaced, in place, and the comment stays");
+
+    /* An empty list removes the key and nothing else. */
+    n = gw_prefs_set_list(text, sizeof(text) - 1, "wayback_live",
+                          vals, 0, out, sizeof(out));
+    out[n] = '\0';
+    check_str(out, "# the hosts fetched live\nhttp_port = 8765\n",
+              "an empty list removes every entry");
+
+    /* A key that is not there yet is appended. */
+    n = gw_prefs_set_list("http_port = 8765\n", 17, "wayback_live",
+                          vals, 1, out, sizeof(out));
+    out[n] = '\0';
+    check_str(out, "http_port = 8765\nwayback_live = frogfind.com\n",
+              "an absent key is appended");
+
+    check(gw_prefs_set_list(text, sizeof(text) - 1, "wayback_live",
+                            vals, 3, out, 20) == 0,
+          "a buffer too small writes nothing rather than half a file");
+}
+
+static void test_prefsform(void)
+{
+    const GWPrefField *f;
+    char        out[128];
+    const char *why;
+    int         i, count = 0;
+
+    printf("gw_prefsform\n");
+
+    f = gw_prefsform_fields(&count);
+    check(f != NULL && count > 0, "there is a table");
+
+    /* Every field has to be usable by a window that knows nothing else. */
+    for (i = 0; i < count; i++) {
+        check(f[i].key != NULL && f[i].key[0] != '\0', "every field has a key");
+        check(f[i].label != NULL && f[i].label[0] != '\0',
+              "every field has a label");
+        check(f[i].def != NULL, "every field has a default");
+        check(f[i].group >= 0 && f[i].group < kGWGroupCount,
+              "every field is in a real group");
+        if (f[i].kind == kGWFieldChoice)
+            check(f[i].choices != NULL, "every choice field lists its choices");
+        if (f[i].kind == kGWFieldNumber)
+            check(f[i].min <= f[i].max, "every number field has a range");
+        /* Its own default must survive validation, or the window cannot even
+         * draw an untouched file. */
+        check(gw_prefsform_validate(&f[i], f[i].def, out, sizeof(out), &why),
+              "every default is a value the field accepts");
+    }
+
+    check(gw_prefsform_find("http_port") != NULL, "a key can be looked up");
+    check(gw_prefsform_find("HTTP_PORT") != NULL, "case-insensitively");
+    check(gw_prefsform_find("refresh_token") == NULL,
+          "and a secret is deliberately not in the form");
+
+    /* Flags. */
+    f = gw_prefsform_find("rewrite_https");
+    check(gw_prefsform_validate(f, "yes", out, sizeof(out), &why), "yes is on");
+    check_str(out, "1", "and is stored as 1");
+    check(gw_prefsform_validate(f, "OFF", out, sizeof(out), &why), "OFF is off");
+    check_str(out, "0", "and is stored as 0");
+    check(!gw_prefsform_validate(f, "maybe", out, sizeof(out), &why),
+          "anything else is refused");
+    check(why != NULL, "with something to show the person");
+
+    /* Numbers clamp rather than refuse. */
+    f = gw_prefsform_find("max_sessions");
+    check(gw_prefsform_validate(f, "40", out, sizeof(out), &why), "40 is taken");
+    check_str(out, "16", "and clamped to the maximum");
+    check(gw_prefsform_validate(f, "1", out, sizeof(out), &why), "1 is taken");
+    check_str(out, "2", "and clamped to the minimum");
+    check(!gw_prefsform_validate(f, "lots", out, sizeof(out), &why),
+          "but a word is not a number");
+
+    /* Choices are matched loosely and stored exactly. */
+    f = gw_prefsform_find("follow_redirects");
+    check(gw_prefsform_validate(f, "NEVER", out, sizeof(out), &why),
+          "a choice is matched case-insensitively");
+    check_str(out, "never", "and stored in the table's spelling");
+    check(!gw_prefsform_validate(f, "sometimes", out, sizeof(out), &why),
+          "and nothing else is a choice");
+
+    /* Text may not carry a line break into the file. */
+    f = gw_prefsform_find("oauth_user");
+    check(gw_prefsform_validate(f, "someone@example.com", out, sizeof(out), &why),
+          "an address is text");
+    check(!gw_prefsform_validate(f, "a\nhttp_port = 1", out, sizeof(out), &why),
+          "a line break is refused, or it would become a second setting");
+
+    check(gw_prefsform_changed("8765", "8888"), "a difference is a change");
+    check(!gw_prefsform_changed("8765", "8765"), "and sameness is not");
+    check(!gw_prefsform_changed(NULL, ""), "absent and empty are the same");
+}
+
 int main(void)
 {
     test_util();
@@ -1379,6 +1500,8 @@ int main(void)
     test_x509write();
     test_host_match();
     test_prefs_list();
+    test_prefs_list_write();
+    test_prefsform();
     test_pac();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);

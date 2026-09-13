@@ -38,6 +38,21 @@ int gw_prefs_get(const char *text, size_t len, const char *key,
 int gw_prefs_get_nth(const char *text, size_t len, const char *key, int n,
                      char *out, size_t cap);
 
+/*
+ * Replace every occurrence of a repeated key with the `count` values in
+ * `values`, writing the whole file to out. The first occurrence keeps its
+ * place in the file so a list stays where its comment is; the rest are
+ * removed and the remaining values written after it. A count of 0 removes the
+ * key. Returns bytes written, or 0 if it would not fit.
+ *
+ * gw_prefs_set() cannot do this: it replaces the first match and leaves the
+ * others, which for a list means writing one entry and silently keeping the
+ * old rest.
+ */
+size_t gw_prefs_set_list(const char *text, size_t len, const char *key,
+                         const char *const *values, int count,
+                         char *out, size_t cap);
+
 /* Same, but parses the value as a decimal number. Returns def when absent. */
 long gw_prefs_get_num(const char *text, size_t len, const char *key, long def);
 

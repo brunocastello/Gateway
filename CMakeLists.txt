@@ -150,6 +150,7 @@ add_library(gw_portable STATIC
     src/portable/gw_x509write.c
     src/portable/gw_wayback.c
     src/portable/gw_pac.c
+    src/portable/gw_prefsform.c
 )
 target_include_directories(gw_portable PUBLIC src/portable)
 target_compile_options(gw_portable PRIVATE -Wall -Wextra -Wno-unused-parameter)
