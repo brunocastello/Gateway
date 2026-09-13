@@ -373,6 +373,18 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
         addr  = GWConn_PeerIPv4(s->plain);
     }
 
+    /*
+     * Which version was negotiated, when the handshake got far enough to
+     * settle one. A connection that reached TLS 1.2 came through the
+     * fallback -- Certainly always opens with 1.3 -- so this says which of
+     * the two paths the session was actually on when it failed.
+     */
+    {
+        int ver = GWStream_TlsVersion(s);
+        if (ver == 12) leg = " 1.2";
+        else if (ver == 13) leg = " 1.3";
+    }
+
     if (tlsErr >= 0x1000) {
         snprintf(code, sizeof(code), "0x%X", (unsigned)tlsErr);
     } else {

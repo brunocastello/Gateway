@@ -575,13 +575,20 @@ static int wayback_prepare(GWHttpSession *s)
  * and the difference between a site whose certificate really does not cover it
  * and Gateway having asked for the wrong thing is the whole diagnosis. So the
  * host it validated against goes in the line.
+ *
+ * `what` names the condition the caller observed, because the stream's own
+ * description can be "ok" -- an origin that completes a handshake and then
+ * closes without answering leaves no error anywhere, and "www.floodgap.com:
+ * ok" as a failure reason says nothing at all. The observation and the error
+ * are different facts and the line now carries both.
  */
-static const char *upstream_why(GWHttpSession *s, char *out, size_t cap)
+static const char *upstream_why(GWHttpSession *s, const char *what,
+                                char *out, size_t cap)
 {
     char desc[192];
 
-    snprintf(out, cap, "%s: %s", s->upHost[0] ? s->upHost : "upstream",
-             GWStream_Describe(&s->up, desc, sizeof(desc)));
+    snprintf(out, cap, "%s %s: %s", s->upHost[0] ? s->upHost : "upstream",
+             what, GWStream_Describe(&s->up, desc, sizeof(desc)));
     return out;
 }
 
@@ -908,7 +915,7 @@ static void step_recv_head(GWHttpSession *s)
              */
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
-                         upstream_why(s, why, sizeof(why)));
+                         upstream_why(s, "read failed", why, sizeof(why)));
             return;
         }
     }
@@ -931,7 +938,8 @@ static void step_recv_head(GWHttpSession *s)
              */
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
-                         upstream_why(s, why, sizeof(why)));
+                         upstream_why(s, "closed before responding",
+                                      why, sizeof(why)));
         }
         return;
     }
@@ -1559,7 +1567,8 @@ static void session_step(GWHttpSession *s)
                 session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                                 "Connection: close\r\n\r\n"
                                 "Gateway: could not reach the origin server.\r\n",
-                             upstream_why(s, why, sizeof(why)));
+                             upstream_why(s, "could not be reached",
+                                          why, sizeof(why)));
             }
         }
         break;
