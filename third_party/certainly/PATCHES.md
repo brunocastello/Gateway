@@ -759,3 +759,57 @@ deliberately never started before then (`certainly.c`, the note above
 `MacTLS_Create`), so it should be pristine. The defect is real and worth
 fixing on its own terms either way, and the new log marker is what will
 identify the leg next time rather than leaving it to inference.
+
+---
+
+## §24 — a failed ServerHello could not say which field it disliked
+
+*Certainly patch, in `src/tls13_handshake.c`.*
+
+The TLS 1.3 ServerHello path had seventeen separate ways to answer
+`BR_ERR_BAD_PARAM`. All of them arrive in the log as `TLS 1`, and none of them
+says which field was wrong or even which check ran. Diagnosing one cost three
+rounds of inference about a server nobody here can packet-capture.
+
+Those sites now answer `0x3000 | __LINE__`. Subtract `0x3000` from the number
+in the log and the remainder is the line in `tls13_handshake.c` — for the
+build the log came from, which the `GW_BUILD_ID` stamp identifies, since the
+line numbers move whenever the file does. The rest of the file still answers
+`BR_ERR_BAD_PARAM`; only the path that has needed finding was changed.
+
+`gw_stream.c` prints any code at or above `0x1000` in hex, so the encoded
+families read straight off: `0x1LLDD` is an alert the peer sent, `0x2000|type`
+a record that was not one, `0x3000|line` a rejected field. Plain `BR_ERR_*`
+numbers stay decimal, which is how they are quoted everywhere else.
+
+### The ordering fault behind it
+
+The record header was read in the wrong order:
+
+```c
+record_type = recv_buf[0];
+record_len = get_u16(recv_buf + 3);
+
+if (record_len > TLS13_MAX_CIPHERTEXT) {   /* ran first */
+        ...BAD_PARAM
+}
+...
+if (record_type != TLS13_CT_HANDSHAKE) {   /* could not be reached */
+        hs->error = 0x2000 | (int)record_type;
+}
+```
+
+The length only means anything once the first byte says this is a TLS record
+at all. A server answering 443 with plain text sends `HTTP/`, whose bytes 3
+and 4 read as a 20527-byte record, so the length check rejected it as a bad
+parameter without ever looking at the byte that would have explained it — and
+the unexpected-type branch below was unreachable for any type whose header
+happened to encode an absurd length, which is most of them. The type is now
+validated first.
+
+### Not a fix for anything yet
+
+This diagnoses; it does not repair. It was written because
+`www.floodgap.com` fails with `TLS 1 1.3` — the 1.3 state machine, not the
+1.2 engine that §23 addressed — and none of the seventeen sites could be
+ruled in or out from here. The next log from that host names the line.

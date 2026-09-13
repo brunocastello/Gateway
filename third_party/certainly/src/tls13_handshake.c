@@ -215,6 +215,21 @@ static int tls13_generate_p256_keypair(tls13_hs_ctx *hs,
     return 0;
 }
 
+/*
+ * Where a malformed-field rejection happened, as 0x3000 | source line
+ * (Gateway patch, PATCHES.md §24).
+ *
+ * The ServerHello path had fourteen separate ways to answer
+ * BR_ERR_BAD_PARAM, all of which reach the log as "TLS 1" and none of which
+ * says which field was wrong. Chasing one of them cost three rounds of
+ * guessing at a site nobody here can packet-capture. Subtract 0x3000 from
+ * the number in the log and the remainder is the line in this file.
+ *
+ * Only the ServerHello path uses this. The rest of the file still answers
+ * BR_ERR_BAD_PARAM, because the rest of the file has never needed finding.
+ */
+#define TLS13_FAIL_AT (0x3000 | (__LINE__ & 0xFFF))
+
 /* ── ClientHello Builder ── */
 
 /*
@@ -775,7 +790,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
      * 2 (cipher suite) + 1 (compression) + 2 (extensions length) = 44
      */
     if (msg_len < 44) {
-        hs->error = BR_ERR_BAD_PARAM;
+        hs->error = TLS13_FAIL_AT;
         return kTLS13_Error;
     }
 
@@ -789,7 +804,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
 
     /* Sanity check: declared length must match available data */
     if (hs_msg_len + 4 > msg_len) {
-        hs->error = BR_ERR_BAD_PARAM;
+        hs->error = TLS13_FAIL_AT;
         return kTLS13_Error;
     }
 
@@ -811,14 +826,14 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
     session_id_len = msg[pos];
     pos += 1;
     if (pos + session_id_len > msg_len) {
-        hs->error = BR_ERR_BAD_PARAM;
+        hs->error = TLS13_FAIL_AT;
         return kTLS13_Error;
     }
     pos += session_id_len;
 
     /* CipherSuite (2 bytes) */
     if (pos + 2 > msg_len) {
-        hs->error = BR_ERR_BAD_PARAM;
+        hs->error = TLS13_FAIL_AT;
         return kTLS13_Error;
     }
     cipher_suite = get_u16(msg + pos);
@@ -826,7 +841,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
 
     /* legacy_compression_method: must be 0 */
     if (pos >= msg_len || msg[pos] != 0) {
-        hs->error = BR_ERR_BAD_PARAM;
+        hs->error = TLS13_FAIL_AT;
         return kTLS13_Error;
     }
     pos += 1;
@@ -841,7 +856,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
     ext_end = pos + ext_total_len;
 
     if (ext_end > msg_len) {
-        hs->error = BR_ERR_BAD_PARAM;
+        hs->error = TLS13_FAIL_AT;
         return kTLS13_Error;
     }
 
@@ -852,7 +867,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
         pos += 4;
 
         if (pos + ext_len > ext_end) {
-            hs->error = BR_ERR_BAD_PARAM;
+            hs->error = TLS13_FAIL_AT;
             return kTLS13_Error;
         }
 
@@ -864,7 +879,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
              * (Unlike ClientHello which sends a list.)
              */
             if (ext_len != 2) {
-                hs->error = BR_ERR_BAD_PARAM;
+                hs->error = TLS13_FAIL_AT;
                 return kTLS13_Error;
             }
             negotiated_version = get_u16(ext_data);
@@ -881,7 +896,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
              * For X25519, key_exchange is 32 bytes (the u-coordinate).
              */
             if (ext_len < 4) {
-                hs->error = BR_ERR_BAD_PARAM;
+                hs->error = TLS13_FAIL_AT;
                 return kTLS13_Error;
             }
             {
@@ -895,18 +910,18 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
                 } else if (group == TLS13_GROUP_SECP256R1) {
                     want = TLS13_P256_POINT_LEN;
                 } else {
-                    hs->error = BR_ERR_BAD_PARAM;
+                    hs->error = TLS13_FAIL_AT;
                     return kTLS13_Error;
                 }
 
                 if (ke_len != want || ext_len != 4 + want) {
-                    hs->error = BR_ERR_BAD_PARAM;
+                    hs->error = TLS13_FAIL_AT;
                     return kTLS13_Error;
                 }
                 if (group == TLS13_GROUP_SECP256R1 &&
                     ext_data[4] != 0x04) {
                     /* Only the uncompressed point form is legal in TLS 1.3. */
-                    hs->error = BR_ERR_BAD_PARAM;
+                    hs->error = TLS13_FAIL_AT;
                     return kTLS13_Error;
                 }
 
@@ -923,13 +938,13 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
              *   opaque cookie[cookie_length]
              */
             if (ext_len < 2) {
-                hs->error = BR_ERR_BAD_PARAM;
+                hs->error = TLS13_FAIL_AT;
                 return kTLS13_Error;
             }
             {
                 uint16_t cookie_len = get_u16(ext_data);
                 if (cookie_len + 2 != ext_len) {
-                    hs->error = BR_ERR_BAD_PARAM;
+                    hs->error = TLS13_FAIL_AT;
                     return kTLS13_Error;
                 }
                 if (cookie_len > sizeof(hs->cookie)) {
@@ -1005,7 +1020,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
      * Regular ServerHello — we need a key_share extension.
      */
     if (!found_key_share) {
-        hs->error = BR_ERR_BAD_PARAM;
+        hs->error = TLS13_FAIL_AT;
         return kTLS13_Error;
     }
 
@@ -1061,7 +1076,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
                                              shared_secret);
         }
         if (ret != 0) {
-            hs->error = BR_ERR_BAD_PARAM;
+            hs->error = TLS13_FAIL_AT;
             return kTLS13_Error;
         }
 
@@ -1150,11 +1165,31 @@ static tls13_hs_result tls13_state_recv_server_hello(tls13_hs_ctx *hs,
     record_len = get_u16(recv_buf + 3);
     total = (size_t)5 + record_len;
 
+    /*
+     * Content type before length (Gateway patch, PATCHES.md §24).
+     *
+     * The length field only means something once the first byte says this is
+     * a TLS record at all. A server that answers 443 with plain text sends
+     * "HTTP/..." whose bytes 3 and 4 read as a 20527-byte record, and the
+     * length check below then rejected it as a bad parameter -- a length
+     * fault reported for something that was never a record, with the byte
+     * that would have said so never looked at. The unexpected-type branch
+     * further down could not be reached for any type whose header happened
+     * to encode an absurd length, which is most of them.
+     */
+    if (record_type != TLS13_CT_CHANGE_CIPHER_SPEC &&
+        record_type != TLS13_CT_ALERT &&
+        record_type != TLS13_CT_HANDSHAKE)
+    {
+        hs->error = 0x2000 | (int)record_type;
+        return kTLS13_Error;
+    }
+
     /* Gateway patch (see PATCHES.md): same reasoning as in
      * tls13_read_encrypted_hs -- a record longer than the receive buffer can
      * never complete, so waiting for it hangs the handshake. */
     if (record_len > TLS13_MAX_CIPHERTEXT) {
-        hs->error = BR_ERR_BAD_PARAM;
+        hs->error = TLS13_FAIL_AT;
         return kTLS13_Error;
     }
 

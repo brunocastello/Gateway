@@ -342,6 +342,13 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
      * want opposite fixes. Naming it saves the guess.
      */
     const char   *leg = "";
+    /*
+     * The encoded diagnostics -- 0x1LLDD for an alert, 0x2000|type for a
+     * record that is not one, 0x3000|line for a rejected ServerHello field --
+     * are printed in hex so their parts can be read straight off. A plain
+     * BR_ERR_* number stays decimal, which is how everyone quotes them.
+     */
+    char          code[16];
 
     if (cap == 0) return out;
 
@@ -364,6 +371,12 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
     } else if (s != NULL && s->plain != NULL) {
         otErr = GWConn_LastError(s->plain);
         addr  = GWConn_PeerIPv4(s->plain);
+    }
+
+    if (tlsErr >= 0x1000) {
+        snprintf(code, sizeof(code), "0x%X", (unsigned)tlsErr);
+    } else {
+        snprintf(code, sizeof(code), "%d", tlsErr);
     }
 
     {
@@ -391,15 +404,15 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
             snprintf(why, sizeof(why), ", alert %u/%u",
                      (alert >> 8) & 0xFF, alert & 0xFF);
 
-        snprintf(out, cap, "%s [%s, OT %d, TLS %d%s, %lu.%lu.%lu.%lu%s]",
-                 GWStream_ErrorText(s), phase, (int)otErr, tlsErr, leg,
+        snprintf(out, cap, "%s [%s, OT %d, TLS %s%s, %lu.%lu.%lu.%lu%s]",
+                 GWStream_ErrorText(s), phase, (int)otErr, code, leg,
                  (unsigned long)((addr >> 24) & 0xFF),
                  (unsigned long)((addr >> 16) & 0xFF),
                  (unsigned long)((addr >> 8) & 0xFF),
                  (unsigned long)(addr & 0xFF), why);
     } else {
-        snprintf(out, cap, "%s [%s, OT %d, TLS %d%s, name unresolved]",
-                 GWStream_ErrorText(s), phase, (int)otErr, tlsErr, leg);
+        snprintf(out, cap, "%s [%s, OT %d, TLS %s%s, name unresolved]",
+                 GWStream_ErrorText(s), phase, (int)otErr, code, leg);
     }
     return out;
 }
