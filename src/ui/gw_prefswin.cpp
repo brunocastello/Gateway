@@ -171,6 +171,7 @@ private:
     void Save();
     void Revert();
     void Note(const char *text);
+    short TrackPopup(ControlHandle ctl, short menuID);
     short MeasureGroup(int group) const;
     void  LayoutWindow(int group);
 
@@ -784,6 +785,44 @@ void PrefsWindow::SetFocus(int row)
         TEActivate(mRows[mFocus].te);
 }
 
+/*
+ * Open one popup and return the item chosen, or 0.
+ *
+ * The popup control definition draws correctly and does not track: a click in
+ * it through FindControl and TrackControl goes nowhere, twice over now. So
+ * the menu is driven directly. PopUpMenuSelect is the call the definition
+ * would have made, it needs only a menu that InsertMenu(menu, -1) put in the
+ * popup list, and hit-testing the control's own rectangle keeps the
+ * definition's testCntl out of it as well -- which is the other half of the
+ * path that was not working.
+ */
+short PrefsWindow::TrackPopup(ControlHandle ctl, short menuID)
+{
+    MenuHandle menu = GetMenuHandle(menuID);
+    Rect       r;
+    Point      tl;
+    short      current;
+    long       choice;
+
+    if (ctl == 0 || menu == 0) return 0;
+
+    r = (**ctl).contrlRect;
+    current = GetControlValue(ctl);
+
+    /* Put the menu where the control is, with the current item over it, the
+     * way a popup is supposed to appear. */
+    tl.h = static_cast<short>(r.left + 1);
+    tl.v = static_cast<short>(r.top + 1);
+    LocalToGlobal(&tl);
+
+    HiliteControl(ctl, 1);
+    choice = PopUpMenuSelect(menu, tl.v, tl.h, current);
+    HiliteControl(ctl, 0);
+
+    if (choice == 0) return 0;
+    return static_cast<short>(choice & 0xFFFF);
+}
+
 bool PrefsWindow::HandleClick(Point where)
 {
     ControlHandle ctl;
@@ -799,33 +838,43 @@ bool PrefsWindow::HandleClick(Point where)
     SetPort(reinterpret_cast<GrafPtr>(mWindow));
     GlobalToLocal(&where);
 
+    /* The group popup, tested against its own rectangle. */
+    if (mGroupPopup != 0 && PtInRect(where, &(**mGroupPopup).contrlRect)) {
+        short item = TrackPopup(mGroupPopup, kGroupMenuID);
+
+        if (item >= 1 && item <= kGWGroupCount &&
+            item - 1 != mGroup) {
+            SetControlValue(mGroupPopup, item);
+            ReadGroupBack();
+            BuildGroup(static_cast<short>(item - 1));
+            InvalRect(&reinterpret_cast<GrafPtr>(mWindow)->portRect);
+        }
+        return true;
+    }
+
+    /* A choice field's popup, likewise. */
+    for (i = 0; i < mRowCount; i++) {
+        if (mRows[i].menuID == 0 || mRows[i].control == 0) continue;
+        if (!PtInRect(where, &(**mRows[i].control).contrlRect)) continue;
+        {
+            short item = TrackPopup(mRows[i].control, mRows[i].menuID);
+
+            if (item >= 1 && item <= mRows[i].altCount) {
+                SetControlValue(mRows[i].control, item);
+                mDirty = true;
+            }
+        }
+        return true;
+    }
+
     part = FindControl(where, mWindow, &ctl);
     if (part != 0 && ctl != 0) {
         long ref = (**ctl).contrlRfCon;
 
         if (TrackControl(ctl, where, 0) == 0) return true;
 
-        if (ref == kRefGroup) {
-            short g;
-
-            /* TrackControl has already moved the popup to what was chosen. */
-            g = static_cast<short>(GetControlValue(ctl) - 1);
-            if (g >= 0 && g < kGWGroupCount && g != mGroup) {
-                ReadGroupBack();
-                BuildGroup(g);
-                InvalRect(&reinterpret_cast<GrafPtr>(mWindow)->portRect);
-            }
-            return true;
-        }
-
         if (ref == kRefCheck) {
             SetControlValue(ctl, GetControlValue(ctl) != 0 ? 0 : 1);
-            mDirty = true;
-            return true;
-        }
-
-        if (ref == kRefChoice) {
-            /* The popup holds the answer; ReadGroupBack reads it back. */
             mDirty = true;
             return true;
         }
