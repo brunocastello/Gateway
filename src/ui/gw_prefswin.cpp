@@ -323,9 +323,18 @@ ControlHandle MakeLabel(WindowPtr w, const Rect *r, const char *text,
     ControlHandle       c;
     Str255              s;
 
-    ToPascal(text, s);
+    ToPascal("", s);
     c = NewControl(w, r, s, true, 0, 0, 0, kControlStaticTextProc, 0);
     if (c == 0) return 0;
+
+    /*
+     * A static text control does not display its title. The title is what
+     * NewControl takes and what a checkbox draws; this one keeps its text in
+     * kControlStaticTextTextTag, which is why every label in the window came
+     * out blank while the checkboxes beside them were fine.
+     */
+    SetControlData(c, kControlEntireControl, kControlStaticTextTextTag,
+                   (Size)strlen(text), (Ptr)text);
 
     style.flags = kControlUseFontMask | kControlUseJustMask;
     style.font = kControlFontSmallSystemFont;
@@ -651,8 +660,18 @@ bool PrefsWindow::HandleEvent(EventRecord *ev)
              * entry point, and it is what makes an edit text control take a
              * click as a selection and a popup open its menu.
              */
-            hit = FindControlUnderMouse(where, mWindow, 0);
-            if (hit == 0) return true;
+            /*
+             * FindControl, not FindControlUnderMouse. With a root control in
+             * the window the latter answers the root -- which contains
+             * everything and does nothing when clicked -- so every click was
+             * delivered to a control that ignores them and the window looked
+             * dead.
+             */
+            {
+                short part = FindControl(where, mWindow, &hit);
+
+                if (part == 0 || hit == 0 || hit == mRoot) return true;
+            }
             HandleControlClick(hit, where, ev->modifiers, 0);
 
             if (hit == mGroupPopup) {
