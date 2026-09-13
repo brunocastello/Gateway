@@ -79,17 +79,21 @@ want depends on whether the browser can reach TLS 1.0 at all.
 | `connect_mitm = 1`, `rewrite_https = 0` | IE 5, IE 6, Classilla, RetroZilla | Type `https://` and it works. Real https to the browser: padlock, `Secure` cookies, the URL it asked for. |
 | `rewrite_https = 1`, `connect_mitm = 0` | IE 4, Netscape 4.x, IE 5.1 on Mac OS 9 | Type `http://` or no scheme. Links, redirects and subresources all work; the address bar and `Secure` cookies do not. |
 
-**If you use `connect_mitm`, untick "Use SSL 2.0" in the browser.** In Internet
-Explorer it is under Tools → Internet Options → Advanced → Security, and it is
-on by default. A browser with SSL 2.0 enabled sends its ClientHello in SSL 2.0
-framing, which BearSSL rejects before reading a single field — so the handshake
-fails with no certificate warning at all, and the log says `BearSSL 3`. Leave
-SSL 3.0 and TLS 1.0 ticked. Netscape 4.7 has the same switch under Security →
-Navigator → Configure SSL.
+**If you use `connect_mitm`, make sure "Use TLS 1.0" is ticked in the browser.**
+In Internet Explorer it is under Tools → Internet Options → Advanced → Security,
+and Netscape 4.7 has the equivalent under Security → Navigator → Configure SSL.
+TLS 1.0 is the oldest protocol Gateway can speak to a browser, so a browser with
+it switched off has nothing in common with Gateway however capable it is.
 
-**IE 4 and Netscape 4 cannot use `connect_mitm` at all.** They have SSL 3.0 and
-no TLS; BearSSL has TLS 1.0 and no SSL. There is no overlap and no setting that
-creates one, so those browsers want `rewrite_https` instead.
+"Use SSL 2.0" no longer has to be off. Before 0.3.4 a browser with that box
+ticked sent its ClientHello in SSL 2.0 framing and the handshake died before a
+single field was read — no certificate warning, just `BearSSL 3` in the log.
+Gateway now understands that framing and reads the TLS hello inside it, so the
+box can be left as the browser shipped it.
+
+**IE 4 and Netscape 4 still cannot use `connect_mitm`.** Their limit was never
+the framing: they have SSL 3.0 and no TLS, BearSSL has TLS 1.0 and no SSL, and
+no setting creates an overlap. Those browsers want `rewrite_https` instead.
 
 Gateway generates its own certificate authority the first time `connect_mitm`
 needs one — a 1024-bit RSA key and a self-signed certificate, made on the
