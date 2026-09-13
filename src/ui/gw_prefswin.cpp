@@ -60,8 +60,14 @@ const short kPaneRight    = kBoxRight - 12;
 
 const short kRowHeight    = 23;
 const short kHintHeight   = 13;
-const short kFieldWidth   = 188;
-const short kEntryLeft    = kPaneRight - kFieldWidth;
+/*
+ * Where the fields start. A third of the way across, as the Identity box in
+ * the Internet control panel has them, so the labels fill the left of the
+ * pane and the fields run to its right edge. Hanging a fixed width off the
+ * right instead left every panel bunched against one side with the left half
+ * empty.
+ */
+const short kEntryLeft    = kPaneLeft + 134;
 const short kEntryHeight  = 18;
 const short kListHeight   = 76;
 const short kButtonWidth  = 74;
@@ -684,6 +690,9 @@ void PrefsWindow::BuildGroup(int group)
             SetRect(&row->fieldBox, kPaneLeft, static_cast<short>(v + 15),
                     static_cast<short>(kPaneRight - kScrollWidth + 1),
                     static_cast<short>(v + 15 + kListHeight));
+            /* The scroll bar's left edge is the box's right edge, not one
+             * pixel past it: two adjacent frames drew the double line down
+             * the inside of the list. */
             r = row->fieldBox;
             InsetRect(&r, 4, 3);
             row->item = items.Add(kEditItem, &r, mList);
@@ -692,7 +701,7 @@ void PrefsWindow::BuildGroup(int group)
                     static_cast<short>(kPaneRight - kScrollWidth),
                     static_cast<short>(v + 15),
                     kPaneRight,
-                    static_cast<short>(v + 15 + kListHeight + 1));
+                    static_cast<short>(v + 15 + kListHeight));
             break;
 
         default:
@@ -899,6 +908,18 @@ void PrefsWindow::Draw()
         fr = mRows[i].fieldBox;
         if (fr.right <= fr.left) continue;
         FrameRect(&fr);
+
+        /*
+         * The field being edited is drawn heavier, which is the ring Mac OS 9
+         * puts round the one with the insertion point -- the difference
+         * between Name and E-mail Address in the Internet panel. editField is
+         * the item number less one.
+         */
+        if (reinterpret_cast<DialogPeek>(mDialog)->editField ==
+            mRows[i].item - 1) {
+            InsetRect(&fr, -1, -1);
+            FrameRect(&fr);
+        }
     }
 }
 
