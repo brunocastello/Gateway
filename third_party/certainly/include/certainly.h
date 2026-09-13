@@ -232,6 +232,11 @@ int            MacTLS_ServerLastError(const MacTLS_Server *s);
  * when that comparison is what failed. Set as the hello is parsed; 0 before
  * that, and 0 if the hello never arrived. */
 unsigned int   MacTLS_ServerClientVersion(const MacTLS_Server *s);
+/* 1 while the engine still holds encrypted bytes that have not reached the
+ * socket. MacTLS_ServerWrite() only stages plaintext -- the records leave in
+ * MacTLS_ServerPump() -- so a caller that writes and then closes discards
+ * whatever had not been pumped yet. Ask this before closing. */
+int            MacTLS_ServerPendingOut(const MacTLS_Server *s);
 int            MacTLS_ServerRead(MacTLS_Server *s, void *buf, size_t cap);
 int            MacTLS_ServerWrite(MacTLS_Server *s, const void *data, size_t len);
 void           MacTLS_ServerClose(MacTLS_Server *s);

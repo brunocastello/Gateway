@@ -945,3 +945,66 @@ fetched from before today.
 Most of the web hides this, since a host with TLS 1.3 never goes near either
 bug. `www.floodgap.com` is a small hand-written server on AIX with no 1.3 at
 all, which is why it was the site that found both.
+
+---
+
+## §27 — the tail of every MITM'd response was discarded at close
+
+*Certainly patch, in `src/server.c`, with the matching change in
+`src/proxy/gw_httpproxy.c`. This is why images did not appear on a page
+fetched over `https` with `connect_mitm`.*
+
+`MacTLS_ServerWrite()` stages plaintext in the engine and flushes it into a
+record. The record reaches the socket in `MacTLS_ServerPump()`, which is a
+separate call. `MacTLS_ServerClose()` never pumped:
+
+```c
+if (s->state == kMacTLS_Connected || s->state == kMacTLS_Handshaking)
+        br_ssl_engine_close(&s->sc.eng);
+
+if (s->transport != NULL) {
+        ct_transport_close(s->transport);
+        ct_transport_destroy(s->transport);
+```
+
+and the proxy closed the moment the last byte had been *written*:
+
+```c
+int r = session_flush(s);
+if (r != 0) s->state = kHPDone;      /* -> GWStream_Close(&s->cli) */
+```
+
+So whatever had not yet been pumped was thrown away with the transport. On a
+plaintext hop this is invisible, because the bytes are in the socket by the
+time the write returns and the operating system flushes on close. On a TLS hop
+they are in a buffer Gateway owns.
+
+`GWStream_SendPending()` now answers whether the engine still holds records,
+and `kHPFlushAndClose` waits for it. It cannot hang: pending output counts as
+waiting on the client in the idle check, so a browser that stops reading ends
+the session on the ordinary timeout.
+
+### Why it looked like an image problem
+
+Size decided it. A small body fits one write, so the whole response was staged
+and then discarded — nothing arrived. A large one crosses many
+`session_step()` passes, each of which pumps, so all but the last records were
+already gone. Google's page is chunked and long and rendered; its logo is 2478
+bytes and did not.
+
+The same page over plain `http` was whole, because Google serves its
+subresources under the scheme of the document: from an `http://` page the
+images are fetched over `http` and never touch this path at all. That is what
+made it look like a difference between two schemes rather than between two
+transports, and it is why the upstream side was searched first — the logs show
+every resource fetched identically in both cases, which was true and was not
+the question.
+
+### Also here
+
+`MacTLS_ServerPump()` carried the same state fault as §26 — record-level I/O
+alone read as "still handshaking" — and it is fixed the same way. It was
+latent: `MacTLS_ServerRead()` and `MacTLS_ServerWrite()` consult the engine
+directly rather than `s->state`, and `GWStream_Pump()` will not move a stream
+back out of Ready, so nothing acted on it. Left in place it would have been
+waiting for the first caller that did.

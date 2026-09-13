@@ -429,6 +429,13 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
     return out;
 }
 
+int GWStream_SendPending(const GWStream *s)
+{
+    if (s == NULL || !s->tls) return 0;
+    if (s->srv != NULL) return MacTLS_ServerPendingOut(s->srv);
+    return 0;
+}
+
 const char *GWStream_ErrorText(const GWStream *s)
 {
     if (s == NULL) return "no stream";

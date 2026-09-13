@@ -1616,7 +1616,8 @@ static void session_step(GWHttpSession *s)
      * actually leaves, so a slot cannot be held by a client that is gone.
      */
     if (GWNet_Ticks() - s->lastActivity > GW_IDLE_TIMEOUT) {
-        int waiting_on_client = (s->outLen > s->outSent) &&
+        int waiting_on_client = (s->outLen > s->outSent ||
+                                 GWStream_SendPending(&s->cli)) &&
                                 !GWStream_PeerGone(&s->cli);
 
         if (!waiting_on_client) {
@@ -1731,7 +1732,26 @@ static void session_step(GWHttpSession *s)
 
     case kHPFlushAndClose: {
         int r = session_flush(s);
-        if (r != 0) s->state = kHPDone;
+        /*
+         * Handing the last byte to GWStream_Write is not the same as sending
+         * it. On a TLS client hop -- connect_mitm -- a write only stages
+         * plaintext in the engine; the records leave in the pump, which
+         * session_step() runs at the top of the next pass. Going straight to
+         * kHPDone closed the connection before that pass, and everything
+         * staged went with it.
+         *
+         * A plain hop never waits here: the socket already has the bytes, so
+         * GWStream_SendPending() answers 0 and this is the old behaviour.
+         *
+         * It cannot hang. A browser that stops reading leaves bytes pending,
+         * which counts as waiting on the client in the idle check above, and
+         * that ends the session on the ordinary timeout.
+         */
+        if (r < 0) {
+            s->state = kHPDone;
+        } else if (r != 0 && !GWStream_SendPending(&s->cli)) {
+            s->state = kHPDone;
+        }
         break;
     }
 
