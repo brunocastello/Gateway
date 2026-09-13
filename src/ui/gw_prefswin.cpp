@@ -241,6 +241,7 @@ private:
     void  MakeControls(int group);
     void  DropControls();
     void  AlignLabels();
+    short PopChoice(ControlHandle ctl, short menuID);
     void  SyncScroll(Row *r);
     void  ScrollList(Row *r, short part);
     void  GetItemText(short item, char *out, size_t cap);
@@ -480,6 +481,36 @@ void PrefsWindow::MakeControls(int group)
  * Point the scroll bar at what the list holds: the range is however many
  * lines do not fit, and the value is how far down the view has been moved.
  */
+/*
+ * Open a popup and record what was chosen.
+ *
+ * The control definition draws a correct popup and does not track a click in
+ * one -- proven twice now, on a monochrome port and a colour one. So it keeps
+ * the drawing, which is the part it does well and the part that makes this
+ * look like the system's own, and the menu is opened with PopUpMenuSelect,
+ * which is the call the definition would have made.
+ */
+short PrefsWindow::PopChoice(ControlHandle ctl, short menuID)
+{
+    MenuHandle menu = GetMenuHandle(menuID);
+    Rect       r;
+    Point      tl;
+    long       choice;
+    short      item;
+
+    if (ctl == 0 || menu == 0) return 0;
+    r = (**ctl).contrlRect;
+    tl.h = static_cast<short>(r.left + 1);
+    tl.v = static_cast<short>(r.top + 1);
+    LocalToGlobal(&tl);
+
+    choice = PopUpMenuSelect(menu, tl.v, tl.h, GetControlValue(ctl));
+    if (choice == 0) return 0;
+    item = static_cast<short>(choice & 0xFFFF);
+    SetControlValue(ctl, item);
+    return item;
+}
+
 void PrefsWindow::SyncScroll(Row *r)
 {
     TEHandle te = DialogTE();
@@ -552,7 +583,24 @@ void PrefsWindow::AlignLabels()
         Str255 s;
         short  w;
 
-        if (mRows[i].labelItem == 0 || mRows[i].field == 0) continue;
+        if (mRows[i].field == 0) continue;
+
+        /* A checkbox carries its own title, so its rectangle is its text
+         * plus the box -- not the width of the pane. */
+        if (mRows[i].field->kind == kGWFieldFlag) {
+            if (mRows[i].item == 0) continue;
+            GetDialogItem(mDialog, mRows[i].item, &type, &h, &box);
+            ToPascal(mRows[i].field->label, s);
+            box.right = static_cast<short>(box.left + 22 + StringWidth(s));
+            SetDialogItem(mDialog, mRows[i].item, type, h, &box);
+            if (h != 0)
+                SizeControl(reinterpret_cast<ControlHandle>(h),
+                            static_cast<short>(box.right - box.left),
+                            static_cast<short>(box.bottom - box.top));
+            continue;
+        }
+
+        if (mRows[i].labelItem == 0) continue;
         if (mRows[i].field->kind == kGWFieldList) continue;
 
         GetDialogItem(mDialog, mRows[i].labelItem, &type, &h, &box);
@@ -700,6 +748,19 @@ void PrefsWindow::BuildGroup(int group)
     SetPort(reinterpret_cast<GrafPtr>(mDialog));
     TextFont(kFontGeneva);
     TextSize(9);
+    {
+        /*
+         * Set once, on the port, rather than only inside Draw(). Every
+         * control erases its own rectangle with the port's background before
+         * it draws itself, and a checkbox's rectangle is as wide as the
+         * caller made it -- which is where the white bars across the rows
+         * came from.
+         */
+        RGBColor platinum;
+
+        platinum.red = platinum.green = platinum.blue = kPlatinum;
+        RGBBackColor(&platinum);
+    }
 
     {
         short  type;
@@ -913,21 +974,19 @@ bool PrefsWindow::HandleEvent(EventRecord &event)
             if (cpart != 0 && ctl != 0) {
                 /* The pane popup. */
                 if (ctl == mGroupCtl) {
-                    if (TrackControl(ctl, where, 0) != 0) {
-                        short g = static_cast<short>(GetControlValue(ctl) - 1);
+                    short g = PopChoice(ctl, kGroupMenuID);
 
-                        if (g >= 0 && g < kGWGroupCount && g != mGroup) {
-                            ReadGroupBack();
-                            BuildGroup(g);
-                            Draw();
-                        }
+                    if (g >= 1 && g - 1 != mGroup) {
+                        ReadGroupBack();
+                        BuildGroup(static_cast<short>(g - 1));
+                        Draw();
                     }
                     return true;
                 }
                 /* A choice popup, or a list's scroll bar. */
                 for (i = 0; i < mRowCount; i++) {
                     if (ctl == mRows[i].popup) {
-                        if (TrackControl(ctl, where, 0) != 0) mDirty = true;
+                        if (PopChoice(ctl, mRows[i].menuID) > 0) mDirty = true;
                         return true;
                     }
                     if (ctl == mRows[i].scroll) {
