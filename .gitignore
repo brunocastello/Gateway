@@ -6,3 +6,8 @@ package/
 tests/host/run_tests
 .DS_Store
 tests/host/*.der
+
+# The screenshot dropped in the root for a conversation, and the debug
+# bundle a host-test build leaves behind. Neither belongs to the program.
+Conversation.png
+tests/host/run_tests.dSYM/
