@@ -992,8 +992,26 @@ MacTLS_State MacTLS_Pump(MacTLS_Context *ctx)
         /* Application data channels are open — handshake is done */
         ctx->state = kMacTLS_Connected;
     } else if (st & (BR_SSL_SENDREC | BR_SSL_RECVREC)) {
-        /* Only record-level I/O — still handshaking */
-        ctx->state = kMacTLS_Handshaking;
+        /*
+         * Only record-level I/O. That means "still handshaking" exactly
+         * once -- before the handshake has ever finished (PATCHES.md §26).
+         *
+         * The engine runs on one buffer for both directions
+         * (br_ssl_engine_set_buffer with bidi = 0), so it works one
+         * direction at a time: while an outgoing record is being pushed
+         * out, neither SENDAPP nor RECVAPP is offered and current_state()
+         * is BR_SSL_SENDREC alone. That is the normal condition of a
+         * connected session that has just been written to -- which is every
+         * session, immediately after the request goes out. Reading it as a
+         * return to handshaking sent the context backwards, and MacTLS_Read
+         * answers -1 in any state but Connected, Closing or Closed, so the
+         * caller was told the read failed while the connection was in
+         * perfect health. BR_SSL_CLOSED above is the only way out of
+         * Connected.
+         */
+        if (ctx->state != kMacTLS_Connected) {
+            ctx->state = kMacTLS_Handshaking;
+        }
     }
 
     return ctx->state;

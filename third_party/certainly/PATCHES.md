@@ -881,3 +881,67 @@ sites and three rounds of inference had not narrowed it. §24 made those sites
 answer `0x3000 | __LINE__`; the next log said `TLS 0x3319 1.3`, and
 `0x319` is line 793. The line-numbered codes stay, because the next one of
 these should cost one build rather than four.
+
+---
+
+## §26 — a connected TLS 1.2 session was put back into handshaking by its own writes
+
+*Certainly patch, in `src/certainly.c`. With §25, this is what makes a
+TLS 1.2-only origin work at all.*
+
+The pump classified the engine's state after every cycle:
+
+```c
+if (st & (BR_SSL_SENDAPP | BR_SSL_RECVAPP)) {
+        ctx->state = kMacTLS_Connected;
+} else if (st & (BR_SSL_SENDREC | BR_SSL_RECVREC)) {
+        /* Only record-level I/O — still handshaking */
+        ctx->state = kMacTLS_Handshaking;
+}
+```
+
+The engine runs on one buffer for both directions —
+`br_ssl_engine_set_buffer(&ctx->sc.eng, ctx->iobuf, sizeof(ctx->iobuf), 0)`,
+where the trailing 0 is `bidi` — so it works one direction at a time. While an
+outgoing record is being pushed out, the engine offers neither `SENDAPP` nor
+`RECVAPP` and `br_ssl_engine_current_state()` is `BR_SSL_SENDREC` alone.
+
+That is not a handshake in progress. It is the ordinary condition of a
+connected session that has just been written to, which is every session in the
+instant after its request goes out. The context went backwards to
+`kMacTLS_Handshaking`, and
+
+```c
+if (ctx->state != kMacTLS_Connected &&
+    ctx->state != kMacTLS_Closing &&
+    ctx->state != kMacTLS_Closed) return -1;
+```
+
+at the top of `MacTLS_Read()` then answered -1 — a read failure reported on a
+connection in perfect health, with no error set anywhere in it. Once
+`Connected`, only `BR_SSL_CLOSED` leaves it now.
+
+### What it looked like
+
+```
+#8 www.floodgap.com read failed: ok [connected, OT 0, TLS 0, 76.79.210.35]
+```
+
+Every part of that line is a consequence. `read failed` is the -1. `ok` is
+`GWStream_ErrorText`, because nothing had failed. `TLS 0` is the engine's
+error, because there was not one. And the version is missing because
+`MacTLS_GetVersion()` also answers only in `Connected` — the same backwards
+state, showing up twice in one line and saying so in neither.
+
+### Why nothing caught it sooner
+
+Nothing had ever reached the TLS 1.2 path. Certainly always opens with a TLS
+1.3 ClientHello, and §25 was rejecting the ServerHello of every server that
+answered it in 1.2, so the fallback ended in an error before any application
+data was read. §25 made the path reachable and this was the next thing in it.
+Both are needed and neither is sufficient: a TLS 1.2-only origin could not be
+fetched from before today.
+
+Most of the web hides this, since a host with TLS 1.3 never goes near either
+bug. `www.floodgap.com` is a small hand-written server on AIX with no 1.3 at
+all, which is why it was the site that found both.
