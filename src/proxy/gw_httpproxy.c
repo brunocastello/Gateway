@@ -600,6 +600,18 @@ static int wayback_prepare(GWHttpSession *s)
         return 0;
     }
 
+    /*
+     * Say when the allow-list did not match, not only when it did.
+     *
+     * A hit printed a line and a miss printed nothing, so a host going to the
+     * archive looked the same whether wayback_live had been consulted or not
+     * -- and the commonest reason for a miss is a pattern that covers the
+     * bare name and not the www one, since the two are separate patterns and
+     * the shipped prefs list both for every host. Naming the host that missed
+     * puts the answer next to the question.
+     */
+    gw_log("#%ld archive: %s is not on wayback_live", s->id, s->req.url.host);
+
     /* GeoCities is not in the archive so much as at its successor. */
     if (set->geocities &&
         gw_wayback_geocities_host(s->req.url.host, host, sizeof(host))) {
