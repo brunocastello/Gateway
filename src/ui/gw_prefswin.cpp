@@ -43,7 +43,7 @@
 
 namespace {
 
-const short kWinWidth    = 470;
+const short kWinWidth    = 500;
 
 const short kMargin      = 12;
 const short kPopupTop    = 12;
@@ -61,12 +61,12 @@ const short kPaneRight   = kBoxRight - 14;
  * edge, as the Identity box in the Internet control panel has it, rather than
  * being a fixed width hung off the right.
  */
-const short kEntryLeft   = kPaneLeft + 164;
-const short kEntryWidth  = 196;
-const short kEntryHeight = 20;
-const short kRowHeight   = 24;
-const short kHintHeight  = 13;
-const short kListHeight  = 84;
+const short kEntryLeft   = kPaneLeft + 176;
+const short kEntryWidth  = 192;
+const short kEntryHeight = 22;
+const short kRowHeight   = 27;
+const short kHintHeight  = 16;
+const short kListHeight  = 92;
 const short kButtonW     = 74;
 const short kButtonH     = 20;
 const short kScrollW     = 16;
@@ -319,18 +319,17 @@ void PrefsWindow::DropPane()
  * column for a field's own label, left for a hint.
  */
 /*
- * The small system font, which is what the Internet control panel sets on
- * every control in it. Without it a control draws in the system font at 12
- * point, which is taller than the rows and is why the entry field's text was
- * cut off at the bottom.
+ * The system font, which is what Mac OS 9 puts in a dialog and what the
+ * Internet control panel uses. kControlFontSmallSystemFont is Geneva 10 and
+ * made every panel read as shrunken beside the reference.
  */
-void SmallFont(ControlHandle c)
+void SystemFont(ControlHandle c)
 {
     ControlFontStyleRec style;
 
     if (c == 0) return;
     style.flags = kControlUseFontMask;
-    style.font = kControlFontSmallSystemFont;
+    style.font = kControlFontBigSystemFont;
     SetControlFontStyle(c, &style);
 }
 
@@ -355,7 +354,7 @@ ControlHandle MakeLabel(WindowPtr w, const Rect *r, const char *text,
                    (Size)strlen(text), (Ptr)text);
 
     style.flags = kControlUseFontMask | kControlUseJustMask;
-    style.font = kControlFontSmallSystemFont;
+    style.font = kControlFontBigSystemFont;
     style.just = just;
     SetControlFontStyle(c, &style);
     return c;
@@ -385,12 +384,12 @@ void PrefsWindow::BuildPane(int group)
 
         switch (f[i].kind) {
         case kGWFieldFlag: {
-            SetRect(&r, kPaneLeft, v, kPaneRight, (short)(v + 18));
+            SetRect(&r, kPaneLeft, v, kPaneRight, (short)(v + 20));
             ToPascal(f[i].label, s);
             row->ctl = NewControl(mWindow, &r, s, true,
                                   mValue[i][0] == '1' ? 1 : 0, 0, 1,
                                   kControlCheckBoxProc, 0);
-            SmallFont(row->ctl);
+            SystemFont(row->ctl);
             break;
         }
 
@@ -401,7 +400,7 @@ void PrefsWindow::BuildPane(int group)
             short       chosen = 1;
 
             SetRect(&r, kPaneLeft, (short)(v + 3),
-                    (short)(kEntryLeft - 8), (short)(v + 17));
+                    (short)(kEntryLeft - 8), (short)(v + 19));
             row->label = MakeLabel(mWindow, &r, f[i].label, teFlushRight);
 
             ToPascal(f[i].label, s);
@@ -430,17 +429,18 @@ void PrefsWindow::BuildPane(int group)
                         (short)(v + kEntryHeight + 1));
                 ToPascal("", s);
                 row->ctl = NewControl(mWindow, &r, s, true, chosen, id, 0,
-                                      kControlPopupButtonProc, 0);
+                                      (short)(kControlPopupButtonProc +
+                                       kControlPopupFixedWidthVariant), 0);
                 if (row->ctl != 0) {
                     SetControlValue(row->ctl, chosen);
-                    SmallFont(row->ctl);
+                    SystemFont(row->ctl);
                 }
             }
             break;
         }
 
         case kGWFieldList:
-            SetRect(&r, kPaneLeft, v, kPaneRight, (short)(v + 14));
+            SetRect(&r, kPaneLeft, v, kPaneRight, (short)(v + 17));
             row->label = MakeLabel(mWindow, &r, f[i].label, teFlushLeft);
 
             SetRect(&r, kPaneLeft, (short)(v + 16),
@@ -450,7 +450,7 @@ void PrefsWindow::BuildPane(int group)
             row->ctl = NewControl(mWindow, &r, s, true, 0, 0, 0,
                                   kControlEditTextProc, 0);
             SetText(row->ctl, mList);
-            SmallFont(row->ctl);
+            SystemFont(row->ctl);
 
             SetRect(&r, (short)(kPaneRight - kScrollW), (short)(v + 16),
                     kPaneRight, (short)(v + 16 + kListHeight));
@@ -461,7 +461,7 @@ void PrefsWindow::BuildPane(int group)
 
         default:
             SetRect(&r, kPaneLeft, (short)(v + 3),
-                    (short)(kEntryLeft - 8), (short)(v + 17));
+                    (short)(kEntryLeft - 8), (short)(v + 19));
             row->label = MakeLabel(mWindow, &r, f[i].label, teFlushRight);
 
             SetRect(&r, kEntryLeft, v,
@@ -473,7 +473,7 @@ void PrefsWindow::BuildPane(int group)
                                       ? kControlEditTextPasswordProc
                                       : kControlEditTextProc, 0);
             SetText(row->ctl, mValue[i]);
-            SmallFont(row->ctl);
+            SystemFont(row->ctl);
             break;
         }
 
@@ -485,7 +485,7 @@ void PrefsWindow::BuildPane(int group)
         if (f[i].hint != 0) {
             SetRect(&r, (f[i].kind == kGWFieldFlag ||
                          f[i].kind == kGWFieldList) ? kPaneLeft : kEntryLeft,
-                    (short)(v - 4), kPaneRight, (short)(v + 9));
+                    (short)(v - 5), kPaneRight, (short)(v + 12));
             row->hint = MakeLabel(mWindow, &r, f[i].hint, teFlushLeft);
             v = (short)(v + kHintHeight);
         }
@@ -499,7 +499,7 @@ void PrefsWindow::BuildPane(int group)
     ToPascal(gw_prefsform_group_name(group), s);
     mGroupBox = NewControl(mWindow, &r, s, true, 0, 0, 1,
                            kControlGroupBoxTextTitleProc, 0);
-    SmallFont(mGroupBox);
+    SystemFont(mGroupBox);
 
     {
         short h = (short)(v + 12 + 16 + kButtonH + kMargin);
@@ -513,13 +513,11 @@ void PrefsWindow::BuildPane(int group)
                         (short)(h - kMargin - kButtonH - 4));
     }
 
-    for (i = 0; i < mRowCount; i++) {
-        if (mRows[i].field == 0 || mRows[i].ctl == 0) continue;
-        if (mRows[i].field->kind == kGWFieldFlag) continue;
-        if (mRows[i].field->kind == kGWFieldChoice) continue;
-        SetKeyboardFocus(mWindow, mRows[i].ctl, kControlEditTextPart);
-        break;
-    }
+    /*
+     * No field is focused to begin with. Focusing one on every pane put the
+     * ring round a field nobody had clicked, on every panel, and made it look
+     * as though the window were always mid-edit. A click or Tab sets it.
+     */
 }
 
 /* The TextEdit record inside an edit text control, which is what the scroll
@@ -609,8 +607,8 @@ bool PrefsWindow::Open()
     {
         Rect r;
 
-        SetRect(&r, kMargin, (short)(kPopupTop + 3), 84,
-                (short)(kPopupTop + 17));
+        SetRect(&r, kMargin, (short)(kPopupTop + 3), 96,
+                (short)(kPopupTop + 20));
         MakeLabel(mWindow, &r, "Settings for:", teFlushRight);
 
         if (GetMenuHandle(kGroupMenuID) == 0) {
@@ -626,13 +624,14 @@ bool PrefsWindow::Open()
                 InsertMenu(menu, kInsertHierarchicalMenu);
             }
         }
-        SetRect(&r, 92, kPopupTop, 284, (short)(kPopupTop + kPopupHeight));
+        SetRect(&r, 104, kPopupTop, 300, (short)(kPopupTop + kPopupHeight));
         ToPascal("", s);
         mGroupPopup = NewControl(mWindow, &r, s, true, 1, kGroupMenuID, 0,
-                                 kControlPopupButtonProc, 0);
+                                 (short)(kControlPopupButtonProc +
+                                       kControlPopupFixedWidthVariant), 0);
         if (mGroupPopup != 0) {
             SetControlValue(mGroupPopup, 1);
-            SmallFont(mGroupPopup);
+            SystemFont(mGroupPopup);
         }
 
         SetRect(&r, 0, 0, kButtonW, kButtonH);
@@ -642,8 +641,8 @@ bool PrefsWindow::Open()
         ToPascal("Revert", s);
         mRevert = NewControl(mWindow, &r, s, true, 0, 0, 1,
                              kControlPushButtonProc, 0);
-        SmallFont(mSave);
-        SmallFont(mRevert);
+        SystemFont(mSave);
+        SystemFont(mRevert);
         /* The system's own default ring, not one drawn round the button. */
         if (mSave != 0) {
             Boolean on = true;
@@ -737,6 +736,18 @@ bool PrefsWindow::HandleEvent(EventRecord *ev)
             }
             if (hit == mSave)   { Save();   return true; }
             if (hit == mRevert) { Revert(); return true; }
+
+            /*
+             * A checkbox is tracked by HandleControlClick and toggled by its
+             * owner -- the toolbox hilites it and reports the hit and leaves
+             * the value alone, which is why none of them could be unticked.
+             */
+            for (i = 0; i < mRowCount; i++) {
+                if (mRows[i].ctl != hit || mRows[i].field == 0) continue;
+                if (mRows[i].field->kind != kGWFieldFlag) break;
+                SetControlValue(hit, GetControlValue(hit) ? 0 : 1);
+                return true;
+            }
             for (i = 0; i < mRowCount; i++) {
                 if (mRows[i].scroll == 0) continue;
                 if (hit == mRows[i].scroll) ScrollTo(&mRows[i]);
