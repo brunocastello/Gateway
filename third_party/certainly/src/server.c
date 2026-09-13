@@ -254,6 +254,12 @@ int MacTLS_ServerLastError(const MacTLS_Server *s)
     return br_ssl_engine_last_error((br_ssl_engine_context *)&s->sc.eng);
 }
 
+unsigned int MacTLS_ServerClientVersion(const MacTLS_Server *s)
+{
+    if (s == NULL) return 0;
+    return s->sc.client_max_version;
+}
+
 void MacTLS_ServerClose(MacTLS_Server *s)
 {
     if (s == NULL) return;

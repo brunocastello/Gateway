@@ -221,6 +221,12 @@ MacTLS_State   MacTLS_ServerState(const MacTLS_Server *s);
  * whole diagnosis with a client this vintage, and an error page cannot
  * carry it -- the connection it would travel on is the one that broke. */
 int            MacTLS_ServerLastError(const MacTLS_Server *s);
+/* The highest protocol version the client offered in its ClientHello
+ * (0x0300 = SSL 3.0, 0x0301 = TLS 1.0, and so on). This is the number the
+ * server compares against its own minimum, so it is the one worth printing
+ * when that comparison is what failed. Set as the hello is parsed; 0 before
+ * that, and 0 if the hello never arrived. */
+unsigned int   MacTLS_ServerClientVersion(const MacTLS_Server *s);
 int            MacTLS_ServerRead(MacTLS_Server *s, void *buf, size_t cap);
 int            MacTLS_ServerWrite(MacTLS_Server *s, const void *data, size_t len);
 void           MacTLS_ServerClose(MacTLS_Server *s);

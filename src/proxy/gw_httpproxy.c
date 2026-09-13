@@ -208,6 +208,23 @@ static int connecting_count(int wayback)
     return n;
 }
 
+/*
+ * Format a TLS version number (in network byte order) as a human-readable
+ * string. The version comes from the client's ClientHello and tells us what
+ * the browser thinks it is speaking. Returns a static string.
+ */
+static const char *tls_version_name(unsigned int ver)
+{
+    switch (ver) {
+    case 0x0300: return "SSL 3.0";
+    case 0x0301: return "TLS 1.0";
+    case 0x0302: return "TLS 1.1";
+    case 0x0303: return "TLS 1.2";
+    case 0x0304: return "TLS 1.3";
+    default:     return NULL;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Idle upstream connections                                           */
 /* ------------------------------------------------------------------ */
@@ -1348,35 +1365,54 @@ static void step_mitm_wait(GWHttpSession *s)
          */
         /*
          * The number is the diagnosis, so it goes in the line. With a client
-         * this old the two that matter are BearSSL's 4, meaning it offered a
-         * protocol version older than TLS 1.0 -- which for Internet Explorer 4
-         * means SSL 3.0, all it has -- and 16, meaning it offered no cipher
-         * suite BearSSL implements, which an export-grade build will not.
-         * Neither can be reported any other way: an error page would have to
-         * travel down the connection that just failed.
+         * this old the ones that matter are 3 and the protocol_version alert,
+         * both meaning the browser cannot reach TLS 1.0 and neither saying so
+         * in the same way, and 16, meaning it offered no cipher suite BearSSL
+         * implements, which an export-grade build will not. None of them can
+         * be reported any other way: an error page would have to travel down
+         * the connection that just failed.
          */
         {
             int         err = GWStream_ServerError(&s->cli);
             const char *why = "";
+            char        why_buf[128];
 
             /*
-             * 3 is the one every Internet Explorer produces, and it is not
-             * about which TLS versions the browser has. ssl_engine.c rejects
-             * a ClientHello sent in SSL 2.0 framing -- no record header, a
-             * length with the high bit set, then message type 01 -- so the
-             * byte it reads as a version major is a length byte. IE enables
-             * "Use SSL 2.0" by default and that framing is what it sends.
-             *
-             * Which makes this a setting rather than a limit, and worth
-             * saying in the line: IE 4, Netscape 4.7, IE 5.1 on Mac OS and
-             * IE 6 on Windows Me all failed here identically, and all of them
-             * had that box ticked.
+             * 3 was, until PATCHES.md §22, what every Internet Explorer
+             * produced: BearSSL threw out the SSL 2.0 record framing that IE
+             * sends by default before it read a field, so the box marked
+             * "Use SSL 2.0" had to be unticked whatever the hello inside
+             * asked for. That framing is accepted now, which leaves 3
+             * meaning what it says -- the hello itself asked for a version
+             * below 3.0, so the browser has SSL 3.0 and TLS 1.0 both off,
+             * or has neither to turn on.
              */
             if (err == 3)
-                why = ": it sent an SSL 2.0-style hello -- untick "
-                      "\"Use SSL 2.0\" in Internet Options > Advanced";
-            else if (err == 512 + 70 || err == 256 + 70)
-                why = ": protocol_version alert -- no version in common";
+                why = ": its hello asked for SSL 2.0, which has no "
+                      "implementation here -- tick \"Use TLS 1.0\" in "
+                      "Internet Options > Advanced";
+            /*
+             * 70 is protocol_version, and which direction it went matters.
+             * Sent by us, BearSSL is refusing a hello below its TLS 1.0
+             * minimum, and the version the browser offered is the whole
+             * diagnosis. Sent by the browser, it is refusing our answer.
+             */
+            else if (err == 512 + 70 || err == 256 + 70) {
+                unsigned int ver = GWStream_ClientHelloVersion(&s->cli);
+                const char *name = tls_version_name(ver);
+                const char *dir = (err > 512)
+                    ? "we refused its hello" : "it refused our answer";
+
+                if (name != NULL)
+                    snprintf(why_buf, sizeof why_buf,
+                        ": it offered %s at best and TLS 1.0 is the floor "
+                        "(%s)", name, dir);
+                else
+                    snprintf(why_buf, sizeof why_buf,
+                        ": it offered version 0x%04X and TLS 1.0 is the "
+                        "floor (%s)", ver, dir);
+                why = why_buf;
+            }
             else if (err == 16)
                 why = ": no cipher suite in common (a 40-bit browser?)";
             else if (err == 4)

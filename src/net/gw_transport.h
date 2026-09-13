@@ -199,6 +199,10 @@ int           GWStream_PeerGone(const GWStream *s);
 
 /* 0 when unknown or plain, otherwise 12 or 13. */
 int           GWStream_TlsVersion(const GWStream *s);
+/* The highest protocol version the browser offered in its ClientHello
+ * (0x0300 = SSL 3.0, 0x0301 = TLS 1.0, and so on). 0 when unknown, plain, or
+ * before the hello arrived. Server side only, so connect_mitm. */
+unsigned int  GWStream_ClientHelloVersion(const GWStream *s);
 const char   *GWStream_ErrorText(const GWStream *s);
 
 /*
