@@ -58,11 +58,11 @@ const short kBoxRight      = kWinWidth - 10;
 const short kPaneLeft     = kBoxLeft + 12;
 const short kPaneRight    = kBoxRight - 12;
 
-const short kRowHeight    = 22;
+const short kRowHeight    = 23;
 const short kHintHeight   = 13;
 const short kFieldWidth   = 188;
 const short kEntryLeft    = kPaneRight - kFieldWidth;
-const short kEntryHeight  = 17;
+const short kEntryHeight  = 18;
 const short kListHeight   = 76;
 const short kButtonWidth  = 74;
 const short kButtonHeight = 20;
@@ -713,8 +713,13 @@ void PrefsWindow::BuildGroup(int group)
             v = static_cast<short>(v + kRowHeight);
 
         if (f[i].hint != 0) {
-            SetRect(&r, kPaneLeft, static_cast<short>(v - 5), kPaneRight,
-                    static_cast<short>(v + 8));
+            /* Under the field it describes, not at the far left of the pane
+             * where it read as belonging to nothing. */
+            SetRect(&r, (f[i].kind == kGWFieldFlag ||
+                         f[i].kind == kGWFieldList)
+                            ? kPaneLeft : kEntryLeft,
+                    static_cast<short>(v - 5), kPaneRight,
+                    static_cast<short>(v + 9));
             items.Add(kTextItem, &r, f[i].hint);
             v = static_cast<short>(v + kHintHeight);
         }
@@ -736,6 +741,14 @@ void PrefsWindow::BuildGroup(int group)
     SetRect(&bounds, mWhere.h, mWhere.v,
             static_cast<short>(mWhere.h + kWinWidth),
             static_cast<short>(mWhere.v + height));
+
+    /*
+     * The Dialog Manager draws editText items in its own font and statText in
+     * the port's, which is why every panel had small labels beside large
+     * field text. This settles both on Geneva, as the Internet control panel
+     * has them.
+     */
+    SetDialogFont(kFontGeneva);
 
     ToPascal("Gateway Preferences", title);
     /* NewColorDialog: a classic GrafPort is monochrome and RGBForeColor on
