@@ -61,10 +61,10 @@ const short kPaneRight   = kBoxRight - 14;
  * edge, as the Identity box in the Internet control panel has it, rather than
  * being a fixed width hung off the right.
  */
-const short kEntryLeft   = kPaneLeft + 132;
-const short kEntryWidth  = 210;
-const short kEntryHeight = 22;
-const short kRowHeight   = 26;
+const short kEntryLeft   = kPaneLeft + 164;
+const short kEntryWidth  = 196;
+const short kEntryHeight = 20;
+const short kRowHeight   = 24;
 const short kHintHeight  = 13;
 const short kListHeight  = 84;
 const short kButtonW     = 74;
@@ -136,6 +136,8 @@ private:
     void SetText(ControlHandle c, const char *s);
     void GetText(ControlHandle c, char *out, size_t cap);
     void SyncScroll(Row *r);
+    void ScrollTo(Row *r);
+    TEHandle FieldTE(Row *r);
     ControlHandle Focus() const;
 
     WindowPtr     mWindow;
@@ -476,7 +478,7 @@ void PrefsWindow::BuildPane(int group)
         }
 
         if (f[i].kind == kGWFieldList)
-            v = (short)(v + 16 + kListHeight + 4);
+            v = (short)(v + 16 + kListHeight + 10);
         else
             v = (short)(v + kRowHeight);
 
@@ -497,17 +499,18 @@ void PrefsWindow::BuildPane(int group)
     ToPascal(gw_prefsform_group_name(group), s);
     mGroupBox = NewControl(mWindow, &r, s, true, 0, 0, 1,
                            kControlGroupBoxTextTitleProc, 0);
+    SmallFont(mGroupBox);
 
     {
-        short h = (short)(v + 10 + 14 + kButtonH + kMargin);
+        short h = (short)(v + 12 + 16 + kButtonH + kMargin);
 
         SizeWindow(mWindow, kWinWidth, h, true);
         if (mSave != 0)
-            MoveControl(mSave, (short)(kBoxRight - kButtonW),
-                        (short)(h - kMargin - kButtonH));
+            MoveControl(mSave, (short)(kBoxRight - kButtonW - 4),
+                        (short)(h - kMargin - kButtonH - 4));
         if (mRevert != 0)
-            MoveControl(mRevert, (short)(kBoxRight - 2 * kButtonW - 10),
-                        (short)(h - kMargin - kButtonH));
+            MoveControl(mRevert, (short)(kBoxRight - 2 * kButtonW - 18),
+                        (short)(h - kMargin - kButtonH - 4));
     }
 
     for (i = 0; i < mRowCount; i++) {
@@ -519,17 +522,45 @@ void PrefsWindow::BuildPane(int group)
     }
 }
 
-void PrefsWindow::SyncScroll(Row *r)
+/* The TextEdit record inside an edit text control, which is what the scroll
+ * bar has to move. The control keeps it under kControlEditTextTEHandleTag. */
+TEHandle PrefsWindow::FieldTE(Row *r)
 {
     Size     actual = 0;
     TEHandle te = 0;
-    short    lines, shown, most;
 
-    if (r == 0 || r->scroll == 0 || r->ctl == 0) return;
+    if (r == 0 || r->ctl == 0) return 0;
     if (GetControlData(r->ctl, kControlEntireControl,
                        kControlEditTextTEHandleTag,
-                       sizeof(te), (Ptr)&te, &actual) != noErr || te == 0)
-        return;
+                       sizeof(te), (Ptr)&te, &actual) != noErr)
+        return 0;
+    return te;
+}
+
+/*
+ * Move the field to wherever the scroll bar now says. Setting the bar's range
+ * was never enough on its own: a click tracked the thumb and changed the
+ * value and nothing read it, so the list would not scroll.
+ */
+void PrefsWindow::ScrollTo(Row *r)
+{
+    TEHandle te = FieldTE(r);
+    short    want, have;
+
+    if (te == 0 || r->scroll == 0) return;
+    want = GetControlValue(r->scroll);
+    have = (short)(((*te)->viewRect.top - (*te)->destRect.top) /
+                   (*te)->lineHeight);
+    if (want != have)
+        TEScroll(0, (short)((have - want) * (*te)->lineHeight), te);
+}
+
+void PrefsWindow::SyncScroll(Row *r)
+{
+    TEHandle te = FieldTE(r);
+    short    lines, shown, most;
+
+    if (r == 0 || r->scroll == 0 || te == 0) return;
 
     lines = (*te)->nLines;
     shown = (short)(((*te)->viewRect.bottom - (*te)->viewRect.top) /
@@ -706,8 +737,11 @@ bool PrefsWindow::HandleEvent(EventRecord *ev)
             }
             if (hit == mSave)   { Save();   return true; }
             if (hit == mRevert) { Revert(); return true; }
-            for (i = 0; i < mRowCount; i++)
-                if (mRows[i].scroll != 0) SyncScroll(&mRows[i]);
+            for (i = 0; i < mRowCount; i++) {
+                if (mRows[i].scroll == 0) continue;
+                if (hit == mRows[i].scroll) ScrollTo(&mRows[i]);
+                SyncScroll(&mRows[i]);
+            }
             return true;
         }
     }
