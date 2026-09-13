@@ -204,12 +204,17 @@ a person gets to state it:
 | Fetched from | What the script routes |
 |---|---|
 | `:8765` | Every host to the live proxy. The allow-list does not appear — there is nothing for it to be an exception to. |
-| `:8888` | Every host to the archive, except `wayback_live` hosts. Those go **direct** over plain `http` — the browser needs nothing from Gateway there — and through the live proxy over `https`, where it does. |
+| `:8888` | Every host to the archive, except `wayback_live` hosts, which go **direct** — neither the archive nor Gateway. |
 
-So the browser stays pointed at one place and a whitelisted site genuinely
-never touches `:8888` — which is the routing the archive listener performs
-anyway, written down where a browser will read it. Each script says at the top
-which of the two it is, so a bookmark for each is tellable apart.
+So the browser stays pointed at one place and a whitelisted site never touches
+`:8888` at all. Each script says at the top which of the two it is, so a
+bookmark for each is tellable apart.
+
+A site on `wayback_live` is one you have said to leave alone, so the script
+leaves it alone: `DIRECT`, straight to the site. Note the consequence for an
+`https` one — the browser then does its own handshake, which is what Gateway
+normally spares it, so an https host on the allow-list wants a browser that
+can manage 2026 TLS by itself.
 
 In Internet Explorer the URL goes in **Tools → Internet Options → Connections →
 LAN Settings → Use automatic configuration script**; Netscape 4 has it under
