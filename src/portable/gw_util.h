@@ -60,6 +60,18 @@ size_t gw_next_line(const char *buf, size_t len, size_t off);
  */
 int gw_glob_match(const char *pattern, const char *text);
 
+/*
+ * Match a host against an allow-list pattern.
+ *
+ * A pattern carrying * or ? is a glob and means exactly what it says. A plain
+ * host name covers itself and everything under it, so "howsmyssl.com" matches
+ * "www.howsmyssl.com" -- a person writing a domain in a list of sites means
+ * the site, and having to write it twice is a trap that looks like it worked
+ * until the day one of the two forms is used. Case-insensitive, as host names
+ * are.
+ */
+int gw_host_matches(const char *pattern, const char *host);
+
 #ifdef __cplusplus
 }
 #endif

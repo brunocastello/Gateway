@@ -62,7 +62,16 @@ int gw_prefs_get_nth(const char *text, size_t len, const char *key, int n,
                         while (end > vs && (text[end - 1] == ' ' ||
                                             text[end - 1] == '\t')) end--;
                         gw_copy_n(out, cap, text + vs, end - vs);
-                        return out[0] != '\0';
+                        /*
+                         * 1 because the key is present at this index, even
+                         * when its value is empty. Reporting an empty value
+                         * as "not found" made a caller walking the indices
+                         * stop at the first blank entry and never see the
+                         * ones after it, which is a silent way to lose half
+                         * a list. gw_prefs_get() keeps the old meaning by
+                         * testing the value itself.
+                         */
+                        return 1;
                     }
                 }
             }
@@ -75,7 +84,10 @@ int gw_prefs_get_nth(const char *text, size_t len, const char *key, int n,
 int gw_prefs_get(const char *text, size_t len, const char *key,
                  char *out, size_t cap)
 {
-    return gw_prefs_get_nth(text, len, key, 0, out, cap);
+    /* "Set to something" rather than "present": a key with an empty value
+     * should fall through to the caller's default, as it always has. */
+    if (!gw_prefs_get_nth(text, len, key, 0, out, cap)) return 0;
+    return out[0] != '\0';
 }
 
 long gw_prefs_get_num(const char *text, size_t len, const char *key, long def)

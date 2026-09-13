@@ -75,7 +75,7 @@ int gw_pac_is_request(const char *path)
 size_t gw_pac_build(const char *authority, int live_port, int archive_port,
                     GWPacNextHost next_host, char *out, size_t cap)
 {
-    char   line[512];
+    char   line[640];
     char   pattern[256];
     char   live[GW_MAX_HOST + 32];
     size_t used = 0;
@@ -146,9 +146,22 @@ size_t gw_pac_build(const char *authority, int live_port, int archive_port,
                     return 0;
                 any = 1;
             }
-            snprintf(line, sizeof(line),
-                     "    if (shExpMatch(host, \"%s\")) return \"%s\";\n",
-                     pattern, live);
+            /*
+             * A plain host name covers its subdomains, exactly as
+             * gw_host_matches() does for the proxy itself -- shExpMatch has
+             * no such rule, so the script has to say both. A script that
+             * routed differently from the proxy it configures would be worse
+             * than no script at all.
+             */
+            if (strchr(pattern, '*') == NULL && strchr(pattern, '?') == NULL)
+                snprintf(line, sizeof(line),
+                         "    if (shExpMatch(host, \"%s\") ||\n"
+                         "        shExpMatch(host, \"*.%s\")) return \"%s\";\n",
+                         pattern, pattern, live);
+            else
+                snprintf(line, sizeof(line),
+                         "    if (shExpMatch(host, \"%s\")) return \"%s\";\n",
+                         pattern, live);
             if (!add(out, cap, &used, line)) return 0;
         }
         if (any && !add(out, cap, &used, "\n")) return 0;

@@ -120,7 +120,7 @@ which proxy it points at.
 | `wayback_settings` | `1` | Serve the settings page on `web.archive.org` and on `gateway`. |
 | `wayback_quick_images` | `1` | Accepted for settings-page compatibility and does nothing. It tells the reference proxy to rewrite asset URLs in the HTML; Gateway fetches with the archive's `id_` modifier, which returns the original bytes with no HTML to rewrite. |
 | `wayback_cache` | `1` | Replace the archive's half-hour freshness with a year, since a snapshot cannot change. `0` passes the origin's caching through unaltered. |
-| `wayback_live` | — | Hosts to fetch live instead of from the archive. Repeat the key, one pattern per line. `*` and `?` are wildcards and matching is case-insensitive, so `*.frogfind.com` covers the subdomains. |
+| `wayback_live` | — | Hosts to fetch live instead of from the archive. Repeat the key, one pattern per line. A plain host name covers the site and everything under it, so `frogfind.com` also matches `www.frogfind.com`; a pattern containing `*` or `?` is a glob and matches only what it says. Case-insensitive either way. A blank entry is skipped rather than ending the list. |
 
 The era is changed from the browser, not from Gateway, by visiting the settings
 page on the Wayback port:

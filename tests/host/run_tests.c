@@ -1253,10 +1253,12 @@ static void test_pac(void)
           "the entry point is there");
     check(strstr(buf, "if (host == \"192.168.1.5\") return \"DIRECT\";") != NULL,
           "Gateway itself is DIRECT, so a refetch cannot loop");
-    check(strstr(buf,
-            "shExpMatch(host, \"*.floodgap.com\")) return \"PROXY "
-            "192.168.1.5:8765\"") != NULL,
+    check(strstr(buf, "shExpMatch(host, \"*.floodgap.com\")) return \"PROXY "
+                      "192.168.1.5:8765\"") != NULL,
           "an allow-listed host goes to the live proxy");
+    check(strstr(buf, "shExpMatch(host, \"68k.news\") ||\n"
+                      "        shExpMatch(host, \"*.68k.news\")") != NULL,
+          "a plain host is emitted in both forms, as the proxy matches it");
     check(strstr(buf, "return \"PROXY 192.168.1.5:8888\";") != NULL,
           "everything else goes to the archive");
     check(strstr(buf, "bad") == NULL,
@@ -1287,6 +1289,74 @@ static void test_pac(void)
           "a buffer too small yields nothing rather than a truncated script");
 }
 
+/* ------------------------------------------------------------------ */
+
+static void test_host_match(void)
+{
+    printf("gw_host_matches\n");
+
+    /* A plain name covers itself and everything under it. */
+    check(gw_host_matches("howsmyssl.com", "howsmyssl.com"),
+          "a plain name matches itself");
+    check(gw_host_matches("howsmyssl.com", "www.howsmyssl.com"),
+          "a plain name covers its subdomains");
+    check(gw_host_matches("howsmyssl.com", "a.b.howsmyssl.com"),
+          "however deep");
+    check(gw_host_matches("HowsMySSL.com", "WWW.howsmyssl.COM"),
+          "case does not matter");
+
+    /* But only a real subdomain: the dot has to be there. */
+    check(!gw_host_matches("howsmyssl.com", "notmyhowsmyssl.com"),
+          "a suffix that is not a subdomain does not match");
+    check(!gw_host_matches("howsmyssl.com", "howsmyssl.com.evil.test"),
+          "nor a name that merely starts with it");
+    check(!gw_host_matches("howsmyssl.com", "com"),
+          "nor a shorter name");
+
+    /* A glob keeps meaning exactly what it says. */
+    check(gw_host_matches("*.howsmyssl.com", "www.howsmyssl.com"),
+          "a glob still matches subdomains");
+    check(!gw_host_matches("*.howsmyssl.com", "howsmyssl.com"),
+          "a *. glob does not cover the bare name, as globs never did");
+    check(gw_host_matches("*.news", "68k.news"), "a bare-suffix glob works");
+    check(!gw_host_matches("", "howsmyssl.com"), "an empty pattern matches nothing");
+    check(!gw_host_matches("howsmyssl.com", ""), "and nothing matches an empty host");
+}
+
+/* An indexed lookup must not stop at a blank entry. */
+static void test_prefs_list(void)
+{
+    static const char text[] =
+        "wayback_live = frogfind.com\n"
+        "wayback_live =\n"                 /* blank: not the end of the list */
+        "# wayback_live = commented.out\n"
+        "wayback_live = howsmyssl.com\n";
+    char buf[128];
+
+    printf("prefs lists\n");
+
+    check(gw_prefs_get_nth(text, sizeof(text) - 1, "wayback_live", 0,
+                           buf, sizeof(buf)) == 1, "entry 0 is present");
+    check_str(buf, "frogfind.com", "entry 0");
+
+    check(gw_prefs_get_nth(text, sizeof(text) - 1, "wayback_live", 1,
+                           buf, sizeof(buf)) == 1,
+          "a blank entry is reported as present, not as the end");
+    check_str(buf, "", "entry 1 is empty");
+
+    check(gw_prefs_get_nth(text, sizeof(text) - 1, "wayback_live", 2,
+                           buf, sizeof(buf)) == 1,
+          "the entry after the blank is still reachable");
+    check_str(buf, "howsmyssl.com", "entry 2, past the blank and the comment");
+
+    check(gw_prefs_get_nth(text, sizeof(text) - 1, "wayback_live", 3,
+                           buf, sizeof(buf)) == 0, "and then the list ends");
+
+    /* gw_prefs_get keeps its old meaning: set to something, or not. */
+    check(gw_prefs_get(text, sizeof(text) - 1, "wayback_live",
+                       buf, sizeof(buf)) == 1, "gw_prefs_get is unchanged");
+}
+
 int main(void)
 {
     test_util();
@@ -1303,6 +1373,8 @@ int main(void)
     test_wayback();
     test_rewrite();
     test_x509write();
+    test_host_match();
+    test_prefs_list();
     test_pac();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);

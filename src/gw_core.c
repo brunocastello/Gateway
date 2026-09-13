@@ -145,7 +145,9 @@ int GW_WaybackHostIsLive(const char *host)
     for (i = 0; i < 128; i++) {
         if (!GWConfig_GetNth("wayback_live", i, pattern, sizeof(pattern)))
             break;
-        if (gw_glob_match(pattern, host)) return 1;
+        /* A blank entry is not the end of the list. */
+        if (pattern[0] == '\0') continue;
+        if (gw_host_matches(pattern, host)) return 1;
     }
     return 0;
 }

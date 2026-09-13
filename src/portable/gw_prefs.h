@@ -27,8 +27,13 @@ int gw_prefs_get(const char *text, size_t len, const char *key,
 /*
  * The nth occurrence of a key, counting from 0. Prefs are one setting per
  * line, but a list -- the Wayback allow-list, say -- reads far better as the
- * same key repeated than as one enormous space-separated value. Returns 1 when
- * that occurrence exists with a non-empty value.
+ * same key repeated than as one enormous space-separated value.
+ *
+ * Returns 1 when that occurrence exists, whatever its value, and 0 only when
+ * there is no nth occurrence. The distinction is the whole point of the
+ * function: a caller walking indices has to be able to tell a blank entry
+ * from the end of the list, or one blank line in the prefs silently discards
+ * every entry below it. Check out[0] for an empty value.
  */
 int gw_prefs_get_nth(const char *text, size_t len, const char *key, int n,
                      char *out, size_t cap);
