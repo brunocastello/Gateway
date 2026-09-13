@@ -44,6 +44,16 @@ A hello that genuinely asks for SSL 2.0 still fails, and so does one asking for 
 
 **This has not been run against a real browser.** The conversion is tested on the host and reasoned through against RFC 5246 Appendix E.2, including the transcript hashing that decides whether the last message of the handshake succeeds. Whether a period Internet Explorer completes a handshake through it is exactly what 0.3.4 is for. `third_party/certainly/PATCHES.md` §22 has the detail, including the one change from the original patch that was left out and why.
 
+## One URL instead of two ports (new in 0.3.4)
+
+Both listeners now serve a proxy auto-configuration script at `/proxy.pac` — `http://192.168.1.5:8765/proxy.pac`, or the same path on `:8888`. In Internet Explorer it goes under **Tools → Internet Options → Connections → LAN Settings → Use automatic configuration script**, and Netscape 4 has the same thing under **Edit → Preferences → Advanced → Proxies**. Every browser this program targets supports it.
+
+It is worth doing for more than the typing. With the Wayback listener running, the script says the one thing two port numbers cannot: hosts on the `wayback_live` allow-list go to the live proxy, everything else goes to the archive. The browser stays pointed at one place, and a whitelisted site genuinely never reaches `:8888` at all.
+
+The proxy addresses in the script are taken from the `Host:` header of the request that fetched it, so they are addresses that browser has just demonstrated it can reach — two interfaces, a name from the hosts file, or `127.0.0.1` from the same machine all produce a working script with nothing to fill in. Gateway's own address and anything undotted return `DIRECT`, so re-fetching the script cannot go through the proxy the script describes.
+
+This is automatic *configuration*, not automatic *detection*. WPAD needs DHCP option 252 or a `wpad` DNS record and Gateway can provide neither, so the URL is pasted once. `/wpad.dat` serves the same script for anyone whose network already points WPAD at this machine.
+
 ## Sites without TLS 1.3 now work at all (new in 0.3.4)
 
 Gateway always opens a connection to a site with a TLS 1.3 hello, and falls back to TLS 1.2 when the site has no 1.3. That fallback had never once completed, so a site serving only TLS 1.2 could not be fetched — it failed as a handshake error, a certificate error, or a read failure depending on where it got to, and none of those named the real cause.

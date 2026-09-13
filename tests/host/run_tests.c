@@ -15,6 +15,7 @@
 #include "gw_http.h"
 #include "gw_mailcmd.h"
 #include "gw_oauth.h"
+#include "gw_pac.h"
 #include "gw_prefs.h"
 #include "gw_rewrite.h"
 #include "gw_x509write.h"
@@ -1213,6 +1214,74 @@ static void test_x509write(void)
     }
 }
 
+/* ------------------------------------------------------------------ */
+
+/* The allow-list the script is built against. */
+static const char *sPacHosts[] = {
+    "floodgap.com", "*.floodgap.com", "68k.news",
+    "bad\"quote.com",              /* must be dropped, not escaped */
+    NULL
+};
+
+static int pac_host(int index, char *out, size_t cap)
+{
+    if (index < 0 || sPacHosts[index] == NULL) return 0;
+    gw_copy_n(out, cap, sPacHosts[index], strlen(sPacHosts[index]));
+    return 1;
+}
+
+static void test_pac(void)
+{
+    char   buf[4096];
+    size_t n;
+
+    printf("pac\n");
+
+    check(gw_pac_is_request("/proxy.pac"), "proxy.pac is the script");
+    check(gw_pac_is_request("/wpad.dat"), "wpad.dat is the script");
+    check(gw_pac_is_request("/PROXY.PAC"), "the match is case-insensitive");
+    check(gw_pac_is_request("/proxy.pac?1758"), "a cache-buster is ignored");
+    check(!gw_pac_is_request("/proxy.pack"), "a longer name is not the script");
+    check(!gw_pac_is_request("/a/proxy.pac"), "only at the root");
+    check(!gw_pac_is_request("/"), "the root is not the script");
+    check(!gw_pac_is_request(NULL), "no path is not the script");
+
+    /* With an archive listener: the allow-list routes to the live proxy. */
+    n = gw_pac_build("192.168.1.5", 8765, 8888, pac_host, buf, sizeof(buf));
+    check(n > 0 && n == strlen(buf), "the script is built and counted");
+    check(strstr(buf, "function FindProxyForURL(url, host)") != NULL,
+          "the entry point is there");
+    check(strstr(buf, "if (host == \"192.168.1.5\") return \"DIRECT\";") != NULL,
+          "Gateway itself is DIRECT, so a refetch cannot loop");
+    check(strstr(buf,
+            "shExpMatch(host, \"*.floodgap.com\")) return \"PROXY "
+            "192.168.1.5:8765\"") != NULL,
+          "an allow-listed host goes to the live proxy");
+    check(strstr(buf, "return \"PROXY 192.168.1.5:8888\";") != NULL,
+          "everything else goes to the archive");
+    check(strstr(buf, "bad") == NULL,
+          "a pattern that would break the literal is dropped");
+
+    /* Without one: no allow-list, and everything is the live proxy. */
+    n = gw_pac_build("gateway.local", 8765, 0, pac_host, buf, sizeof(buf));
+    check(n > 0, "the script is built with no archive listener");
+    check(strstr(buf, "8888") == NULL, "no archive proxy is named");
+    check(strstr(buf, "floodgap") == NULL,
+          "the allow-list is left out when there is nothing to route around");
+    check(strstr(buf, "return \"PROXY gateway.local:8765\";") != NULL,
+          "everything goes to the live proxy");
+
+    /* Refusals rather than half a script. */
+    check(gw_pac_build("", 8765, 0, pac_host, buf, sizeof(buf)) == 0,
+          "no authority is refused");
+    check(gw_pac_build("ho\"st", 8765, 0, pac_host, buf, sizeof(buf)) == 0,
+          "an authority that would break the literal is refused");
+    check(gw_pac_build("192.168.1.5", 0, 0, pac_host, buf, sizeof(buf)) == 0,
+          "no live port is refused");
+    check(gw_pac_build("192.168.1.5", 8765, 8888, pac_host, buf, 40) == 0,
+          "a buffer too small yields nothing rather than a truncated script");
+}
+
 int main(void)
 {
     test_util();
@@ -1229,6 +1298,7 @@ int main(void)
     test_wayback();
     test_rewrite();
     test_x509write();
+    test_pac();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;

@@ -19,10 +19,12 @@
 #include <string.h>
 #include <stdio.h>
 
+#include "../gw_config.h"
 #include "../gw_core.h"
 #include "../portable/gw_chunked.h"
 #include "../portable/gw_http.h"
 #include "../portable/gw_log.h"
+#include "../portable/gw_pac.h"
 #include "../gw_ca.h"
 #include "../portable/gw_rewrite.h"
 #include "../portable/gw_url.h"
@@ -520,6 +522,47 @@ static int wayback_settings(GWHttpSession *s)
 }
 
 /*
+ * The allow-list, one pattern at a time, for the auto-configuration script.
+ *
+ * gw_pac.c is portable and the preferences are not, so the patterns reach it
+ * through here. Same key and same order as GW_WaybackHostIsLive(), because a
+ * script that routed differently from the proxy it configures would be worse
+ * than no script.
+ */
+static int pac_next_live_host(int index, char *out, size_t cap)
+{
+    return GWConfig_GetNth("wayback_live", index, out, cap);
+}
+
+/*
+ * Serve the auto-configuration script.
+ *
+ * The authority comes from the request rather than from anything Gateway
+ * knows about itself, and that is the point: whatever the browser typed to
+ * reach this file is, by construction, an address that browser can reach. A
+ * machine with two interfaces, a name in the hosts file, or 127.0.0.1 from
+ * the same machine all produce a script that works, with nothing to
+ * configure.
+ */
+static void session_serve_pac(GWHttpSession *s)
+{
+    static char page[GW_OUT_MAX / 2];
+    size_t n;
+
+    n = gw_pac_build(s->req.url.host, GW_HttpPort(),
+                     GW_WaybackListening() ? GW_WaybackPort() : 0,
+                     pac_next_live_host, page, sizeof(page));
+    if (n == 0) {
+        session_fail(s, "HTTP/1.0 500 Internal Server Error\r\n"
+                        "Connection: close\r\n\r\n",
+                     "auto-configuration script would not fit");
+        return;
+    }
+    gw_log("#%ld proxy.pac for %s", s->id, s->req.url.host);
+    session_serve(s, GW_PAC_CONTENT_TYPE, page, n);
+}
+
+/*
  * Point a request at the archive, unless it is for the settings page or for a
  * host on the allow-list. Returns 1 when the session is already finished.
  */
@@ -749,6 +792,23 @@ static void step_recv_request(GWHttpSession *s)
            s->req.shape == kGWShapeConnect ? " (CONNECT)" : "");
 
     s->target = s->req.url;
+
+    /*
+     * The auto-configuration script, on both listeners.
+     *
+     * Origin-form and not a terminated CONNECT means the request is addressed
+     * to Gateway rather than through it: a proxy-configured browser always
+     * sends the absolute form, and the one other source of origin-form
+     * requests is a browser inside a connect_mitm tunnel, which is asking the
+     * real origin and must not be answered here. So this fires exactly when
+     * someone has pointed something straight at Gateway's own address, which
+     * is what fetching the script is.
+     */
+    if (s->req.shape == kGWShapeOrigin && !s->mitm &&
+        gw_pac_is_request(s->req.url.path)) {
+        session_serve_pac(s);
+        return;
+    }
 
     /* Module 3's only entry point on the request side. */
     if (s->wayback && s->req.shape != kGWShapeConnect) {

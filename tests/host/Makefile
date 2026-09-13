@@ -20,7 +20,8 @@ SOURCES = \
 	$(PORTABLE)/gw_log.c \
 	$(PORTABLE)/gw_rewrite.c \
 	$(PORTABLE)/gw_x509write.c \
-	$(PORTABLE)/gw_wayback.c
+	$(PORTABLE)/gw_wayback.c \
+	$(PORTABLE)/gw_pac.c
 
 all: test
 

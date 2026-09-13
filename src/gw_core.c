@@ -99,6 +99,14 @@ long GW_MaxBodyBytes(void)
 
 int GW_WaybackPort(void) { return sWaybackPort; }
 
+/*
+ * Whether the archive listener is actually accepting, which is not the same
+ * as having a port configured: wayback_port keeps its value when
+ * wayback_enabled is off, and the auto-configuration script must not name a
+ * proxy that nothing is listening on.
+ */
+int GW_WaybackListening(void) { return sWayback != NULL; }
+
 GWWaybackSettings *GW_WaybackSettings(void) { return &sWaybackSet; }
 
 int GW_WaybackServesSettings(void)

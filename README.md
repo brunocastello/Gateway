@@ -188,6 +188,41 @@ without the archive's own toolbar and link rewriting — a 2001 page arrives as
 
 ---
 
+## Automatic proxy configuration
+
+Both listeners serve a PAC file at `/proxy.pac`, so a browser can be given one
+URL instead of two ports and a list of exceptions:
+
+```
+http://192.168.1.5:8765/proxy.pac
+http://192.168.1.5:8888/proxy.pac
+```
+
+Either address serves the same script — it routes by host, not by the port it
+came from. In Internet Explorer it goes in **Tools → Internet Options →
+Connections → LAN Settings → Use automatic configuration script**; Netscape 4
+has it under **Edit → Preferences → Advanced → Proxies → Automatic proxy
+configuration**. `/wpad.dat` answers the same thing for anyone whose network
+already points WPAD here.
+
+What the script says, when the Wayback listener is running, is the thing the
+ports alone cannot: hosts on the `wayback_live` allow-list go to the live proxy
+and everything else goes to the archive. So the browser stays pointed at one
+place and a whitelisted site genuinely never touches `:8888`. With Module 3 off
+it routes everything to `:8765` and leaves the allow-list out.
+
+The addresses in the script are built from the `Host:` header of the request
+for the script itself, which means they are by construction addresses that
+browser can reach — a machine with two interfaces, a name in the hosts file and
+`127.0.0.1` from the same machine all get a script that works, with nothing to
+configure. Gateway's own address, plain host names and `127.*` return `DIRECT`,
+so a browser re-fetching the script cannot send that request through the proxy
+the script describes.
+
+This is automatic *configuration*, not automatic *detection*: WPAD discovery
+needs DHCP option 252 or a `wpad` DNS record, and Gateway can hand out neither.
+The URL goes in once.
+
 ## Turning modules on and off
 
 Each of the three modules is independent, and a module that is switched off is
