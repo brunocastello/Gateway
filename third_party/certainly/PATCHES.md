@@ -597,3 +597,101 @@ further than the patch did.
 
 None of it has been run on either system. The imports are checked on every
 build; the behaviour is not, and cannot be from here.
+
+---
+
+## §22 — BearSSL accepts the SSLv2-compatible ClientHello framing
+
+*BearSSL patch, in `bearssl/src/ssl/ssl_engine.c`, `bearssl/inc/bearssl_ssl.h`
+and `bearssl/src/ssl/ssl_hs_server.c`. The first BearSSL files Gateway
+modifies; everything above is Certainly. Contributed by roytam1 as
+`roytam1/Gateway@65f2c9f`, taken with its second change dropped — see the end
+of this section.*
+
+A vintage browser with "Use SSL 2.0" checked wraps an otherwise TLS-capable
+CLIENT-HELLO in the 2-byte SSLv2 record header (high bit set) instead of the
+TLS 5-byte header. BearSSL rejected that before any field was read, in
+`recvrec_ack()`:
+
+```c
+/* Note: right now, we reject clients that try to send
+ * a ClientHello in a format compatible with SSL-2.0. ... */
+```
+
+so a browser that could have negotiated TLS 1.0 failed with
+`BR_ERR_UNSUPPORTED_VERSION` (3) over framing alone.
+
+The engine now detects a high-bit first byte on the very first record (only
+then: `version_in` must still be 0 and encryption inactive, otherwise
+`BR_ERR_UNEXPECTED`), gathers the whole SSLv2 message — up to `SSL2_MAX_MSG`
+(2048) bytes, past which `BR_ERR_TOO_LARGE` — and rewrites it in place to a
+plain TLS ClientHello record:
+
+* `CLIENT-HELLO` (msg type 1) only; anything else is `BR_ERR_UNEXPECTED`.
+  A version below 3.0 is still `BR_ERR_UNSUPPORTED_VERSION`: pure SSLv2 and
+  its crypto are not implemented and never will be.
+* TLS suites arrive as `0x00 xx xx` and are kept; the SSLv2 3DES spec
+  `0x07 0x00 0xC0` maps to `TLS_RSA_WITH_3DES_EDE_CBC_SHA` (`0x00 0x0A`),
+  the only suite these browsers share with BearSSL. Other SSLv2-specific
+  specs (RC4, single DES) are dropped, and an empty remainder is
+  `BR_ERR_BAD_CIPHER_SUITE`. The challenge (required 16–32 bytes) becomes
+  `client_random`, left-padded with zeros per RFC 6101 Appendix E. A session
+  id over 32 bytes is `BR_ERR_OVERSIZED_ID`; one of a legal length is
+  dropped rather than echoed, because RFC 5246 Appendix E.2 requires the
+  field empty in a converted hello — a V2 session id can only name an
+  SSLv2 session, which is not resumable here.
+* The rewritten hello carries no extensions — SSLv2 has none — so there is
+  no SNI or secure-renegotiation signalling; the handshake already handles
+  their absence with defaults. Gateway does not need SNI: the leaf is minted
+  from the host in the `CONNECT` line, not from the hello.
+
+`record_type_in = 0x80` (`SSL2_MARKER`, never a real TLS content type) marks
+a message being gathered. Split delivery works: the marker is set once the
+5-byte read completes and conversion runs when the remainder arrives.
+
+### The transcript hash
+
+The Finished messages cover every handshake byte, and the client hashes the
+hello it *sent*, not the one we rewrote. RFC 5246 Appendix E.2 excludes only
+the V2 length header, so the conversion feeds `msg_type` onward straight into
+the multihasher and sets `hash_skip` (new field, `bearssl_ssl.h`) to the
+length of the re-encoded message. The two read paths in `ssl_hs_server.c`
+count that down instead of hashing, so the rewritten bytes are never hashed
+twice. Without this both sides compute different verify data and every
+handshake fails at the last message.
+
+The pre-feed is safe because the multihasher is pristine at that point:
+`ssl_hs_server.t0` runs `multihash-init` inside `do-handshake` immediately
+before `read-ClientHello`, and the V2 framing is only accepted when
+`version_in` is still 0, so a converted hello is always the first thing in
+the transcript.
+
+`ssl_hs_server.c` is generated from `ssl_hs_server.t0` by the T0 compiler,
+which Gateway does not run. The two hash gates live in the generated file
+only; regenerating it drops them, and the Finished failure that follows will
+not look like a missing patch. A comment at the top of the file says so.
+
+### Not taken
+
+The original commit carried a second, undocumented change in
+`jump_handshake()`: a ClientHello whose body version was `0x0300` had the
+byte rewritten to `0x0301` so BearSSL's `version_min` would accept it. That
+is left out. It rewrites the byte before the handshake code hashes it, and
+`hash_skip` does not cover that path, so an ordinary SSL 3.0 hello would
+break its own Finished; the guard is three bytes of pattern against a buffer
+that is frequently positioned mid-message, so it can fire by chance; and a
+client that offered `0x0300` as its maximum is entitled to reject the
+`0x0301` ServerHello it would get back. A browser that can do TLS 1.0 puts
+`0x0301` in the body; one that cannot is asking for SSL 3.0, which BearSSL
+does not implement. §23 names the offered version in the log instead.
+
+### Verification
+
+Not verified here. roytam1 reports testing the conversion on the host with
+mingw-gcc against the vendored tree: an IE-style hello (version `0x0301`,
+ciphers `0700C0`/`00000A`/`010080`, 16-byte challenge) fed byte-at-a-time
+converts to record type 22 with the padded random and the two 3DES suites; a
+normal TLS header is still accepted; a `0x0002` version still fails
+`UNSUPPORTED_VERSION`; a second SSLv2 header fails `UNEXPECTED`. What remains
+untested on both sides is the part that only a real browser can exercise: a
+complete handshake through a converted hello, Finished included.

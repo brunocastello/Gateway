@@ -1020,6 +1020,17 @@ typedef struct {
 	void (*hsrun)(void *ctx);
 
 	/*
+	 * Incoming handshake payload bytes excluded from the transcript
+	 * hash (Gateway SSLv2-hello patch, PATCHES.md §22). When a
+	 * SSLv2-compatible ClientHello is rewritten to TLS, the original
+	 * message body is fed to the transcript hash directly and this
+	 * counts down the rewritten bytes as the handshake reads them,
+	 * so the re-encoded message is not hashed a second time. Zero
+	 * in normal operation; cleared by br_ssl_engine_hs_reset().
+	 */
+	size_t hash_skip;
+
+	/*
 	 * The 'action' value communicates OOB information between the
 	 * engine and the handshake processor.
 	 *
