@@ -549,9 +549,26 @@ static void session_serve_pac(GWHttpSession *s)
     static char page[GW_OUT_MAX / 2];
     size_t n;
 
-    n = gw_pac_build(s->req.url.host, GW_HttpPort(),
-                     GW_WaybackListening() ? GW_WaybackPort() : 0,
-                     pac_next_live_host, page, sizeof(page));
+    /*
+     * Which listener served it decides what it says, because choosing the URL
+     * is how a person says which they want.
+     *
+     * From :8765 the answer is the live web for everything, and the
+     * allow-list does not appear -- there is nothing for it to be an
+     * exception to when every host already routes live. From :8888 it is the
+     * archive for everything except the allow-list, which is the routing that
+     * listener performs anyway.
+     *
+     * Serving both the same thing was the first attempt and it was wrong: it
+     * made the two URLs interchangeable, so pasting the :8765 one and getting
+     * archived pages was the only possible outcome and nothing about it was
+     * guessable.
+     */
+    n = s->wayback
+        ? gw_pac_build(s->req.url.host, GW_HttpPort(), GW_WaybackPort(),
+                       pac_next_live_host, page, sizeof(page))
+        : gw_pac_build(s->req.url.host, GW_HttpPort(), 0,
+                       NULL, page, sizeof(page));
     if (n == 0) {
         session_fail(s, "HTTP/1.0 500 Internal Server Error\r\n"
                         "Connection: close\r\n\r\n",

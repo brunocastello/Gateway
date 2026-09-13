@@ -1246,7 +1246,7 @@ static void test_pac(void)
     check(!gw_pac_is_request("/"), "the root is not the script");
     check(!gw_pac_is_request(NULL), "no path is not the script");
 
-    /* With an archive listener: the allow-list routes to the live proxy. */
+    /* Served from the archive listener: the allow-list is the exception. */
     n = gw_pac_build("192.168.1.5", 8765, 8888, pac_host, buf, sizeof(buf));
     check(n > 0 && n == strlen(buf), "the script is built and counted");
     check(strstr(buf, "function FindProxyForURL(url, host)") != NULL,
@@ -1262,7 +1262,10 @@ static void test_pac(void)
     check(strstr(buf, "bad") == NULL,
           "a pattern that would break the literal is dropped");
 
-    /* Without one: no allow-list, and everything is the live proxy. */
+    check(strstr(buf, "// The archive:") != NULL,
+          "the script says which of the two it is");
+
+    /* Served from the live listener: everything live, no allow-list. */
     n = gw_pac_build("gateway.local", 8765, 0, pac_host, buf, sizeof(buf));
     check(n > 0, "the script is built with no archive listener");
     check(strstr(buf, "8888") == NULL, "no archive proxy is named");
@@ -1270,6 +1273,8 @@ static void test_pac(void)
           "the allow-list is left out when there is nothing to route around");
     check(strstr(buf, "return \"PROXY gateway.local:8765\";") != NULL,
           "everything goes to the live proxy");
+    check(strstr(buf, "// The live web:") != NULL,
+          "and says so at the top");
 
     /* Refusals rather than half a script. */
     check(gw_pac_build("", 8765, 0, pac_host, buf, sizeof(buf)) == 0,

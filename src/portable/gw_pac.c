@@ -88,8 +88,21 @@ size_t gw_pac_build(const char *authority, int live_port, int archive_port,
 
     snprintf(live, sizeof(live), "PROXY %s:%d", authority, live_port);
 
+    /*
+     * Say which of the two this is. Someone with a bookmark for each needs to
+     * be able to open one and tell, and the difference is otherwise a port
+     * number buried forty lines down.
+     */
     if (!add(out, cap, &used,
             "// Gateway proxy auto-configuration.\n"
+            "//\n"))
+        return 0;
+    if (!add(out, cap, &used, archive_port > 0
+            ? "// The archive: pages as they were, except the hosts listed\n"
+              "// below, which are fetched from the live web.\n"
+            : "// The live web: every host, as it is now.\n"))
+        return 0;
+    if (!add(out, cap, &used,
             "//\n"
             "// Generated for the address this was fetched from, so the\n"
             "// proxies named below are ones this browser can reach.\n"

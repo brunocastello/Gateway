@@ -198,18 +198,24 @@ http://192.168.1.5:8765/proxy.pac
 http://192.168.1.5:8888/proxy.pac
 ```
 
-Either address serves the same script — it routes by host, not by the port it
-came from. In Internet Explorer it goes in **Tools → Internet Options →
-Connections → LAN Settings → Use automatic configuration script**; Netscape 4
-has it under **Edit → Preferences → Advanced → Proxies → Automatic proxy
-configuration**. `/wpad.dat` answers the same thing for anyone whose network
-already points WPAD here.
+**Which address you use is the choice of mode**, because that is the only place
+a person gets to state it:
 
-What the script says, when the Wayback listener is running, is the thing the
-ports alone cannot: hosts on the `wayback_live` allow-list go to the live proxy
-and everything else goes to the archive. So the browser stays pointed at one
-place and a whitelisted site genuinely never touches `:8888`. With Module 3 off
-it routes everything to `:8765` and leaves the allow-list out.
+| Fetched from | What the script routes |
+|---|---|
+| `:8765` | Every host to the live proxy. The allow-list does not appear — there is nothing for it to be an exception to. |
+| `:8888` | Every host to the archive, except `wayback_live` hosts, which go to the live proxy. |
+
+So the browser stays pointed at one place and a whitelisted site genuinely
+never touches `:8888` — which is the routing the archive listener performs
+anyway, written down where a browser will read it. Each script says at the top
+which of the two it is, so a bookmark for each is tellable apart.
+
+In Internet Explorer the URL goes in **Tools → Internet Options → Connections →
+LAN Settings → Use automatic configuration script**; Netscape 4 has it under
+**Edit → Preferences → Advanced → Proxies → Automatic proxy configuration**.
+`/wpad.dat` answers the same thing for anyone whose network already points WPAD
+here.
 
 The addresses in the script are built from the `Host:` header of the request
 for the script itself, which means they are by construction addresses that
