@@ -137,6 +137,7 @@ struct Row {
     int                index;     /* into the shadow table                */
     short              item;      /* the editText or chkCtrl item, or 0   */
     short              labelItem; /* its statText, for right-aligning     */
+    Rect               fieldBox;  /* the box drawn around an entry field   */
     ControlHandle      popup;     /* choice fields                        */
     Rect               popupRect;
     ControlHandle      scroll;    /* list fields                          */
@@ -680,10 +681,11 @@ void PrefsWindow::BuildGroup(int group)
             row->labelItem = items.Add(kTextItem, &r, f[i].label);
             /* The field, with the scroll bar's width kept clear on the
              * right, exactly as the Signature box in Internet has it. */
-            SetRect(&r, static_cast<short>(kPaneLeft + 4),
-                    static_cast<short>(v + 19),
-                    static_cast<short>(kPaneRight - kScrollWidth - 3),
+            SetRect(&row->fieldBox, kPaneLeft, static_cast<short>(v + 15),
+                    static_cast<short>(kPaneRight - kScrollWidth + 1),
                     static_cast<short>(v + 15 + kListHeight));
+            r = row->fieldBox;
+            InsetRect(&r, 4, 3);
             row->item = items.Add(kEditItem, &r, mList);
             if (mFirstEdit == 0) mFirstEdit = row->item;
             SetRect(&row->scrollRect,
@@ -698,10 +700,17 @@ void PrefsWindow::BuildGroup(int group)
                     static_cast<short>(kEntryLeft - 8),
                     static_cast<short>(v + 17));
             row->labelItem = items.Add(kTextItem, &r, f[i].label);
-            SetRect(&r, static_cast<short>(kEntryLeft + 4),
-                    static_cast<short>(v + 3),
-                    static_cast<short>(kPaneRight - 4),
+            /*
+             * The box is what a person sees and the item is the text inside
+             * it, inset so the characters do not touch the border. Deriving
+             * one from the other here is what stops the frame and the field
+             * drifting apart, which is how the last one ended up a different
+             * shape from the Internet control panel's.
+             */
+            SetRect(&row->fieldBox, kEntryLeft, v, kPaneRight,
                     static_cast<short>(v + kEntryHeight));
+            r = row->fieldBox;
+            InsetRect(&r, 4, 3);
             row->item = items.Add(kEditItem, &r, mValue[i]);
             if (mFirstEdit == 0) mFirstEdit = row->item;
             break;
@@ -882,17 +891,13 @@ void PrefsWindow::Draw()
      */
     RGBForeColor(&black);
     for (i = 0; i < mRowCount; i++) {
-        short  type;
-        Handle h;
-        Rect   fr;
+        Rect fr;
 
         if (mRows[i].field == 0 || mRows[i].item == 0) continue;
         if (mRows[i].field->kind == kGWFieldFlag) continue;
 
-        GetDialogItem(mDialog, mRows[i].item, &type, &h, &fr);
-        InsetRect(&fr, -3, -3);
-        if (mRows[i].field->kind == kGWFieldList)
-            fr.right = static_cast<short>(kPaneRight - kScrollWidth + 1);
+        fr = mRows[i].fieldBox;
+        if (fr.right <= fr.left) continue;
         FrameRect(&fr);
     }
 }
