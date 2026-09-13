@@ -1,40 +1,39 @@
 /*
  * gw_prefswin.cpp - the Preferences window on Mac OS 9.
  *
- * Multiversal only, exactly like src/main.cpp: this file reaches Gateway
- * through the plain-C headers in src/ and touches no Open Transport.
+ * A modeless Dialog Manager dialog. Every field in it is a real dialog item,
+ * so the system draws it and DialogSelect tracks it -- which is where text
+ * selection, the caret, tabbing between fields and Cut/Copy/Paste come from.
+ * An earlier version drew the fields itself with TextEdit and had none of
+ * those, because they are not things a field has; they are things the Dialog
+ * Manager does for a field it owns.
  *
- * Modeless, and that is not a style choice. ModalDialog() runs its own event
- * loop, so GW_Poll() would stop being called and every proxy session would
- * sit there until it timed out while somebody read the labels. The window is
- * driven from the one WaitNextEvent loop in main.cpp, which is CLAUDE.md
- * rule 6 applied to the user interface.
+ * The item list is built in memory from src/portable/gw_prefsform.c rather
+ * than compiled as a DITL resource, so the fields stay declared in one place
+ * and a preference added to the table appears in the window.
  *
- * The fields come from src/portable/gw_prefsform.c. Nothing about which
- * preferences exist, what they are called or what they may hold is decided
- * here -- this file knows how to draw a checkbox, an entry field and a list,
- * and which of the three a field wants.
+ * Modeless is not a style choice. ModalDialog() runs its own event loop, so
+ * GW_Poll() would stop being called and every proxy session would time out
+ * while somebody read the labels. main.cpp offers this each event first.
  *
- * Values live in a shadow copy rather than in the controls. Only one group is
- * on screen at a time, so the controls for the other six do not exist; a save
- * that read the controls would write the visible group and silently revert
- * the rest.
+ * Values live in a shadow copy. One group is on screen at a time, so a save
+ * that read the items would write the visible group and revert the other six.
  */
 
 #include "gw_prefswin.h"
 
+#include <Dialogs.h>
 #include <Events.h>
 #include <Fonts.h>
 #include <Menus.h>
 /*
- * Multiverse.h is where Multiversal puts the managers it gives no header of
- * their own -- the Control Manager, as main.cpp notes, and the Scrap Manager
- * for ZeroScrap(). There is no Scrap.h to include and adding one does not
- * fail to find a declaration, it fails to find the file.
+ * Multiverse.h carries the managers Multiversal gives no header of their own:
+ * the Control Manager, as main.cpp notes, and the Scrap Manager. There is no
+ * Scrap.h to include.
  */
 #include <Multiverse.h>
 #include <Quickdraw.h>
-#include <TextEdit.h>          /* TEToScrap, TEFromScrap */
+#include <TextEdit.h>
 #include <Windows.h>
 
 #include <cstdio>
@@ -48,54 +47,51 @@
 
 namespace {
 
-/*
- * Laid out after the TCP/IP control panel: the popup that chooses what you
- * are looking at on top, and a framed box of that page's settings below it.
- * Nothing down the side, which is what forced "Mail upstream" to be drawn as
- * "Mail upstrea".
- */
-const short kWinWidth   = 468;
+const short kWinWidth     = 476;
 
-const short kPopupTop   = 10;
-const short kPopupHeight = 20;
+const short kPopupTop     = 12;
+const short kPopupHeight  = 20;
 
-const short kBoxTop     = kPopupTop + kPopupHeight + 10;
-const short kBoxLeft    = 10;
-const short kBoxRight   = kWinWidth - 10;
+const short kBoxTop       = kPopupTop + kPopupHeight + 12;
+const short kBoxLeft      = 10;
+const short kBoxRight     = kWinWidth - 10;
 
-const short kPaneLeft   = kBoxLeft + 12;
-const short kPaneRight  = kBoxRight - 12;
+const short kPaneLeft     = kBoxLeft + 12;
+const short kPaneRight    = kBoxRight - 12;
 
-const short kRowHeight  = 20;       /* a field with no hint                 */
-const short kHintHeight = 12;
-const short kFieldWidth = 168;
-const short kEntryLeft  = kPaneRight - kFieldWidth;
-const short kListHeight = 72;
-
+const short kRowHeight    = 22;
+const short kHintHeight   = 13;
+const short kFieldWidth   = 176;
+const short kEntryLeft    = kPaneRight - kFieldWidth;
+const short kEntryHeight  = 16;
+const short kListHeight   = 76;
+const short kButtonWidth  = 74;
 const short kButtonHeight = 20;
 
 const unsigned short kPlatinum = 0xDDDD;
 
-/*
- * Popups are drawn and tracked by this window, so there is no popup control
- * definition here to name. It reserved room for a title whether or not there
- * was one, which is why its boxes would not line up with the entry fields
- * beside them, and its tracking never worked at all.
- */
-const short kGroupMenuID   = 200;
+const short kFontGeneva   = 3;
+
+const short kGroupMenuID    = 200;
 const short kChoiceMenuBase = 201;
 
-const short kFontGeneva = 3;
+const short kMaxRows   = 24;
+const short kMaxFields = 64;
+const short kValueMax  = 256;
+const short kListMax   = 3072;
 
-const short kMaxRows    = 24;       /* fields drawn in one group            */
-const short kMaxFields  = 64;
-const short kValueMax   = 256;
-const short kListMax    = 3072;
+/*
+ * Dialog item types by value, the way main.cpp spells the window procs:
+ * ctrlItem 4 plus btnCtrl 0 or chkCtrl 1, statText 8, editText 16.
+ */
+const short kBtnItem  = 4;
+const short kChkItem  = 5;
+const short kTextItem = 8;
+const short kEditItem = 16;
 
-/* Controls the window owns, by kind, so a click can be told what it hit. */
-const long kRefCheck  = 'CHEK';
-const long kRefSave   = 'SAVE';
-const long kRefRevert = 'RVRT';
+/* Fixed items first, so Save is item 1 and can be the default button. */
+const short kItemSave   = 1;
+const short kItemRevert = 2;
 
 void ToPascal(const char *src, Str255 dst)
 {
@@ -106,121 +102,169 @@ void ToPascal(const char *src, Str255 dst)
     std::memcpy(dst + 1, src, n);
 }
 
+void FromPascal(const unsigned char *src, char *dst, size_t cap)
+{
+    size_t n = src[0];
+
+    if (cap == 0) return;
+    if (n > cap - 1) n = cap - 1;
+    std::memcpy(dst, src + 1, n);
+    dst[n] = '\0';
+}
+
 /*
- * A secret that is on file but has not been retyped.
- *
- * TextEdit has no password mode, and giving one to it would mean keeping the
- * real characters somewhere while showing others, then reconciling the two on
- * every keystroke. A token is pasted rather than edited anyway, so the field
- * shows this instead: leave it alone and the stored value is kept, type
- * anything and what you typed is the new value. The string cannot collide
- * with a real secret because no provider issues one made of bullets.
+ * A secret on file that has not been retyped. A token is pasted rather than
+ * edited, so the field shows this: leave it and the stored value is kept,
+ * type anything and that is the new value.
  */
-const char *const kKeptSecret = "\xA5\xA5\xA5\xA5\xA5\xA5\xA5\xA5";  /* •••••••• */
+const char *const kKeptSecret = "\xA5\xA5\xA5\xA5\xA5\xA5\xA5\xA5";
 
 struct Row {
     const GWPrefField *field;
-    int                index;      /* into the shadow value table            */
-    Rect               hit;        /* checkbox: unused. entry: the TE frame  */
-    ControlHandle      control;    /* flag fields only                       */
-    Rect               popup;      /* choice fields: where the box is drawn   */
-    short              menuID;     /* choice fields: the popup's menu        */
-    short              item;       /* choice fields: the chosen item, 1-based */
-    int                altCount;   /* how many items it has                  */
-    TEHandle           te;         /* entry and list fields                  */
-    short              labelV;
-    short              hintV;
+    int                index;    /* into the shadow table                 */
+    short              item;     /* its dialog item, or 0                 */
+    Rect               popup;    /* choice fields: where the box is       */
+    short              menuID;
+    short              choice;   /* 1-based item in that menu             */
+    int                altCount;
+};
+
+/*
+ * A dialog item list, built in memory.
+ *
+ * The format is a count followed by items, each a placeholder long, a rect, a
+ * type byte, a length byte and that many bytes of text, padded so the next
+ * one starts even. The Dialog Manager reads exactly this whether it came from
+ * a resource or from here, and building it here is what keeps the field table
+ * the only list of fields.
+ */
+class ItemList {
+public:
+    ItemList() : mH(0), mLen(0), mCount(0)
+    {
+        mH = NewHandle(2);
+        if (mH != 0) {
+            **reinterpret_cast<short **>(mH) = -1;
+            mLen = 2;
+        }
+    }
+
+    Handle Release() { Handle h = mH; mH = 0; return h; }
+
+    short Add(short type, const Rect *r, const char *text)
+    {
+        unsigned char len = 0;
+        long          need;
+        Ptr           p;
+
+        if (mH == 0) return 0;
+        if (text != 0) {
+            size_t n = std::strlen(text);
+
+            len = static_cast<unsigned char>(n > 255 ? 255 : n);
+        }
+        need = 4 + 8 + 1 + 1 + len;
+        if ((need & 1) != 0) need++;
+
+        SetHandleSize(mH, mLen + need);
+        if (MemError() != noErr) return 0;
+
+        p = *mH + mLen;
+        std::memset(p, 0, static_cast<size_t>(need));
+        p += 4;
+        reinterpret_cast<short *>(p)[0] = r->top;
+        reinterpret_cast<short *>(p)[1] = r->left;
+        reinterpret_cast<short *>(p)[2] = r->bottom;
+        reinterpret_cast<short *>(p)[3] = r->right;
+        p += 8;
+        *p++ = static_cast<char>(type);
+        *p++ = static_cast<char>(len);
+        if (len > 0) std::memcpy(p, text, len);
+
+        mLen += need;
+        mCount++;
+        **reinterpret_cast<short **>(mH) = static_cast<short>(mCount - 1);
+        return mCount;
+    }
+
+private:
+    Handle mH;
+    long   mLen;
+    short  mCount;
 };
 
 class PrefsWindow {
 public:
     PrefsWindow()
-        : mWindow(0), mGroup(0), mRowCount(0), mFocus(-1), mDirty(false)
+        : mDialog(0), mGroup(0), mGroupItem(1), mRowCount(0), mDirty(false),
+          mFirstEdit(0)
     {
         std::memset(mValue, 0, sizeof(mValue));
         std::memset(mList, 0, sizeof(mList));
         std::memset(mRows, 0, sizeof(mRows));
+        std::memset(mNote, 0, sizeof(mNote));
         SetRect(&mGroupPopup, 0, 0, 0, 0);
-        mGroupItem = 1;
-        mSave = 0;
-        mRevert = 0;
-        mWinHeight = 300;
-        mBoxBottom = 0;
-        mButtonTop = 0;
+        mWhere.h = -1;
+        mWhere.v = -1;
     }
 
     bool Open();
     void Close();
-    bool IsOpen() const { return mWindow != 0; }
-    WindowPtr Window() const { return mWindow; }
+    bool IsOpen() const { return mDialog != 0; }
+    WindowPtr Window() const { return reinterpret_cast<WindowPtr>(mDialog); }
 
     bool HandleEvent(EventRecord &event);
-    void Idle();
+    void Idle() {}      /* DialogSelect blinks the caret from null events */
     void EditCommand(int cmd);
-    bool CanEdit() const { return mFocus >= 0 && mRows[mFocus].te != 0; }
+    bool CanEdit() const { return mDialog != 0 && mFirstEdit != 0; }
 
 private:
-    void LoadValues();
-    void BuildGroup(int group);
-    void TearDownGroup();
-    void ReadGroupBack();
-    void Draw();
-    void DrawPane();
-    bool HandleClick(Point where);
-    void HandleKey(char ch);
-    void SetFocus(int row);
-    void Save();
-    void Revert();
-    void Note(const char *text);
+    void  LoadValues();
+    void  BuildGroup(int group);
+    void  ReadGroupBack();
+    void  Draw();
+    void  Save();
+    void  Revert();
     short TrackPopup(const Rect *box, short menuID, short current);
     void  DrawPopupBox(const Rect *box, short menuID, short item);
-    void  DrawEditFrame(const Rect *box);
-    short MeasureGroup(int group) const;
-    void  LayoutWindow(int group);
+    void  MakeChoiceMenus(int group);
+    void  DropChoiceMenus();
+    void  GetItemText(short item, char *out, size_t cap);
 
-    WindowPtr     mWindow;
-    int           mGroup;
-    Row           mRows[kMaxRows];
-    int           mRowCount;
-    int           mFocus;
-    bool          mDirty;
-    Rect          mGroupPopup;      /* drawn here, tracked from here        */
-    short         mGroupItem;
-    ControlHandle mSave;
-    ControlHandle mRevert;
-    short         mWinHeight;
-    short         mBoxBottom;
-    short         mButtonTop;
+    DialogPtr mDialog;
+    int       mGroup;
+    short     mGroupItem;
+    Rect      mGroupPopup;
+    Point     mWhere;        /* keeps its place across a group change */
+    Row       mRows[kMaxRows];
+    int       mRowCount;
+    bool      mDirty;
+    short     mFirstEdit;
 
-    char          mValue[kMaxFields][kValueMax];
-    char          mList[kListMax];
-    char          mNote[128];
+    char      mValue[kMaxFields][kValueMax];
+    char      mList[kListMax];
+    char      mNote[128];
 };
 
 PrefsWindow *gPrefs = 0;
 
 /* ------------------------------------------------------------------ */
 
-void PrefsWindow::Note(const char *text)
+void PrefsWindow::GetItemText(short item, char *out, size_t cap)
 {
-    std::strncpy(mNote, text, sizeof(mNote) - 1);
-    mNote[sizeof(mNote) - 1] = '\0';
-    if (mWindow != 0) {
-        Rect r;
-        SetRect(&r, kBoxLeft, mButtonTop,
-                static_cast<short>(kBoxRight - 160),
-                static_cast<short>(mButtonTop + kButtonHeight));
-        InvalRect(&r);
-    }
+    short  type;
+    Handle h;
+    Rect   r;
+    Str255 s;
+
+    if (cap > 0) out[0] = '\0';
+    if (mDialog == 0 || item < 1) return;
+    GetDialogItem(mDialog, item, &type, &h, &r);
+    if (h == 0) return;
+    GetDialogItemText(h, s);
+    FromPascal(s, out, cap);
 }
 
-/*
- * Read the file into the shadow copy.
- *
- * Every field, not only the visible group: the window is a view of the whole
- * file and a save compares against what was read here, so a value nobody
- * looked at has to be present and unchanged rather than absent and rewritten.
- */
 void PrefsWindow::LoadValues()
 {
     int count = 0;
@@ -231,8 +275,8 @@ void PrefsWindow::LoadValues()
 
     for (i = 0; i < count; i++) {
         if (f[i].kind == kGWFieldList) {
-            char  pattern[256];
-            int   k;
+            char   pattern[256];
+            int    k;
             size_t used = 0;
 
             mList[0] = '\0';
@@ -246,20 +290,17 @@ void PrefsWindow::LoadValues()
                 if (used + n + 2 >= sizeof(mList)) break;
                 std::memcpy(mList + used, pattern, n);
                 used += n;
-                mList[used++] = '\r';        /* TextEdit's line ending */
+                mList[used++] = '\r';
             }
             mList[used] = '\0';
             continue;
         }
-
         if (f[i].kind == kGWFieldSecret) {
             const char *v = GWConfig_Str(f[i].key, "");
 
-            /* Present but not shown; absent stays empty so it reads as unset. */
             std::strcpy(mValue[i], (v != 0 && v[0] != '\0') ? kKeptSecret : "");
             continue;
         }
-
         {
             const char *v = GWConfig_Str(f[i].key, f[i].def);
 
@@ -270,93 +311,11 @@ void PrefsWindow::LoadValues()
     mDirty = false;
 }
 
-/* ------------------------------------------------------------------ */
-
-/*
- * How tall the box has to be for one group.
- *
- * The window is sized to the page rather than to the largest page, because
- * the largest is Wayback -- ten fields and a list -- and making every other
- * page that tall would leave five of them mostly empty. Measuring is the same
- * walk BuildGroup does, which is why the two step by the same amounts.
- */
-short PrefsWindow::MeasureGroup(int group) const
-{
-    int                count = 0;
-    const GWPrefField *f = gw_prefsform_fields(&count);
-    int                i, rows = 0;
-    short              v = 0;
-
-    if (count > kMaxFields) count = kMaxFields;
-    for (i = 0; i < count && rows < kMaxRows; i++) {
-        if (f[i].group != group) continue;
-        if (f[i].kind == kGWFieldList)
-            v = static_cast<short>(v + 14 + kListHeight + 3);
-        else
-            v = static_cast<short>(v + kRowHeight);
-        if (f[i].hint != 0) v = static_cast<short>(v + kHintHeight);
-        v = static_cast<short>(v + 2);
-        rows++;
-    }
-    return v;
-}
-
-/*
- * Put the window, its box and its buttons where this group needs them, and
- * resize the window to match. The Wayback page ran off the bottom and drew
- * its host list over the Save button because the height was a constant.
- */
-void PrefsWindow::LayoutWindow(int group)
-{
-    short inner = MeasureGroup(group);
-    short h;
-
-    if (inner < 60) inner = 60;
-    mBoxBottom = static_cast<short>(kBoxTop + 10 + inner + 8);
-    mButtonTop = static_cast<short>(mBoxBottom + 12);
-    h = static_cast<short>(mButtonTop + kButtonHeight + 12);
-    mWinHeight = h;
-
-    if (mWindow != 0) {
-        SizeWindow(mWindow, kWinWidth, h, true);
-        if (mSave != 0)
-            MoveControl(mSave, static_cast<short>(kBoxRight - 78), mButtonTop);
-        if (mRevert != 0)
-            MoveControl(mRevert, static_cast<short>(kBoxRight - 166),
-                        mButtonTop);
-    }
-}
-
-void PrefsWindow::TearDownGroup()
-{
-    int i;
-
-    for (i = 0; i < mRowCount; i++) {
-        if (mRows[i].te != 0) {
-            TEDeactivate(mRows[i].te);
-            TEDispose(mRows[i].te);
-        }
-        if (mRows[i].control != 0) DisposeControl(mRows[i].control);
-        /* The control is gone; its menu is ours to take out of the list. */
-        if (mRows[i].menuID != 0) {
-            DeleteMenu(mRows[i].menuID);
-            DisposeMenu(GetMenuHandle(mRows[i].menuID));
-        }
-    }
-    std::memset(mRows, 0, sizeof(mRows));
-    mRowCount = 0;
-    mFocus = -1;
-}
-
-/*
- * Take what is on screen back into the shadow copy.
- *
- * Called before the group changes and before a save, because a control holds
- * the only copy of anything typed into it since it was built.
- */
 void PrefsWindow::ReadGroupBack()
 {
     int i;
+
+    if (mDialog == 0) return;
 
     for (i = 0; i < mRowCount; i++) {
         Row *r = &mRows[i];
@@ -364,224 +323,309 @@ void PrefsWindow::ReadGroupBack()
         if (r->field == 0) continue;
 
         switch (r->field->kind) {
-        case kGWFieldFlag:
-            if (r->control != 0)
+        case kGWFieldFlag: {
+            short  type;
+            Handle h;
+            Rect   box;
+
+            GetDialogItem(mDialog, r->item, &type, &h, &box);
+            if (h != 0)
                 std::strcpy(mValue[r->index],
-                            GetControlValue(r->control) != 0 ? "1" : "0");
+                            GetControlValue(reinterpret_cast<ControlHandle>(h))
+                                ? "1" : "0");
             break;
+        }
 
         case kGWFieldChoice: {
-            short item = r->item;
+            MenuHandle menu = GetMenuHandle(r->menuID);
 
-            if (item >= 1 && item <= r->altCount) {
-                MenuHandle menu = GetMenuHandle(r->menuID);
+            if (menu != 0 && r->choice >= 1 && r->choice <= r->altCount) {
+                Str255 s;
 
-                if (menu != 0) {
-                    Str255 title;
-
-                    GetMenuItemText(menu, item, title);
-                    gw_copy_n(mValue[r->index], kValueMax,
-                              reinterpret_cast<const char *>(title + 1),
-                              title[0]);
-                }
+                GetMenuItemText(menu, r->choice, s);
+                FromPascal(s, mValue[r->index], kValueMax);
             }
             break;
         }
 
         case kGWFieldList:
-        case kGWFieldText:
-        case kGWFieldSecret:
-        case kGWFieldNumber:
+            GetItemText(r->item, mList, sizeof(mList));
+            break;
+
         default:
-            if (r->te != 0) {
-                CharsHandle h = TEGetText(r->te);
-                long        n = (*r->te)->teLength;
-                char       *dst = (r->field->kind == kGWFieldList)
-                                      ? mList : mValue[r->index];
-                long        cap = (r->field->kind == kGWFieldList)
-                                      ? kListMax : kValueMax;
-
-                if (n > cap - 1) n = cap - 1;
-                if (h != 0 && n > 0) std::memcpy(dst, *h, n);
-                dst[n] = '\0';
-            }
+            GetItemText(r->item, mValue[r->index], kValueMax);
             break;
         }
-    }
-}
-
-void PrefsWindow::BuildGroup(int group)
-{
-    int                count = 0;
-    const GWPrefField *f = gw_prefsform_fields(&count);
-    int                i;
-    short              v;
-
-    TearDownGroup();
-    mGroup = group;
-    LayoutWindow(group);
-    v = static_cast<short>(kBoxTop + 10);
-    if (count > kMaxFields) count = kMaxFields;
-
-    for (i = 0; i < count && mRowCount < kMaxRows; i++) {
-        Row  *r;
-        Rect  box;
-        Str255 title;
-
-        if (f[i].group != group) continue;
-
-        r = &mRows[mRowCount];
-        r->field = &f[i];
-        r->index = i;
-        r->labelV = static_cast<short>(v + 13);
-
-        switch (f[i].kind) {
-        case kGWFieldFlag:
-            SetRect(&box, kPaneLeft, v, kPaneRight,
-                    static_cast<short>(v + 16));
-            ToPascal(f[i].label, title);
-            r->control = NewControl(mWindow, &box, title, true,
-                                    (mValue[i][0] == '1') ? 1 : 0,
-                                    0, 1, checkBoxProc, kRefCheck);
-            break;
-
-        case kGWFieldChoice: {
-            const char *p = f[i].choices;
-            MenuHandle  menu;
-            short       id = static_cast<short>(kChoiceMenuBase + mRowCount);
-            short       chosen = 1;
-
-            /*
-             * A menu built here rather than from a resource, for the same
-             * reason the fields are a table: the choices belong to the field,
-             * and a MENU resource per choice field would be a second list to
-             * keep in step with the first.
-             */
-            ToPascal(f[i].label, title);
-            menu = NewMenu(id, title);
-            if (menu != 0) {
-                while (p != 0 && *p != '\0') {
-                    const char *end = std::strchr(p, '|');
-                    size_t      n = (end != 0) ? static_cast<size_t>(end - p)
-                                               : std::strlen(p);
-                    char        buf[32];
-
-                    if (n > sizeof(buf) - 1) n = sizeof(buf) - 1;
-                    std::memcpy(buf, p, n);
-                    buf[n] = '\0';
-                    r->altCount++;
-                    if (gw_stricmp(buf, mValue[i]) == 0)
-                        chosen = static_cast<short>(r->altCount);
-                    ToPascal(buf, title);
-                    AppendMenu(menu, title);
-                    p = (end != 0) ? end + 1 : 0;
-                }
-                InsertMenu(menu, -1);       /* -1: a popup, not the menu bar */
-                r->menuID = id;
-                r->item = chosen;
-                /* The same span as an entry field, so a column of settings
-                 * lines up whatever kind each one is. */
-                SetRect(&r->popup, kEntryLeft, v, kPaneRight,
-                        static_cast<short>(v + 17));
-            }
-            break;
-        }
-
-        case kGWFieldList: {
-            Rect dest;
-
-            /* The label sits above the frame. It used to be drawn at the
-             * frame's own top edge, which put the words through the line. */
-            r->labelV = static_cast<short>(v + 10);
-            SetRect(&box, kPaneLeft, static_cast<short>(v + 14),
-                    kPaneRight,
-                    static_cast<short>(v + 14 + kListHeight));
-            r->hit = box;
-            InsetRect(&box, 4, 3);
-            dest = box;
-            r->te = TENew(&dest, &box);
-            if (r->te != 0) {
-                (*r->te)->crOnly = -1;      /* one host per line, no wrapping */
-                TESetText(mList, static_cast<long>(std::strlen(mList)), r->te);
-                /* Scroll to follow the caret: a list longer than the box was
-                 * simply unreachable below the fourth entry. */
-                TEAutoView(true, r->te);
-            }
-            break;
-        }
-
-        case kGWFieldText:
-        case kGWFieldSecret:
-        case kGWFieldNumber:
-        default: {
-            Rect dest;
-
-            SetRect(&box, kEntryLeft, v, kPaneRight,
-                    static_cast<short>(v + 16));
-            r->hit = box;
-            InsetRect(&box, 3, 2);
-            dest = box;
-            r->te = TENew(&dest, &box);
-            if (r->te != 0)
-                TESetText(mValue[i],
-                          static_cast<long>(std::strlen(mValue[i])), r->te);
-            break;
-        }
-        }
-
-        if (f[i].kind == kGWFieldList)
-            v = static_cast<short>(v + 14 + kListHeight + 3);
-        else
-            v = static_cast<short>(v + kRowHeight);
-
-        if (f[i].hint != 0) {
-            r->hintV = static_cast<short>(v + 9);
-            v = static_cast<short>(v + kHintHeight);
-        }
-        v = static_cast<short>(v + 2);
-        mRowCount++;
     }
 }
 
 /* ------------------------------------------------------------------ */
 
-/*
- * The Platinum recessed entry frame.
- *
- * Mac OS 9 draws an editable field inset into the surface: black on the
- * outside, a grey shadow along the top and left inside it, and white behind
- * the text. A plain FrameRect is the pre-8 look and is what made these read
- * as drawn by something that had not seen the rest of the system.
- */
-void PrefsWindow::DrawEditFrame(const Rect *box)
+void PrefsWindow::DropChoiceMenus()
 {
-    Rect     r = *box;
-    RGBColor black, white, shadow;
+    int i;
 
-    black.red = black.green = black.blue = 0;
-    white.red = white.green = white.blue = 0xFFFF;
-    shadow.red = shadow.green = shadow.blue = 0x7777;
+    for (i = 0; i < mRowCount; i++) {
+        if (mRows[i].menuID == 0) continue;
+        DeleteMenu(mRows[i].menuID);
+        DisposeMenu(GetMenuHandle(mRows[i].menuID));
+        mRows[i].menuID = 0;
+    }
+}
 
-    RGBBackColor(&white);
-    EraseRect(&r);
+void PrefsWindow::MakeChoiceMenus(int group)
+{
+    int                count = 0;
+    const GWPrefField *f = gw_prefsform_fields(&count);
+    int                i, row = 0;
 
-    RGBForeColor(&black);
-    FrameRect(&r);
+    if (count > kMaxFields) count = kMaxFields;
+    for (i = 0; i < count && row < mRowCount; i++) {
+        Row        *r;
+        const char *p;
+        MenuHandle  menu;
+        Str255      title;
+        short       id;
 
-    RGBForeColor(&shadow);
-    MoveTo(static_cast<short>(r.left + 1), static_cast<short>(r.bottom - 2));
-    LineTo(static_cast<short>(r.left + 1), static_cast<short>(r.top + 1));
-    LineTo(static_cast<short>(r.right - 2), static_cast<short>(r.top + 1));
+        if (f[i].group != group) continue;
+        r = &mRows[row++];
+        if (f[i].kind != kGWFieldChoice) continue;
 
-    RGBForeColor(&black);
+        id = static_cast<short>(kChoiceMenuBase + row);
+        ToPascal(f[i].label, title);
+        menu = NewMenu(id, title);
+        if (menu == 0) continue;
+
+        r->choice = 1;
+        r->altCount = 0;
+        p = f[i].choices;
+        while (p != 0 && *p != '\0') {
+            const char *end = std::strchr(p, '|');
+            size_t      n = (end != 0) ? static_cast<size_t>(end - p)
+                                       : std::strlen(p);
+            char        buf[32];
+
+            if (n > sizeof(buf) - 1) n = sizeof(buf) - 1;
+            std::memcpy(buf, p, n);
+            buf[n] = '\0';
+            r->altCount++;
+            if (gw_stricmp(buf, mValue[i]) == 0)
+                r->choice = static_cast<short>(r->altCount);
+            ToPascal(buf, title);
+            AppendMenu(menu, title);
+            p = (end != 0) ? end + 1 : 0;
+        }
+        InsertMenu(menu, -1);
+        r->menuID = id;
+    }
 }
 
 /*
- * A Platinum popup: the box, the current item, the arrow, and the drop
- * shadow down its right and bottom. Drawn rather than left to the control
- * definition, which reserves room for a title whether or not there is one and
- * so would not line up with the entry fields beside it -- and whose tracking
- * this window already had to take over.
+ * Build the dialog for one group.
+ *
+ * Made anew rather than having its items rearranged: an item list cannot be
+ * resized in place, and a window whose contents change completely is not a
+ * window that gained a few items. Its position is kept so it does not walk
+ * across the screen when the popup is used.
+ */
+void PrefsWindow::BuildGroup(int group)
+{
+    int                count = 0;
+    const GWPrefField *f = gw_prefsform_fields(&count);
+    int                i;
+    short              v, height;
+    ItemList           items;
+    Rect               r, bounds;
+    Str255             title;
+
+    if (mDialog != 0) {
+        GrafPtr port = reinterpret_cast<GrafPtr>(mDialog);
+        Point   tl;
+
+        SetPort(port);
+        tl.h = port->portRect.left;
+        tl.v = port->portRect.top;
+        LocalToGlobal(&tl);
+        mWhere = tl;
+        DropChoiceMenus();
+        DisposeDialog(mDialog);
+        mDialog = 0;
+    }
+
+    std::memset(mRows, 0, sizeof(mRows));
+    mRowCount = 0;
+    mFirstEdit = 0;
+    mGroup = group;
+    if (count > kMaxFields) count = kMaxFields;
+
+    SetRect(&r, 0, 0, kButtonWidth, kButtonHeight);
+    items.Add(kBtnItem, &r, "Save");
+    items.Add(kBtnItem, &r, "Revert");
+
+    v = static_cast<short>(kBoxTop + 12);
+    for (i = 0; i < count && mRowCount < kMaxRows; i++) {
+        Row *row;
+
+        if (f[i].group != group) continue;
+        row = &mRows[mRowCount];
+        row->field = &f[i];
+        row->index = i;
+
+        switch (f[i].kind) {
+        case kGWFieldFlag:
+            SetRect(&r, kPaneLeft, v, kPaneRight,
+                    static_cast<short>(v + 16));
+            row->item = items.Add(kChkItem, &r, f[i].label);
+            break;
+
+        case kGWFieldChoice:
+            /* The label is static text; the popup is drawn and tracked here,
+             * an item list having no way to carry one without a CNTL. */
+            SetRect(&r, kPaneLeft, static_cast<short>(v + 3),
+                    static_cast<short>(kEntryLeft - 8),
+                    static_cast<short>(v + 16));
+            items.Add(kTextItem, &r, f[i].label);
+            SetRect(&row->popup, kEntryLeft, v, kPaneRight,
+                    static_cast<short>(v + 19));
+            break;
+
+        case kGWFieldList:
+            SetRect(&r, kPaneLeft, v, kPaneRight,
+                    static_cast<short>(v + 13));
+            items.Add(kTextItem, &r, f[i].label);
+            SetRect(&r, kPaneLeft, static_cast<short>(v + 15), kPaneRight,
+                    static_cast<short>(v + 15 + kListHeight));
+            row->item = items.Add(kEditItem, &r, mList);
+            if (mFirstEdit == 0) mFirstEdit = row->item;
+            break;
+
+        default:
+            SetRect(&r, kPaneLeft, static_cast<short>(v + 3),
+                    static_cast<short>(kEntryLeft - 8),
+                    static_cast<short>(v + 16));
+            items.Add(kTextItem, &r, f[i].label);
+            SetRect(&r, kEntryLeft, v, kPaneRight,
+                    static_cast<short>(v + kEntryHeight));
+            row->item = items.Add(kEditItem, &r, mValue[i]);
+            if (mFirstEdit == 0) mFirstEdit = row->item;
+            break;
+        }
+
+        if (f[i].kind == kGWFieldList)
+            v = static_cast<short>(v + 15 + kListHeight + 3);
+        else
+            v = static_cast<short>(v + kRowHeight);
+
+        if (f[i].hint != 0) {
+            SetRect(&r, kPaneLeft, static_cast<short>(v - 5), kPaneRight,
+                    static_cast<short>(v + 8));
+            items.Add(kTextItem, &r, f[i].hint);
+            v = static_cast<short>(v + kHintHeight);
+        }
+        v = static_cast<short>(v + 2);
+        mRowCount++;
+    }
+
+    height = static_cast<short>(v + 10 + 12 + kButtonHeight + 12);
+
+    if (mWhere.h < 0) {
+        mWhere.h = static_cast<short>((qd.screenBits.bounds.right -
+                                       qd.screenBits.bounds.left -
+                                       kWinWidth) / 2);
+        mWhere.v = static_cast<short>((qd.screenBits.bounds.bottom -
+                                       qd.screenBits.bounds.top -
+                                       height) / 3);
+        if (mWhere.v < 40) mWhere.v = 40;
+    }
+    SetRect(&bounds, mWhere.h, mWhere.v,
+            static_cast<short>(mWhere.h + kWinWidth),
+            static_cast<short>(mWhere.v + height));
+
+    ToPascal("Gateway Preferences", title);
+    mDialog = NewDialog(0, &bounds, title, true, noGrowDocProc,
+                        reinterpret_cast<WindowPtr>(-1), true, 0,
+                        items.Release());
+    if (mDialog == 0) return;
+
+    SetPort(reinterpret_cast<GrafPtr>(mDialog));
+    TextFont(kFontGeneva);
+    TextSize(9);
+
+    /* The buttons, now that the height is known. */
+    {
+        short  type;
+        Handle h;
+        Rect   box;
+        short  top = static_cast<short>(height - 12 - kButtonHeight);
+
+        GetDialogItem(mDialog, kItemSave, &type, &h, &box);
+        SetRect(&box, static_cast<short>(kBoxRight - kButtonWidth - 4), top,
+                static_cast<short>(kBoxRight - 4),
+                static_cast<short>(top + kButtonHeight));
+        if (h != 0)
+            MoveControl(reinterpret_cast<ControlHandle>(h), box.left, box.top);
+        SetDialogItem(mDialog, kItemSave, type, h, &box);
+
+        GetDialogItem(mDialog, kItemRevert, &type, &h, &box);
+        SetRect(&box, static_cast<short>(kBoxRight - 2 * kButtonWidth - 14),
+                top, static_cast<short>(kBoxRight - kButtonWidth - 14),
+                static_cast<short>(top + kButtonHeight));
+        if (h != 0)
+            MoveControl(reinterpret_cast<ControlHandle>(h), box.left, box.top);
+        SetDialogItem(mDialog, kItemRevert, type, h, &box);
+    }
+
+    /* The system draws the ring around item 1, so nothing here has to. */
+    SetDialogDefaultItem(mDialog, kItemSave);
+
+    MakeChoiceMenus(group);
+
+    for (i = 0; i < mRowCount; i++) {
+        short  type;
+        Handle h;
+        Rect   box;
+
+        if (mRows[i].field == 0) continue;
+        if (mRows[i].field->kind != kGWFieldFlag) continue;
+        GetDialogItem(mDialog, mRows[i].item, &type, &h, &box);
+        if (h != 0)
+            SetControlValue(reinterpret_cast<ControlHandle>(h),
+                            mValue[mRows[i].index][0] == '1' ? 1 : 0);
+    }
+
+    SetRect(&mGroupPopup, 82, kPopupTop, 272,
+            static_cast<short>(kPopupTop + kPopupHeight));
+    mGroupItem = static_cast<short>(group + 1);
+
+    /* Something selected to begin with, so the caret is where a person
+     * expects it and the Edit menu has an item to act on. */
+    if (mFirstEdit != 0) SelectDialogItemText(mDialog, mFirstEdit, 0, 0);
+}
+
+/* ------------------------------------------------------------------ */
+
+short PrefsWindow::TrackPopup(const Rect *box, short menuID, short current)
+{
+    MenuHandle menu = GetMenuHandle(menuID);
+    Point      tl;
+    long       choice;
+
+    if (menu == 0) return 0;
+    tl.h = static_cast<short>(box->left + 1);
+    tl.v = static_cast<short>(box->top + 1);
+    LocalToGlobal(&tl);
+    choice = PopUpMenuSelect(menu, tl.v, tl.h, current);
+    if (choice == 0) return 0;
+    return static_cast<short>(choice & 0xFFFF);
+}
+
+/*
+ * The popup box, to the Platinum shape.
+ *
+ * These two -- the group popup and the choice popups -- are the only things
+ * in the window this file draws, because an item list cannot carry a popup
+ * without a CNTL resource and a CNTL per choice field would be a second list
+ * of choices to keep in step with the table.
  */
 void PrefsWindow::DrawPopupBox(const Rect *box, short menuID, short item)
 {
@@ -594,122 +638,56 @@ void PrefsWindow::DrawPopupBox(const Rect *box, short menuID, short item)
     black.red = black.green = black.blue = 0;
     white.red = white.green = white.blue = 0xFFFF;
     platinum.red = platinum.green = platinum.blue = kPlatinum;
-    shadow.red = shadow.green = shadow.blue = 0x5555;
+    shadow.red = shadow.green = shadow.blue = 0x6666;
 
     RGBBackColor(&platinum);
     EraseRect(&r);
 
-    /* The shadow first, so the face draws over its corner. */
     RGBForeColor(&shadow);
-    MoveTo(static_cast<short>(r.left + 2), r.bottom);
-    LineTo(static_cast<short>(r.right), r.bottom);
-    MoveTo(r.right, static_cast<short>(r.top + 2));
-    LineTo(r.right, r.bottom);
+    MoveTo(static_cast<short>(r.left + 2), static_cast<short>(r.bottom - 1));
+    LineTo(static_cast<short>(r.right - 1), static_cast<short>(r.bottom - 1));
+    MoveTo(static_cast<short>(r.right - 1), static_cast<short>(r.top + 2));
+    LineTo(static_cast<short>(r.right - 1), static_cast<short>(r.bottom - 1));
+
+    r.right = static_cast<short>(r.right - 2);
+    r.bottom = static_cast<short>(r.bottom - 2);
 
     RGBForeColor(&white);
-    MoveTo(static_cast<short>(r.left + 1), static_cast<short>(r.bottom - 2));
+    MoveTo(static_cast<short>(r.left + 1), static_cast<short>(r.bottom - 1));
     LineTo(static_cast<short>(r.left + 1), static_cast<short>(r.top + 1));
-    LineTo(static_cast<short>(r.right - 2), static_cast<short>(r.top + 1));
+    LineTo(static_cast<short>(r.right - 1), static_cast<short>(r.top + 1));
 
     RGBForeColor(&black);
     FrameRect(&r);
 
     if (menu != 0 && item >= 1) {
         GetMenuItemText(menu, item, s);
-        MoveTo(static_cast<short>(r.left + 8),
-               static_cast<short>(r.top + 13));
+        MoveTo(static_cast<short>(r.left + 9), static_cast<short>(r.top + 13));
         DrawString(s);
     }
 
-    /* The downward triangle, five rows narrowing to a point. */
     x = static_cast<short>(r.right - 18);
     y = static_cast<short>(r.top + 7);
     for (k = 0; k < 5; k++) {
         MoveTo(static_cast<short>(x + k), static_cast<short>(y + k));
         LineTo(static_cast<short>(x + 8 - k), static_cast<short>(y + k));
     }
-
     RGBBackColor(&platinum);
-}
-
-void PrefsWindow::DrawPane()
-{
-    int i;
-
-    for (i = 0; i < mRowCount; i++) {
-        Row *r = &mRows[i];
-        Str255 s;
-
-        if (r->field == 0) continue;
-
-        TextFont(kFontGeneva);
-        TextSize(9);
-
-        /* A checkbox carries its own name; everything else needs one. */
-        if (r->field->kind != kGWFieldFlag) {
-            TextFace(normal);
-            MoveTo(kPaneLeft, r->labelV);
-            ToPascal(r->field->label, s);
-            DrawString(s);
-        }
-
-        if (r->menuID != 0)
-            DrawPopupBox(&r->popup, r->menuID, r->item);
-
-        if (r->te != 0) {
-            RGBColor white, platinum2;
-
-            white.red = white.green = white.blue = 0xFFFF;
-            platinum2.red = platinum2.green = platinum2.blue = kPlatinum;
-
-            /* TextEdit erases its view with the background colour, so the
-             * field owns it while it draws and hands it back after. */
-            DrawEditFrame(&r->hit);
-            RGBBackColor(&white);
-            TEUpdate(&r->hit, r->te);
-            RGBBackColor(&platinum2);
-        }
-
-        if (r->field->hint != 0 && r->hintV != 0) {
-            TextFace(italic);
-            MoveTo(kPaneLeft, r->hintV);
-            ToPascal(r->field->hint, s);
-            DrawString(s);
-            TextFace(normal);
-        }
-
-        /*
-         * A field whose value waits for a restart says so where it is, not in
-         * a paragraph at the bottom that describes six of them at once.
-         */
-        if (r->field->needs_restart && r->field->kind == kGWFieldFlag) {
-            TextFace(italic);
-            MoveTo(static_cast<short>(kPaneRight - 74), r->labelV);
-            ToPascal("on restart", s);
-            DrawString(s);
-            TextFace(normal);
-        }
-    }
-    TextFont(0);
-    TextSize(0);
 }
 
 void PrefsWindow::Draw()
 {
     GrafPtr  port;
     Rect     box;
-    Str255   s255;
+    Str255   s;
     RGBColor platinum, black;
+    short    bottom, w;
+    int      i;
 
-    if (mWindow == 0) return;
-    port = reinterpret_cast<GrafPtr>(mWindow);
+    if (mDialog == 0) return;
+    port = reinterpret_cast<GrafPtr>(mDialog);
     SetPort(port);
 
-    /*
-     * Platinum, not white. Mac OS 9 paints a dialog 0xDD grey and a window
-     * that stays white reads as an application that did not know, which the
-     * About box already worked out -- kPlatinum is its number.
-     */
     platinum.red = platinum.green = platinum.blue = kPlatinum;
     black.red = black.green = black.blue = 0;
     RGBBackColor(&platinum);
@@ -722,114 +700,59 @@ void PrefsWindow::Draw()
     TextSize(9);
     TextFace(normal);
 
-    /* The label in front of the group popup, as "Connect via:" is. */
     MoveTo(kBoxLeft, static_cast<short>(kPopupTop + 14));
-    ToPascal("Settings for:", s255);
-    DrawString(s255);
+    ToPascal("Settings for:", s);
+    DrawString(s);
 
-    /*
-     * The box around the page. TCP/IP frames its "Setup" group and writes the
-     * name into the top rule; the gap is painted back in so the frame breaks
-     * around the text rather than running under it.
-     */
-    SetRect(&box, kBoxLeft, kBoxTop, kBoxRight, mBoxBottom);
+    /* The group box, with its name let into the top rule as TCP/IP does. */
+    bottom = static_cast<short>(port->portRect.bottom - 12 - kButtonHeight -
+                                12);
+    SetRect(&box, kBoxLeft, kBoxTop, kBoxRight, bottom);
     FrameRect(&box);
-    {
-        const char *name = gw_prefsform_group_name(mGroup);
-        short       w;
-
-        ToPascal(name, s255);
-        w = StringWidth(s255);
-        SetRect(&box, static_cast<short>(kBoxLeft + 8), kBoxTop,
-                static_cast<short>(kBoxLeft + 14 + w),
-                static_cast<short>(kBoxTop + 1));
-        RGBForeColor(&platinum);
-        PaintRect(&box);
-        RGBForeColor(&black);
-        MoveTo(static_cast<short>(kBoxLeft + 11),
-               static_cast<short>(kBoxTop + 4));
-        DrawString(s255);
-    }
+    ToPascal(gw_prefsform_group_name(mGroup), s);
+    w = StringWidth(s);
+    SetRect(&box, static_cast<short>(kBoxLeft + 8), kBoxTop,
+            static_cast<short>(kBoxLeft + 14 + w),
+            static_cast<short>(kBoxTop + 1));
+    RGBForeColor(&platinum);
+    PaintRect(&box);
+    RGBForeColor(&black);
+    MoveTo(static_cast<short>(kBoxLeft + 11), static_cast<short>(kBoxTop + 4));
+    DrawString(s);
 
     DrawPopupBox(&mGroupPopup, kGroupMenuID, mGroupItem);
-
-    DrawPane();
-
-    /*
-     * The ring around the default button. Mac OS draws it for a dialog's
-     * default item and not for a control somebody made with NewControl, so a
-     * window that wants one draws it: a three-pixel rounded frame four pixels
-     * outside the button, which is the shape every Save button in the system
-     * has.
-     */
-    if (mSave != 0) {
-        Rect ring = (**mSave).contrlRect;
-
-        InsetRect(&ring, -4, -4);
-        PenSize(3, 3);
-        FrameRoundRect(&ring, 16, 16);
-        PenSize(1, 1);
-    }
+    for (i = 0; i < mRowCount; i++)
+        if (mRows[i].menuID != 0)
+            DrawPopupBox(&mRows[i].popup, mRows[i].menuID, mRows[i].choice);
 
     if (mNote[0] != '\0') {
-        TextFont(kFontGeneva);
-        TextSize(9);
-        MoveTo(kBoxLeft, static_cast<short>(mButtonTop + 14));
-        ToPascal(mNote, s255);
-        DrawString(s255);
+        MoveTo(kBoxLeft,
+               static_cast<short>(port->portRect.bottom - 12 -
+                                  kButtonHeight + 14));
+        ToPascal(mNote, s);
+        DrawString(s);
     }
 
-    TextFont(0);
-    TextSize(0);
-    UpdateControls(mWindow, port->visRgn);
+    DrawDialog(mDialog);
 }
 
 /* ------------------------------------------------------------------ */
 
 bool PrefsWindow::Open()
 {
-    Rect    bounds;
-    Str255  title;
-    short   left, top;
-    int     g;
-
-    if (mWindow != 0) {
-        SelectWindow(mWindow);
+    if (mDialog != 0) {
+        SelectWindow(reinterpret_cast<WindowPtr>(mDialog));
         return true;
     }
 
-    left = static_cast<short>((qd.screenBits.bounds.right -
-                               qd.screenBits.bounds.left - kWinWidth) / 2);
-    top = static_cast<short>((qd.screenBits.bounds.bottom -
-                              qd.screenBits.bounds.top - mWinHeight) / 3);
-    SetRect(&bounds, left, top, static_cast<short>(left + kWinWidth),
-            static_cast<short>(top + mWinHeight));
-
-    ToPascal("Gateway Preferences", title);
-    /*
-     * NewCWindow, not NewWindow. A classic GrafPort is monochrome and
-     * RGBForeColor on one does nothing at all, so the Platinum ground was
-     * painted and discarded and the window stayed white. The About box in
-     * main.cpp has always used the colour call, which is why its grey works
-     * and this one's did not. The Appearance control definitions want a
-     * colour port too.
-     */
-    mWindow = NewCWindow(0, &bounds, title, true, noGrowDocProc,
-                         reinterpret_cast<WindowPtr>(-1), true, 0);
-    if (mWindow == 0) return false;
-
-    SetPort(reinterpret_cast<GrafPtr>(mWindow));
-    TextFont(kFontGeneva);
-    TextSize(9);
-
     LoadValues();
-    std::strcpy(mNote, "");
+    mNote[0] = '\0';
 
-    /* One popup for the seven pages, built here for the same reason the
-     * choice fields build theirs: the groups are the table's, not a
-     * resource's. */
-    {
+    /* The group menu outlives a group change; the choice menus do not. */
+    if (GetMenuHandle(kGroupMenuID) == 0) {
         MenuHandle menu;
+        Str255     title;
+        int        g;
 
         ToPascal("Settings", title);
         menu = NewMenu(kGroupMenuID, title);
@@ -840,298 +763,132 @@ bool PrefsWindow::Open()
             }
             InsertMenu(menu, -1);
         }
-        SetRect(&mGroupPopup, 78, kPopupTop, 258,
-                static_cast<short>(kPopupTop + kPopupHeight));
-        mGroupItem = 1;
-    }
-
-    {
-        Rect box;
-
-        SetRect(&box, static_cast<short>(kBoxRight - 78), 0,
-                static_cast<short>(kBoxRight - 4), kButtonHeight);
-        ToPascal("Save", title);
-        mSave = NewControl(mWindow, &box, title, true, 0, 0, 1,
-                           pushButProc, kRefSave);
-
-        SetRect(&box, static_cast<short>(kBoxRight - 166), 0,
-                static_cast<short>(kBoxRight - 92), kButtonHeight);
-        ToPascal("Revert", title);
-        mRevert = NewControl(mWindow, &box, title, true, 0, 0, 1,
-                             pushButProc, kRefRevert);
     }
 
     BuildGroup(0);
-    Draw();
-    return true;
+    return mDialog != 0;
 }
 
 void PrefsWindow::Close()
 {
-    if (mWindow == 0) return;
-    TearDownGroup();
-    DisposeWindow(mWindow);         /* takes the remaining controls with it */
-    mWindow = 0;
+    if (mDialog == 0) return;
+    DropChoiceMenus();
+    DisposeDialog(mDialog);
+    mDialog = 0;
     DeleteMenu(kGroupMenuID);
     DisposeMenu(GetMenuHandle(kGroupMenuID));
-    SetRect(&mGroupPopup, 0, 0, 0, 0);
-    mSave = 0;
-    mRevert = 0;
+    mRowCount = 0;
+    mFirstEdit = 0;
 }
 
 /* ------------------------------------------------------------------ */
 
-void PrefsWindow::SetFocus(int row)
+bool PrefsWindow::HandleEvent(EventRecord &event)
 {
-    if (mFocus == row) return;
-    if (mFocus >= 0 && mFocus < mRowCount && mRows[mFocus].te != 0)
-        TEDeactivate(mRows[mFocus].te);
-    mFocus = row;
-    if (mFocus >= 0 && mFocus < mRowCount && mRows[mFocus].te != 0)
-        TEActivate(mRows[mFocus].te);
-}
+    WindowPtr mine;
+    DialogPtr which;
+    short     hit;
 
-/*
- * Open one popup and return the item chosen, or 0.
- *
- * The popup control definition draws correctly and does not track: a click in
- * it through FindControl and TrackControl goes nowhere, twice over now. So
- * the menu is driven directly. PopUpMenuSelect is the call the definition
- * would have made, it needs only a menu that InsertMenu(menu, -1) put in the
- * popup list, and hit-testing the control's own rectangle keeps the
- * definition's testCntl out of it as well -- which is the other half of the
- * path that was not working.
- */
-short PrefsWindow::TrackPopup(const Rect *box, short menuID, short current)
-{
-    MenuHandle menu = GetMenuHandle(menuID);
-    Point      tl;
-    long       choice;
+    if (mDialog == 0) return false;
+    mine = reinterpret_cast<WindowPtr>(mDialog);
 
-    if (menu == 0) return 0;
+    if (event.what == mouseDown) {
+        WindowPtr win;
+        short     part = FindWindow(event.where, &win);
 
-    tl.h = static_cast<short>(box->left + 1);
-    tl.v = static_cast<short>(box->top + 1);
-    LocalToGlobal(&tl);
+        if (win != mine) return false;
 
-    choice = PopUpMenuSelect(menu, tl.v, tl.h, current);
-    if (choice == 0) return 0;
-    return static_cast<short>(choice & 0xFFFF);
-}
+        if (part == inGoAway) {
+            if (TrackGoAway(mine, event.where)) Close();
+            return true;
+        }
+        if (part == inDrag) {
+            Rect limit = qd.screenBits.bounds;
 
-bool PrefsWindow::HandleClick(Point where)
-{
-    ControlHandle ctl;
-    short         part;
-    int           i;
+            InsetRect(&limit, 4, 4);
+            DragWindow(mine, event.where, &limit);
+            return true;
+        }
+        if (part == inContent) {
+            Point where = event.where;
+            int   i;
+
+            if (FrontWindow() != mine) {
+                SelectWindow(mine);
+                return true;
+            }
+
+            /* The popups are ours; every other click is the dialog's. */
+            SetPort(reinterpret_cast<GrafPtr>(mDialog));
+            GlobalToLocal(&where);
+
+            if (PtInRect(where, &mGroupPopup)) {
+                short item = TrackPopup(&mGroupPopup, kGroupMenuID,
+                                        mGroupItem);
+
+                if (item >= 1 && item <= kGWGroupCount &&
+                    item - 1 != mGroup) {
+                    ReadGroupBack();
+                    BuildGroup(static_cast<short>(item - 1));
+                    Draw();
+                }
+                return true;
+            }
+            for (i = 0; i < mRowCount; i++) {
+                short item;
+
+                if (mRows[i].menuID == 0) continue;
+                if (!PtInRect(where, &mRows[i].popup)) continue;
+                item = TrackPopup(&mRows[i].popup, mRows[i].menuID,
+                                  mRows[i].choice);
+                if (item >= 1 && item <= mRows[i].altCount) {
+                    mRows[i].choice = item;
+                    mDirty = true;
+                    InvalRect(&mRows[i].popup);
+                }
+                return true;
+            }
+        }
+    }
+
+    if (event.what == updateEvt &&
+        reinterpret_cast<WindowPtr>(event.message) == mine) {
+        BeginUpdate(mine);
+        Draw();
+        EndUpdate(mine);
+        return true;
+    }
 
     /*
-     * GlobalToLocal and FindControl both work in the current port, and the
-     * current port is whatever drew last -- which on a busy proxy is the log
-     * window, redrawn every time a line arrives. Converting a click against
-     * another window's origin puts it somewhere off the controls entirely.
+     * Everything else belongs to the dialog. DialogSelect is what gives the
+     * entry fields their selection, their caret and tabbing between them,
+     * which is the whole reason they are dialog items.
      */
-    SetPort(reinterpret_cast<GrafPtr>(mWindow));
-    GlobalToLocal(&where);
-
-    /* The group popup, tested against its own rectangle. */
-    if (PtInRect(where, &mGroupPopup)) {
-        short item = TrackPopup(&mGroupPopup, kGroupMenuID, mGroupItem);
-
-        if (item >= 1 && item <= kGWGroupCount &&
-            item - 1 != mGroup) {
-            mGroupItem = item;
-            ReadGroupBack();
-            BuildGroup(static_cast<short>(item - 1));
-            InvalRect(&reinterpret_cast<GrafPtr>(mWindow)->portRect);
+    if (IsDialogEvent(&event)) {
+        if (DialogSelect(&event, &which, &hit) && which == mDialog) {
+            if (hit == kItemSave) Save();
+            else if (hit == kItemRevert) Revert();
+            else mDirty = true;
         }
         return true;
-    }
-
-    /* A choice field's popup, likewise. */
-    for (i = 0; i < mRowCount; i++) {
-        if (mRows[i].menuID == 0) continue;
-        if (!PtInRect(where, &mRows[i].popup)) continue;
-        {
-            short item = TrackPopup(&mRows[i].popup, mRows[i].menuID,
-                                    mRows[i].item);
-
-            if (item >= 1 && item <= mRows[i].altCount) {
-                mRows[i].item = item;
-                mDirty = true;
-                InvalRect(&mRows[i].popup);
-            }
-        }
-        return true;
-    }
-
-    part = FindControl(where, mWindow, &ctl);
-    if (part != 0 && ctl != 0) {
-        long ref = (**ctl).contrlRfCon;
-
-        if (TrackControl(ctl, where, 0) == 0) return true;
-
-        if (ref == kRefCheck) {
-            SetControlValue(ctl, GetControlValue(ctl) != 0 ? 0 : 1);
-            mDirty = true;
-            return true;
-        }
-
-        if (ref == kRefSave)   { Save();   return true; }
-        if (ref == kRefRevert) { Revert(); return true; }
-        return true;
-    }
-
-    for (i = 0; i < mRowCount; i++) {
-        if (mRows[i].te == 0) continue;
-        if (PtInRect(where, &mRows[i].hit)) {
-            SetFocus(i);
-            /*
-             * A secret still showing its placeholder is replaced rather than
-             * edited: selecting into the middle of eight bullets and typing
-             * would produce a value that is neither the old one nor a new one.
-             */
-            if (mRows[i].field->kind == kGWFieldSecret &&
-                std::strcmp(mValue[mRows[i].index], kKeptSecret) == 0) {
-                TESetText("", 0, mRows[i].te);
-                mValue[mRows[i].index][0] = '\0';
-                InvalRect(&mRows[i].hit);
-            }
-            TEClick(where, 0, mRows[i].te);
-            return true;
-        }
     }
     return false;
 }
 
-void PrefsWindow::HandleKey(char ch)
-{
-    if (ch == '\t') {
-        int start = (mFocus < 0) ? -1 : mFocus;
-        int i;
-
-        for (i = 1; i <= mRowCount; i++) {
-            int n = (start + i) % mRowCount;
-
-            if (mRows[n].te != 0) { SetFocus(n); break; }
-        }
-        return;
-    }
-
-    if (mFocus < 0 || mFocus >= mRowCount || mRows[mFocus].te == 0) return;
-
-    /* A single-line field takes no Return; the list field is made of them. */
-    if ((ch == '\r' || ch == '\n') &&
-        mRows[mFocus].field->kind != kGWFieldList) {
-        Save();
-        return;
-    }
-
-    TEKey(ch, mRows[mFocus].te);
-    mDirty = true;
-}
-
-bool PrefsWindow::HandleEvent(EventRecord &event)
-{
-    if (mWindow == 0) return false;
-
-    switch (event.what) {
-    case mouseDown: {
-        WindowPtr win;
-        short     part = FindWindow(event.where, &win);
-
-        if (win != mWindow) return false;
-        switch (part) {
-        case inGoAway:
-            if (TrackGoAway(mWindow, event.where)) Close();
-            return true;
-        case inDrag: {
-            Rect limit = qd.screenBits.bounds;
-
-            InsetRect(&limit, 4, 4);
-            DragWindow(mWindow, event.where, &limit);
-            return true;
-        }
-        case inContent:
-            if (FrontWindow() != mWindow) {
-                SelectWindow(mWindow);
-                return true;
-            }
-            return HandleClick(event.where);
-        default:
-            return false;
-        }
-    }
-
-    case keyDown:
-    case autoKey:
-        if (FrontWindow() != mWindow) return false;
-        if (event.modifiers & cmdKey) return false;   /* the menu bar's */
-        HandleKey(static_cast<char>(event.message & charCodeMask));
-        return true;
-
-    case updateEvt:
-        if (reinterpret_cast<WindowPtr>(event.message) != mWindow)
-            return false;
-        BeginUpdate(mWindow);
-        Draw();
-        EndUpdate(mWindow);
-        return true;
-
-    case activateEvt:
-        if (reinterpret_cast<WindowPtr>(event.message) != mWindow)
-            return false;
-        return true;
-
-    default:
-        return false;
-    }
-}
-
-void PrefsWindow::Idle()
-{
-    if (mWindow == 0) return;
-    SetPort(reinterpret_cast<GrafPtr>(mWindow));
-    if (mFocus >= 0 && mFocus < mRowCount && mRows[mFocus].te != 0 &&
-        FrontWindow() == mWindow)
-        TEIdle(mRows[mFocus].te);
-}
-
 void PrefsWindow::EditCommand(int cmd)
 {
-    TEHandle te;
-
-    if (!CanEdit()) return;
-    te = mRows[mFocus].te;
-
+    if (mDialog == 0) return;
     switch (cmd) {
-    case kGWEditCut:
-        TECut(te);
-        ZeroScrap();
-        TEToScrap();
-        mDirty = true;
-        break;
-    case kGWEditCopy:
-        TECopy(te);
-        ZeroScrap();
-        TEToScrap();
-        break;
-    case kGWEditPaste:
-        TEFromScrap();
-        TEPaste(te);
-        mDirty = true;
-        break;
-    case kGWEditClear:
-        TEDelete(te);
-        mDirty = true;
-        break;
+    case kGWEditCut:   DialogCut(mDialog);    mDirty = true; break;
+    case kGWEditCopy:  DialogCopy(mDialog);                  break;
+    case kGWEditPaste: DialogPaste(mDialog);  mDirty = true; break;
+    case kGWEditClear: DialogDelete(mDialog); mDirty = true; break;
     case kGWEditSelectAll:
-        TESetSelect(0, (*te)->teLength, te);
+        if (mFirstEdit != 0)
+            SelectDialogItemText(mDialog, mFirstEdit, 0, 32767);
         break;
-    default:
-        break;
+    default: break;
     }
-    InvalRect(&mRows[mFocus].hit);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1140,17 +897,13 @@ void PrefsWindow::Revert()
 {
     LoadValues();
     BuildGroup(mGroup);
-    Note("Reverted to what is in the file.");
-    InvalRect(&reinterpret_cast<GrafPtr>(mWindow)->portRect);
+    std::strcpy(mNote, "Reverted to what is in the file.");
+    Draw();
 }
 
 /*
- * Write what changed, and only what changed.
- *
- * Every untouched line keeps its comment, its spacing and the key spelling
- * whoever typed it used, because gw_prefs_set() rewrites one line and copies
- * the rest. A form that wrote all forty-one keys would reformat the file on
- * every save and lose the notes people leave in it.
+ * Write what changed, and only what changed, so every line nobody touched
+ * keeps its comment, its spacing and the key spelling whoever typed it used.
  */
 void PrefsWindow::Save()
 {
@@ -1168,7 +921,7 @@ void PrefsWindow::Save()
 
         if (f[i].kind == kGWFieldList) {
             const char *vals[128];
-            char        store[kListMax];
+            static char store[kListMax];
             int         n = 0;
             char       *p;
 
@@ -1184,12 +937,11 @@ void PrefsWindow::Save()
                 if (*p != '\0') vals[n++] = p;
                 p = end;
             }
-            if (!GWConfig_SetList(f[i].key, vals, n)) failed++;
-            else written++;
+            if (GWConfig_SetList(f[i].key, vals, n)) written++;
+            else failed++;
             continue;
         }
 
-        /* A secret nobody retyped keeps whatever is on file. */
         if (f[i].kind == kGWFieldSecret &&
             std::strcmp(mValue[i], kKeptSecret) == 0)
             continue;
@@ -1214,29 +966,25 @@ void PrefsWindow::Save()
         }
     }
 
-    if (failed > 0) {
+    if (failed > 0)
         std::sprintf(mNote, "%d saved, %d refused -- see the log.",
                      written, failed);
-    } else if (restart > 0) {
-        std::sprintf(mNote, "Saved. %d of them take effect on restart.",
-                     restart);
-    } else if (written > 0) {
+    else if (restart > 0)
+        std::sprintf(mNote, "Saved. %d take effect on restart.", restart);
+    else if (written > 0)
         std::strcpy(mNote, "Saved.");
-    } else {
+    else
         std::strcpy(mNote, "Nothing had changed.");
-    }
     gw_log("preferences: %s", mNote);
 
     mDirty = false;
     LoadValues();
     BuildGroup(mGroup);
-    InvalRect(&reinterpret_cast<GrafPtr>(mWindow)->portRect);
+    Draw();
 }
 
 }  /* namespace */
 
-/* ------------------------------------------------------------------ */
-/* The plain-C face main.cpp uses.                                     */
 /* ------------------------------------------------------------------ */
 
 void GWPrefsWin_Open(void)
