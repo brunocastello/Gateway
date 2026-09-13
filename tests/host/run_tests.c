@@ -1253,12 +1253,17 @@ static void test_pac(void)
           "the entry point is there");
     check(strstr(buf, "if (host == \"192.168.1.5\") return \"DIRECT\";") != NULL,
           "Gateway itself is DIRECT, so a refetch cannot loop");
-    check(strstr(buf, "shExpMatch(host, \"*.floodgap.com\")) return \"PROXY "
-                      "192.168.1.5:8765\"") != NULL,
-          "an allow-listed host goes to the live proxy");
+    check(strstr(buf, "shExpMatch(host, \"*.floodgap.com\")) return live;")
+              != NULL,
+          "an allow-listed host takes the live answer");
     check(strstr(buf, "shExpMatch(host, \"68k.news\") ||\n"
                       "        shExpMatch(host, \"*.68k.news\")") != NULL,
           "a plain host is emitted in both forms, as the proxy matches it");
+    check(strstr(buf, "if (shExpMatch(url, \"http://*\")) live = \"DIRECT\";")
+              != NULL,
+          "an allow-listed plain http URL bypasses Gateway entirely");
+    check(strstr(buf, "else live = \"PROXY 192.168.1.5:8765\";") != NULL,
+          "but https still goes through, because the browser cannot do it");
     check(strstr(buf, "return \"PROXY 192.168.1.5:8888\";") != NULL,
           "everything else goes to the archive");
     check(strstr(buf, "bad") == NULL,

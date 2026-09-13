@@ -204,7 +204,7 @@ a person gets to state it:
 | Fetched from | What the script routes |
 |---|---|
 | `:8765` | Every host to the live proxy. The allow-list does not appear — there is nothing for it to be an exception to. |
-| `:8888` | Every host to the archive, except `wayback_live` hosts, which go to the live proxy. |
+| `:8888` | Every host to the archive, except `wayback_live` hosts. Those go **direct** over plain `http` — the browser needs nothing from Gateway there — and through the live proxy over `https`, where it does. |
 
 So the browser stays pointed at one place and a whitelisted site genuinely
 never touches `:8888` — which is the routing the archive listener performs

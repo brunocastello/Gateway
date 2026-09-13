@@ -141,9 +141,30 @@ size_t gw_pac_build(const char *authority, int live_port, int archive_port,
             if (!next_host(i, pattern, sizeof(pattern))) break;
             if (!pattern_is_safe(pattern)) continue;
             if (!any) {
+                /*
+                 * An allow-listed host is one the archive should not answer
+                 * for. What it needs from Gateway after that depends on the
+                 * scheme, and the script is handed the whole URL, so it can
+                 * tell: plain http is something the browser can already do,
+                 * and sending it through a proxy to be handed back unchanged
+                 * buys nothing. https is the opposite -- left to itself a
+                 * browser this old attempts a 2026 handshake and fails,
+                 * which is the entire reason this program exists -- so that
+                 * one still goes to the live listener.
+                 *
+                 * Decided once, above the list, so each entry stays one line
+                 * and the two answers cannot drift apart.
+                 */
                 if (!add(out, cap, &used,
-                        "    // The live web, by wayback_live in the prefs.\n"))
+                        "    // The live web, by wayback_live in the prefs:\n"
+                        "    // direct when the browser needs nothing from\n"
+                        "    // Gateway, through it when the TLS does.\n"
+                        "    var live;\n"
+                        "    if (shExpMatch(url, \"http://*\")) live = \"DIRECT\";\n"))
                     return 0;
+                snprintf(line, sizeof(line),
+                         "    else live = \"%s\";\n\n", live);
+                if (!add(out, cap, &used, line)) return 0;
                 any = 1;
             }
             /*
@@ -156,12 +177,12 @@ size_t gw_pac_build(const char *authority, int live_port, int archive_port,
             if (strchr(pattern, '*') == NULL && strchr(pattern, '?') == NULL)
                 snprintf(line, sizeof(line),
                          "    if (shExpMatch(host, \"%s\") ||\n"
-                         "        shExpMatch(host, \"*.%s\")) return \"%s\";\n",
-                         pattern, pattern, live);
+                         "        shExpMatch(host, \"*.%s\")) return live;\n",
+                         pattern, pattern);
             else
                 snprintf(line, sizeof(line),
-                         "    if (shExpMatch(host, \"%s\")) return \"%s\";\n",
-                         pattern, live);
+                         "    if (shExpMatch(host, \"%s\")) return live;\n",
+                         pattern);
             if (!add(out, cap, &used, line)) return 0;
         }
         if (any && !add(out, cap, &used, "\n")) return 0;
