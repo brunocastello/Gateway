@@ -26,10 +26,15 @@
 #include <Events.h>
 #include <Fonts.h>
 #include <Menus.h>
-#include <Multiverse.h>          /* the Control Manager; see main.cpp */
+/*
+ * Multiverse.h is where Multiversal puts the managers it gives no header of
+ * their own -- the Control Manager, as main.cpp notes, and the Scrap Manager
+ * for ZeroScrap(). There is no Scrap.h to include and adding one does not
+ * fail to find a declaration, it fails to find the file.
+ */
+#include <Multiverse.h>
 #include <Quickdraw.h>
-#include <Scrap.h>
-#include <TextEdit.h>
+#include <TextEdit.h>          /* TEToScrap, TEFromScrap */
 #include <Windows.h>
 
 #include <cstdio>
