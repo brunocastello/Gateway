@@ -486,14 +486,16 @@ void PrefsWindow::BuildGroup(int group)
                     static_cast<short>(v + 16));
             items.Add(kTextItem, &r, f[i].label);
             SetRect(&row->popup, kEntryLeft, v, kPaneRight,
-                    static_cast<short>(v + 19));
+                    static_cast<short>(v + kEntryHeight + 3));
             break;
 
         case kGWFieldList:
             SetRect(&r, kPaneLeft, v, kPaneRight,
                     static_cast<short>(v + 13));
             items.Add(kTextItem, &r, f[i].label);
-            SetRect(&r, kPaneLeft, static_cast<short>(v + 15), kPaneRight,
+            SetRect(&r, static_cast<short>(kPaneLeft + 4),
+                    static_cast<short>(v + 19),
+                    static_cast<short>(kPaneRight - 4),
                     static_cast<short>(v + 15 + kListHeight));
             row->item = items.Add(kEditItem, &r, mList);
             if (mFirstEdit == 0) mFirstEdit = row->item;
@@ -504,7 +506,9 @@ void PrefsWindow::BuildGroup(int group)
                     static_cast<short>(kEntryLeft - 8),
                     static_cast<short>(v + 16));
             items.Add(kTextItem, &r, f[i].label);
-            SetRect(&r, kEntryLeft, v, kPaneRight,
+            SetRect(&r, static_cast<short>(kEntryLeft + 4),
+                    static_cast<short>(v + 3),
+                    static_cast<short>(kPaneRight - 4),
                     static_cast<short>(v + kEntryHeight));
             row->item = items.Add(kEditItem, &r, mValue[i]);
             if (mFirstEdit == 0) mFirstEdit = row->item;
@@ -542,9 +546,11 @@ void PrefsWindow::BuildGroup(int group)
             static_cast<short>(mWhere.v + height));
 
     ToPascal("Gateway Preferences", title);
-    mDialog = NewDialog(0, &bounds, title, true, noGrowDocProc,
-                        reinterpret_cast<WindowPtr>(-1), true, 0,
-                        items.Release());
+    /* NewColorDialog, not NewDialog: a classic GrafPort is monochrome and
+     * RGBForeColor on one does nothing, which is what lost the Platinum. */
+    mDialog = NewColorDialog(0, &bounds, title, true, noGrowDocProc,
+                             reinterpret_cast<WindowPtr>(-1), true, 0,
+                             items.Release());
     if (mDialog == 0) return;
 
     SetPort(reinterpret_cast<GrafPtr>(mDialog));
@@ -734,6 +740,29 @@ void PrefsWindow::Draw()
     }
 
     DrawDialog(mDialog);
+
+    /*
+     * The frame around each entry field and the list.
+     *
+     * The Dialog Manager draws the text of an editText item and not a border,
+     * so a dialog that wants the look of the system's own control panels
+     * draws one: a plain one-pixel rectangle a little outside the item, which
+     * is what Internet and TCP/IP have around theirs.
+     */
+    RGBForeColor(&black);
+    for (i = 0; i < mRowCount; i++) {
+        short  type;
+        Handle h;
+        Rect   fr;
+
+        if (mRows[i].field == 0 || mRows[i].item == 0) continue;
+        if (mRows[i].field->kind == kGWFieldFlag) continue;
+        if (mRows[i].field->kind == kGWFieldChoice) continue;
+
+        GetDialogItem(mDialog, mRows[i].item, &type, &h, &fr);
+        InsetRect(&fr, -3, -3);
+        FrameRect(&fr);
+    }
 }
 
 /* ------------------------------------------------------------------ */
