@@ -559,8 +559,23 @@ void PrefsWindow::DrawPane()
         }
 
         if (r->te != 0) {
+            RGBColor white, black2;
+
+            /* White inside, grey outside: TextEdit erases its view with the
+             * background colour, so the field has to own it while it draws. */
+            white.red = white.green = white.blue = 0xFFFF;
+            black2.red = black2.green = black2.blue = 0;
+            RGBBackColor(&white);
+            EraseRect(&r->hit);
+            RGBForeColor(&black2);
             FrameRect(&r->hit);
             TEUpdate(&r->hit, r->te);
+            {
+                RGBColor platinum2;
+
+                platinum2.red = platinum2.green = platinum2.blue = kPlatinum;
+                RGBBackColor(&platinum2);
+            }
         }
 
         if (r->field->hint != 0 && r->hintV != 0) {
@@ -681,8 +696,16 @@ bool PrefsWindow::Open()
             static_cast<short>(top + mWinHeight));
 
     ToPascal("Gateway Preferences", title);
-    mWindow = NewWindow(0, &bounds, title, true, noGrowDocProc,
-                        reinterpret_cast<WindowPtr>(-1), true, 0);
+    /*
+     * NewCWindow, not NewWindow. A classic GrafPort is monochrome and
+     * RGBForeColor on one does nothing at all, so the Platinum ground was
+     * painted and discarded and the window stayed white. The About box in
+     * main.cpp has always used the colour call, which is why its grey works
+     * and this one's did not. The Appearance control definitions want a
+     * colour port too.
+     */
+    mWindow = NewCWindow(0, &bounds, title, true, noGrowDocProc,
+                         reinterpret_cast<WindowPtr>(-1), true, 0);
     if (mWindow == 0) return false;
 
     SetPort(reinterpret_cast<GrafPtr>(mWindow));
@@ -767,6 +790,13 @@ bool PrefsWindow::HandleClick(Point where)
     short         part;
     int           i;
 
+    /*
+     * GlobalToLocal and FindControl both work in the current port, and the
+     * current port is whatever drew last -- which on a busy proxy is the log
+     * window, redrawn every time a line arrives. Converting a click against
+     * another window's origin puts it somewhere off the controls entirely.
+     */
+    SetPort(reinterpret_cast<GrafPtr>(mWindow));
     GlobalToLocal(&where);
 
     part = FindControl(where, mWindow, &ctl);
@@ -914,6 +944,7 @@ bool PrefsWindow::HandleEvent(EventRecord &event)
 void PrefsWindow::Idle()
 {
     if (mWindow == 0) return;
+    SetPort(reinterpret_cast<GrafPtr>(mWindow));
     if (mFocus >= 0 && mFocus < mRowCount && mRows[mFocus].te != 0 &&
         FrontWindow() == mWindow)
         TEIdle(mRows[mFocus].te);
