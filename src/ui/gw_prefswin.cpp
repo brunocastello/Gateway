@@ -1,23 +1,23 @@
 /*
  * gw_prefswin.cpp - the Preferences window on Mac OS 9.
  *
- * A modeless Dialog Manager dialog. Every field in it is a real dialog item,
- * so the system draws it and DialogSelect tracks it -- which is where text
- * selection, the caret, tabbing between fields and Cut/Copy/Paste come from.
- * An earlier version drew the fields itself with TextEdit and had none of
- * those, because they are not things a field has; they are things the Dialog
- * Manager does for a field it owns.
+ * A modeless Dialog Manager dialog laid out after the Internet control panel.
+ * Nothing in it is drawn by hand: the entry fields and the host list are
+ * editText items, the checkboxes are chkCtrl items, the buttons are btnCtrl
+ * with the system's default ring, the popups are popup controls and the list
+ * has a scroll bar control. DialogSelect does the tracking, which is where
+ * selection, the caret, tabbing and Cut/Copy/Paste come from.
  *
- * The item list is built in memory from src/portable/gw_prefsform.c rather
- * than compiled as a DITL resource, so the fields stay declared in one place
- * and a preference added to the table appears in the window.
+ * The item list is built in memory from src/portable/gw_prefsform.c, so the
+ * fields stay declared in one place and a preference added to the table shows
+ * up in the window.
  *
  * Modeless is not a style choice. ModalDialog() runs its own event loop, so
  * GW_Poll() would stop being called and every proxy session would time out
- * while somebody read the labels. main.cpp offers this each event first.
+ * while somebody read the labels.
  *
  * Values live in a shadow copy. One group is on screen at a time, so a save
- * that read the items would write the visible group and revert the other six.
+ * that read the items would write the visible group and revert the rest.
  */
 
 #include "gw_prefswin.h"
@@ -28,8 +28,7 @@
 #include <Menus.h>
 /*
  * Multiverse.h carries the managers Multiversal gives no header of their own:
- * the Control Manager, as main.cpp notes, and the Scrap Manager. There is no
- * Scrap.h to include.
+ * the Control Manager, as main.cpp notes, and the Scrap Manager.
  */
 #include <Multiverse.h>
 #include <Quickdraw.h>
@@ -47,30 +46,38 @@
 
 namespace {
 
-const short kWinWidth     = 476;
+const short kWinWidth     = 486;
 
 const short kPopupTop     = 12;
 const short kPopupHeight  = 20;
 
 const short kBoxTop       = kPopupTop + kPopupHeight + 12;
 const short kBoxLeft      = 10;
-const short kBoxRight     = kWinWidth - 10;
+const short kBoxRight      = kWinWidth - 10;
 
 const short kPaneLeft     = kBoxLeft + 12;
 const short kPaneRight    = kBoxRight - 12;
 
 const short kRowHeight    = 22;
 const short kHintHeight   = 13;
-const short kFieldWidth   = 176;
+const short kFieldWidth   = 188;
 const short kEntryLeft    = kPaneRight - kFieldWidth;
-const short kEntryHeight  = 16;
+const short kEntryHeight  = 17;
 const short kListHeight   = 76;
 const short kButtonWidth  = 74;
 const short kButtonHeight = 20;
+const short kScrollWidth  = 16;
 
 const unsigned short kPlatinum = 0xDDDD;
 
 const short kFontGeneva   = 3;
+
+/*
+ * The control definitions, by value the way main.cpp spells the window procs:
+ * the popup is CDEF 63 and the scroll bar CDEF 16.
+ */
+const short kPopupMenuProc = 1008;
+const short kScrollBarProc = 16;
 
 const short kGroupMenuID    = 200;
 const short kChoiceMenuBase = 201;
@@ -81,17 +88,23 @@ const short kValueMax  = 256;
 const short kListMax   = 3072;
 
 /*
- * Dialog item types by value, the way main.cpp spells the window procs:
- * ctrlItem 4 plus btnCtrl 0 or chkCtrl 1, statText 8, editText 16.
+ * Dialog item types by value: ctrlItem 4 plus btnCtrl 0 or chkCtrl 1,
+ * statText 8, editText 16.
  */
 const short kBtnItem  = 4;
 const short kChkItem  = 5;
 const short kTextItem = 8;
 const short kEditItem = 16;
 
-/* Fixed items first, so Save is item 1 and can be the default button. */
 const short kItemSave   = 1;
 const short kItemRevert = 2;
+
+/* Scroll bar part codes, spelled out as main.cpp spells them. */
+const short kInUpButton   = 20;
+const short kInDownButton = 21;
+const short kInPageUp     = 22;
+const short kInPageDown   = 23;
+const short kInThumb      = 129;
 
 void ToPascal(const char *src, Str255 dst)
 {
@@ -121,22 +134,23 @@ const char *const kKeptSecret = "\xA5\xA5\xA5\xA5\xA5\xA5\xA5\xA5";
 
 struct Row {
     const GWPrefField *field;
-    int                index;    /* into the shadow table                 */
-    short              item;     /* its dialog item, or 0                 */
-    Rect               popup;    /* choice fields: where the box is       */
+    int                index;     /* into the shadow table                */
+    short              item;      /* the editText or chkCtrl item, or 0   */
+    short              labelItem; /* its statText, for right-aligning     */
+    ControlHandle      popup;     /* choice fields                        */
+    Rect               popupRect;
+    ControlHandle      scroll;    /* list fields                          */
+    Rect               scrollRect;
     short              menuID;
-    short              choice;   /* 1-based item in that menu             */
     int                altCount;
 };
 
 /*
- * A dialog item list, built in memory.
- *
- * The format is a count followed by items, each a placeholder long, a rect, a
- * type byte, a length byte and that many bytes of text, padded so the next
- * one starts even. The Dialog Manager reads exactly this whether it came from
- * a resource or from here, and building it here is what keeps the field table
- * the only list of fields.
+ * A dialog item list, built in memory: a count, then items, each a
+ * placeholder long, a rect, a type byte, a length byte and that many bytes of
+ * text, padded so the next starts even. The Dialog Manager reads exactly this
+ * whether it came from a resource or from here, and building it here keeps
+ * the field table the only list of fields.
  */
 class ItemList {
 public:
@@ -196,14 +210,13 @@ private:
 class PrefsWindow {
 public:
     PrefsWindow()
-        : mDialog(0), mGroup(0), mGroupItem(1), mRowCount(0), mDirty(false),
+        : mDialog(0), mGroupCtl(0), mGroup(0), mRowCount(0), mDirty(false),
           mFirstEdit(0)
     {
         std::memset(mValue, 0, sizeof(mValue));
         std::memset(mList, 0, sizeof(mList));
         std::memset(mRows, 0, sizeof(mRows));
         std::memset(mNote, 0, sizeof(mNote));
-        SetRect(&mGroupPopup, 0, 0, 0, 0);
         mWhere.h = -1;
         mWhere.v = -1;
     }
@@ -214,7 +227,7 @@ public:
     WindowPtr Window() const { return reinterpret_cast<WindowPtr>(mDialog); }
 
     bool HandleEvent(EventRecord &event);
-    void Idle() {}      /* DialogSelect blinks the caret from null events */
+    void Idle() {}
     void EditCommand(int cmd);
     bool CanEdit() const { return mDialog != 0 && mFirstEdit != 0; }
 
@@ -225,30 +238,37 @@ private:
     void  Draw();
     void  Save();
     void  Revert();
-    short TrackPopup(const Rect *box, short menuID, short current);
-    void  DrawPopupBox(const Rect *box, short menuID, short item);
-    void  MakeChoiceMenus(int group);
-    void  DropChoiceMenus();
+    void  MakeControls(int group);
+    void  DropControls();
+    void  AlignLabels();
+    void  SyncScroll(Row *r);
+    void  ScrollList(Row *r, short part);
     void  GetItemText(short item, char *out, size_t cap);
+    TEHandle DialogTE() const;
 
-    DialogPtr mDialog;
-    int       mGroup;
-    short     mGroupItem;
-    Rect      mGroupPopup;
-    Point     mWhere;        /* keeps its place across a group change */
-    Row       mRows[kMaxRows];
-    int       mRowCount;
-    bool      mDirty;
-    short     mFirstEdit;
+    DialogPtr     mDialog;
+    ControlHandle mGroupCtl;
+    int           mGroup;
+    Point         mWhere;
+    Row           mRows[kMaxRows];
+    int           mRowCount;
+    bool          mDirty;
+    short         mFirstEdit;
 
-    char      mValue[kMaxFields][kValueMax];
-    char      mList[kListMax];
-    char      mNote[128];
+    char          mValue[kMaxFields][kValueMax];
+    char          mList[kListMax];
+    char          mNote[128];
 };
 
 PrefsWindow *gPrefs = 0;
 
 /* ------------------------------------------------------------------ */
+
+TEHandle PrefsWindow::DialogTE() const
+{
+    if (mDialog == 0) return 0;
+    return reinterpret_cast<DialogPeek>(mDialog)->textH;
+}
 
 void PrefsWindow::GetItemText(short item, char *out, size_t cap)
 {
@@ -338,11 +358,12 @@ void PrefsWindow::ReadGroupBack()
 
         case kGWFieldChoice: {
             MenuHandle menu = GetMenuHandle(r->menuID);
+            short      item = (r->popup != 0) ? GetControlValue(r->popup) : 0;
 
-            if (menu != 0 && r->choice >= 1 && r->choice <= r->altCount) {
+            if (menu != 0 && item >= 1 && item <= r->altCount) {
                 Str255 s;
 
-                GetMenuItemText(menu, r->choice, s);
+                GetMenuItemText(menu, item, s);
                 FromPascal(s, mValue[r->index], kValueMax);
             }
             break;
@@ -361,73 +382,191 @@ void PrefsWindow::ReadGroupBack()
 
 /* ------------------------------------------------------------------ */
 
-void PrefsWindow::DropChoiceMenus()
+void PrefsWindow::DropControls()
 {
     int i;
 
+    if (mGroupCtl != 0) { DisposeControl(mGroupCtl); mGroupCtl = 0; }
     for (i = 0; i < mRowCount; i++) {
-        if (mRows[i].menuID == 0) continue;
-        DeleteMenu(mRows[i].menuID);
-        DisposeMenu(GetMenuHandle(mRows[i].menuID));
-        mRows[i].menuID = 0;
-    }
-}
-
-void PrefsWindow::MakeChoiceMenus(int group)
-{
-    int                count = 0;
-    const GWPrefField *f = gw_prefsform_fields(&count);
-    int                i, row = 0;
-
-    if (count > kMaxFields) count = kMaxFields;
-    for (i = 0; i < count && row < mRowCount; i++) {
-        Row        *r;
-        const char *p;
-        MenuHandle  menu;
-        Str255      title;
-        short       id;
-
-        if (f[i].group != group) continue;
-        r = &mRows[row++];
-        if (f[i].kind != kGWFieldChoice) continue;
-
-        id = static_cast<short>(kChoiceMenuBase + row);
-        ToPascal(f[i].label, title);
-        menu = NewMenu(id, title);
-        if (menu == 0) continue;
-
-        r->choice = 1;
-        r->altCount = 0;
-        p = f[i].choices;
-        while (p != 0 && *p != '\0') {
-            const char *end = std::strchr(p, '|');
-            size_t      n = (end != 0) ? static_cast<size_t>(end - p)
-                                       : std::strlen(p);
-            char        buf[32];
-
-            if (n > sizeof(buf) - 1) n = sizeof(buf) - 1;
-            std::memcpy(buf, p, n);
-            buf[n] = '\0';
-            r->altCount++;
-            if (gw_stricmp(buf, mValue[i]) == 0)
-                r->choice = static_cast<short>(r->altCount);
-            ToPascal(buf, title);
-            AppendMenu(menu, title);
-            p = (end != 0) ? end + 1 : 0;
+        if (mRows[i].popup != 0)  { DisposeControl(mRows[i].popup);  }
+        if (mRows[i].scroll != 0) { DisposeControl(mRows[i].scroll); }
+        mRows[i].popup = 0;
+        mRows[i].scroll = 0;
+        if (mRows[i].menuID != 0) {
+            DeleteMenu(mRows[i].menuID);
+            DisposeMenu(GetMenuHandle(mRows[i].menuID));
+            mRows[i].menuID = 0;
         }
-        InsertMenu(menu, -1);
-        r->menuID = id;
     }
 }
 
 /*
- * Build the dialog for one group.
- *
- * Made anew rather than having its items rearranged: an item list cannot be
- * resized in place, and a window whose contents change completely is not a
- * window that gained a few items. Its position is kept so it does not walk
- * across the screen when the popup is used.
+ * The popups and the list's scroll bar, made after the dialog exists because
+ * a control needs a window. They are real controls: the popup is CDEF 63, the
+ * same definition the Internet control panel's "Active Set" uses, and the
+ * scroll bar is CDEF 16.
  */
+void PrefsWindow::MakeControls(int group)
+{
+    int                count = 0;
+    const GWPrefField *f = gw_prefsform_fields(&count);
+    int                i, row = 0;
+    Rect               box;
+    Str255             title;
+
+    if (mDialog == 0) return;
+    if (count > kMaxFields) count = kMaxFields;
+
+    /* The pane popup, at the top, as "Active Set" is. */
+    SetRect(&box, 88, kPopupTop, 300,
+            static_cast<short>(kPopupTop + kPopupHeight));
+    ToPascal("", title);
+    mGroupCtl = NewControl(reinterpret_cast<WindowPtr>(mDialog), &box, title,
+                           true, static_cast<short>(group + 1),
+                           kGroupMenuID, 0, kPopupMenuProc, 0);
+
+    for (i = 0; i < count && row < mRowCount; i++) {
+        Row *r;
+
+        if (f[i].group != group) continue;
+        r = &mRows[row++];
+
+        if (f[i].kind == kGWFieldChoice) {
+            const char *p = f[i].choices;
+            MenuHandle  menu;
+            short       id = static_cast<short>(kChoiceMenuBase + row);
+            short       chosen = 1;
+
+            ToPascal(f[i].label, title);
+            menu = NewMenu(id, title);
+            if (menu == 0) continue;
+            r->altCount = 0;
+            while (p != 0 && *p != '\0') {
+                const char *end = std::strchr(p, '|');
+                size_t      n = (end != 0) ? static_cast<size_t>(end - p)
+                                           : std::strlen(p);
+                char        buf[32];
+
+                if (n > sizeof(buf) - 1) n = sizeof(buf) - 1;
+                std::memcpy(buf, p, n);
+                buf[n] = '\0';
+                r->altCount++;
+                if (gw_stricmp(buf, mValue[i]) == 0)
+                    chosen = static_cast<short>(r->altCount);
+                ToPascal(buf, title);
+                AppendMenu(menu, title);
+                p = (end != 0) ? end + 1 : 0;
+            }
+            InsertMenu(menu, -1);
+            r->menuID = id;
+
+            ToPascal("", title);
+            r->popup = NewControl(reinterpret_cast<WindowPtr>(mDialog),
+                                  &r->popupRect, title, true, chosen,
+                                  id, 0, kPopupMenuProc, 0);
+            continue;
+        }
+
+        if (f[i].kind == kGWFieldList) {
+            r->scroll = NewControl(reinterpret_cast<WindowPtr>(mDialog),
+                                   &r->scrollRect, title, true, 0, 0, 0,
+                                   kScrollBarProc, 0);
+            SyncScroll(r);
+        }
+    }
+}
+
+/*
+ * Point the scroll bar at what the list holds: the range is however many
+ * lines do not fit, and the value is how far down the view has been moved.
+ */
+void PrefsWindow::SyncScroll(Row *r)
+{
+    TEHandle te = DialogTE();
+    short    lines, shown, most, top;
+
+    if (r == 0 || r->scroll == 0 || te == 0) return;
+
+    lines = (*te)->nLines;
+    shown = static_cast<short>(((*te)->viewRect.bottom -
+                                (*te)->viewRect.top) / (*te)->lineHeight);
+    if (shown < 1) shown = 1;
+    most = static_cast<short>(lines - shown);
+    if (most < 0) most = 0;
+    top = static_cast<short>(((*te)->viewRect.top - (*te)->destRect.top) /
+                             (*te)->lineHeight);
+    if (top < 0) top = 0;
+    if (top > most) top = most;
+
+    SetControlMaximum(r->scroll, most);
+    SetControlValue(r->scroll, top);
+    HiliteControl(r->scroll, most > 0 ? 0 : 255);
+}
+
+void PrefsWindow::ScrollList(Row *r, short part)
+{
+    TEHandle te = DialogTE();
+    short    was, now, most;
+
+    if (r == 0 || r->scroll == 0 || te == 0) return;
+
+    was = GetControlValue(r->scroll);
+    most = GetControlMaximum(r->scroll);
+    now = was;
+
+    switch (part) {
+    case kInUpButton:   now = static_cast<short>(was - 1); break;
+    case kInDownButton: now = static_cast<short>(was + 1); break;
+    case kInPageUp:     now = static_cast<short>(was - 4); break;
+    case kInPageDown:   now = static_cast<short>(was + 4); break;
+    case kInThumb:      now = GetControlValue(r->scroll);  break;
+    default: break;
+    }
+    if (now < 0) now = 0;
+    if (now > most) now = most;
+    SetControlValue(r->scroll, now);
+
+    if (now != was)
+        TEScroll(0, static_cast<short>((was - now) * (*te)->lineHeight), te);
+}
+
+/*
+ * Right-align each label against its field, the way the Internet control
+ * panel does. A statText item draws from the left of its rectangle, so the
+ * rectangle is moved rather than the text: measured here, after the dialog
+ * exists and its font is set, because StringWidth needs the port.
+ */
+void PrefsWindow::AlignLabels()
+{
+    int i;
+
+    if (mDialog == 0) return;
+    SetPort(reinterpret_cast<GrafPtr>(mDialog));
+    TextFont(kFontGeneva);
+    TextSize(9);
+
+    for (i = 0; i < mRowCount; i++) {
+        short  type;
+        Handle h;
+        Rect   box;
+        Str255 s;
+        short  w;
+
+        if (mRows[i].labelItem == 0 || mRows[i].field == 0) continue;
+        if (mRows[i].field->kind == kGWFieldList) continue;
+
+        GetDialogItem(mDialog, mRows[i].labelItem, &type, &h, &box);
+        ToPascal(mRows[i].field->label, s);
+        w = StringWidth(s);
+        box.right = static_cast<short>(kEntryLeft - 8);
+        box.left = static_cast<short>(box.right - w - 2);
+        if (box.left < kPaneLeft) box.left = kPaneLeft;
+        SetDialogItem(mDialog, mRows[i].labelItem, type, h, &box);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+
 void PrefsWindow::BuildGroup(int group)
 {
     int                count = 0;
@@ -447,7 +586,7 @@ void PrefsWindow::BuildGroup(int group)
         tl.v = port->portRect.top;
         LocalToGlobal(&tl);
         mWhere = tl;
-        DropChoiceMenus();
+        DropControls();
         DisposeDialog(mDialog);
         mDialog = 0;
     }
@@ -462,7 +601,7 @@ void PrefsWindow::BuildGroup(int group)
     items.Add(kBtnItem, &r, "Save");
     items.Add(kBtnItem, &r, "Revert");
 
-    v = static_cast<short>(kBoxTop + 12);
+    v = static_cast<short>(kBoxTop + 14);
     for (i = 0; i < count && mRowCount < kMaxRows; i++) {
         Row *row;
 
@@ -479,33 +618,38 @@ void PrefsWindow::BuildGroup(int group)
             break;
 
         case kGWFieldChoice:
-            /* The label is static text; the popup is drawn and tracked here,
-             * an item list having no way to carry one without a CNTL. */
             SetRect(&r, kPaneLeft, static_cast<short>(v + 3),
                     static_cast<short>(kEntryLeft - 8),
-                    static_cast<short>(v + 16));
-            items.Add(kTextItem, &r, f[i].label);
-            SetRect(&row->popup, kEntryLeft, v, kPaneRight,
+                    static_cast<short>(v + 17));
+            row->labelItem = items.Add(kTextItem, &r, f[i].label);
+            SetRect(&row->popupRect, kEntryLeft, v, kPaneRight,
                     static_cast<short>(v + kEntryHeight + 3));
             break;
 
         case kGWFieldList:
             SetRect(&r, kPaneLeft, v, kPaneRight,
                     static_cast<short>(v + 13));
-            items.Add(kTextItem, &r, f[i].label);
+            row->labelItem = items.Add(kTextItem, &r, f[i].label);
+            /* The field, with the scroll bar's width kept clear on the
+             * right, exactly as the Signature box in Internet has it. */
             SetRect(&r, static_cast<short>(kPaneLeft + 4),
                     static_cast<short>(v + 19),
-                    static_cast<short>(kPaneRight - 4),
+                    static_cast<short>(kPaneRight - kScrollWidth - 3),
                     static_cast<short>(v + 15 + kListHeight));
             row->item = items.Add(kEditItem, &r, mList);
             if (mFirstEdit == 0) mFirstEdit = row->item;
+            SetRect(&row->scrollRect,
+                    static_cast<short>(kPaneRight - kScrollWidth),
+                    static_cast<short>(v + 15),
+                    kPaneRight,
+                    static_cast<short>(v + 15 + kListHeight + 1));
             break;
 
         default:
             SetRect(&r, kPaneLeft, static_cast<short>(v + 3),
                     static_cast<short>(kEntryLeft - 8),
-                    static_cast<short>(v + 16));
-            items.Add(kTextItem, &r, f[i].label);
+                    static_cast<short>(v + 17));
+            row->labelItem = items.Add(kTextItem, &r, f[i].label);
             SetRect(&r, static_cast<short>(kEntryLeft + 4),
                     static_cast<short>(v + 3),
                     static_cast<short>(kPaneRight - 4),
@@ -516,7 +660,7 @@ void PrefsWindow::BuildGroup(int group)
         }
 
         if (f[i].kind == kGWFieldList)
-            v = static_cast<short>(v + 15 + kListHeight + 3);
+            v = static_cast<short>(v + 15 + kListHeight + 4);
         else
             v = static_cast<short>(v + kRowHeight);
 
@@ -546,8 +690,8 @@ void PrefsWindow::BuildGroup(int group)
             static_cast<short>(mWhere.v + height));
 
     ToPascal("Gateway Preferences", title);
-    /* NewColorDialog, not NewDialog: a classic GrafPort is monochrome and
-     * RGBForeColor on one does nothing, which is what lost the Platinum. */
+    /* NewColorDialog: a classic GrafPort is monochrome and RGBForeColor on
+     * one does nothing, which is what lost the Platinum once already. */
     mDialog = NewColorDialog(0, &bounds, title, true, noGrowDocProc,
                              reinterpret_cast<WindowPtr>(-1), true, 0,
                              items.Release());
@@ -557,7 +701,6 @@ void PrefsWindow::BuildGroup(int group)
     TextFont(kFontGeneva);
     TextSize(9);
 
-    /* The buttons, now that the height is known. */
     {
         short  type;
         Handle h;
@@ -581,10 +724,10 @@ void PrefsWindow::BuildGroup(int group)
         SetDialogItem(mDialog, kItemRevert, type, h, &box);
     }
 
-    /* The system draws the ring around item 1, so nothing here has to. */
     SetDialogDefaultItem(mDialog, kItemSave);
 
-    MakeChoiceMenus(group);
+    MakeControls(group);
+    AlignLabels();
 
     for (i = 0; i < mRowCount; i++) {
         short  type;
@@ -599,87 +742,10 @@ void PrefsWindow::BuildGroup(int group)
                             mValue[mRows[i].index][0] == '1' ? 1 : 0);
     }
 
-    SetRect(&mGroupPopup, 82, kPopupTop, 272,
-            static_cast<short>(kPopupTop + kPopupHeight));
-    mGroupItem = static_cast<short>(group + 1);
-
-    /* Something selected to begin with, so the caret is where a person
-     * expects it and the Edit menu has an item to act on. */
     if (mFirstEdit != 0) SelectDialogItemText(mDialog, mFirstEdit, 0, 0);
 }
 
 /* ------------------------------------------------------------------ */
-
-short PrefsWindow::TrackPopup(const Rect *box, short menuID, short current)
-{
-    MenuHandle menu = GetMenuHandle(menuID);
-    Point      tl;
-    long       choice;
-
-    if (menu == 0) return 0;
-    tl.h = static_cast<short>(box->left + 1);
-    tl.v = static_cast<short>(box->top + 1);
-    LocalToGlobal(&tl);
-    choice = PopUpMenuSelect(menu, tl.v, tl.h, current);
-    if (choice == 0) return 0;
-    return static_cast<short>(choice & 0xFFFF);
-}
-
-/*
- * The popup box, to the Platinum shape.
- *
- * These two -- the group popup and the choice popups -- are the only things
- * in the window this file draws, because an item list cannot carry a popup
- * without a CNTL resource and a CNTL per choice field would be a second list
- * of choices to keep in step with the table.
- */
-void PrefsWindow::DrawPopupBox(const Rect *box, short menuID, short item)
-{
-    MenuHandle menu = GetMenuHandle(menuID);
-    Rect       r = *box;
-    Str255     s;
-    RGBColor   black, white, platinum, shadow;
-    short      x, y, k;
-
-    black.red = black.green = black.blue = 0;
-    white.red = white.green = white.blue = 0xFFFF;
-    platinum.red = platinum.green = platinum.blue = kPlatinum;
-    shadow.red = shadow.green = shadow.blue = 0x6666;
-
-    RGBBackColor(&platinum);
-    EraseRect(&r);
-
-    RGBForeColor(&shadow);
-    MoveTo(static_cast<short>(r.left + 2), static_cast<short>(r.bottom - 1));
-    LineTo(static_cast<short>(r.right - 1), static_cast<short>(r.bottom - 1));
-    MoveTo(static_cast<short>(r.right - 1), static_cast<short>(r.top + 2));
-    LineTo(static_cast<short>(r.right - 1), static_cast<short>(r.bottom - 1));
-
-    r.right = static_cast<short>(r.right - 2);
-    r.bottom = static_cast<short>(r.bottom - 2);
-
-    RGBForeColor(&white);
-    MoveTo(static_cast<short>(r.left + 1), static_cast<short>(r.bottom - 1));
-    LineTo(static_cast<short>(r.left + 1), static_cast<short>(r.top + 1));
-    LineTo(static_cast<short>(r.right - 1), static_cast<short>(r.top + 1));
-
-    RGBForeColor(&black);
-    FrameRect(&r);
-
-    if (menu != 0 && item >= 1) {
-        GetMenuItemText(menu, item, s);
-        MoveTo(static_cast<short>(r.left + 9), static_cast<short>(r.top + 13));
-        DrawString(s);
-    }
-
-    x = static_cast<short>(r.right - 18);
-    y = static_cast<short>(r.top + 7);
-    for (k = 0; k < 5; k++) {
-        MoveTo(static_cast<short>(x + k), static_cast<short>(y + k));
-        LineTo(static_cast<short>(x + 8 - k), static_cast<short>(y + k));
-    }
-    RGBBackColor(&platinum);
-}
 
 void PrefsWindow::Draw()
 {
@@ -710,7 +776,6 @@ void PrefsWindow::Draw()
     ToPascal("Settings for:", s);
     DrawString(s);
 
-    /* The group box, with its name let into the top rule as TCP/IP does. */
     bottom = static_cast<short>(port->portRect.bottom - 12 - kButtonHeight -
                                 12);
     SetRect(&box, kBoxLeft, kBoxTop, kBoxRight, bottom);
@@ -726,11 +791,6 @@ void PrefsWindow::Draw()
     MoveTo(static_cast<short>(kBoxLeft + 11), static_cast<short>(kBoxTop + 4));
     DrawString(s);
 
-    DrawPopupBox(&mGroupPopup, kGroupMenuID, mGroupItem);
-    for (i = 0; i < mRowCount; i++)
-        if (mRows[i].menuID != 0)
-            DrawPopupBox(&mRows[i].popup, mRows[i].menuID, mRows[i].choice);
-
     if (mNote[0] != '\0') {
         MoveTo(kBoxLeft,
                static_cast<short>(port->portRect.bottom - 12 -
@@ -742,12 +802,9 @@ void PrefsWindow::Draw()
     DrawDialog(mDialog);
 
     /*
-     * The frame around each entry field and the list.
-     *
-     * The Dialog Manager draws the text of an editText item and not a border,
-     * so a dialog that wants the look of the system's own control panels
-     * draws one: a plain one-pixel rectangle a little outside the item, which
-     * is what Internet and TCP/IP have around theirs.
+     * The frame around each entry field and the list. The Dialog Manager
+     * draws an editText item's text and not a border, so a dialog that wants
+     * the look of the system's own control panels draws one.
      */
     RGBForeColor(&black);
     for (i = 0; i < mRowCount; i++) {
@@ -757,10 +814,11 @@ void PrefsWindow::Draw()
 
         if (mRows[i].field == 0 || mRows[i].item == 0) continue;
         if (mRows[i].field->kind == kGWFieldFlag) continue;
-        if (mRows[i].field->kind == kGWFieldChoice) continue;
 
         GetDialogItem(mDialog, mRows[i].item, &type, &h, &fr);
         InsetRect(&fr, -3, -3);
+        if (mRows[i].field->kind == kGWFieldList)
+            fr.right = static_cast<short>(kPaneRight - kScrollWidth + 1);
         FrameRect(&fr);
     }
 }
@@ -777,7 +835,6 @@ bool PrefsWindow::Open()
     LoadValues();
     mNote[0] = '\0';
 
-    /* The group menu outlives a group change; the choice menus do not. */
     if (GetMenuHandle(kGroupMenuID) == 0) {
         MenuHandle menu;
         Str255     title;
@@ -801,7 +858,7 @@ bool PrefsWindow::Open()
 void PrefsWindow::Close()
 {
     if (mDialog == 0) return;
-    DropChoiceMenus();
+    DropControls();
     DisposeDialog(mDialog);
     mDialog = 0;
     DeleteMenu(kGroupMenuID);
@@ -839,43 +896,50 @@ bool PrefsWindow::HandleEvent(EventRecord &event)
             return true;
         }
         if (part == inContent) {
-            Point where = event.where;
-            int   i;
+            Point         where = event.where;
+            ControlHandle ctl;
+            short         cpart;
+            int           i;
 
             if (FrontWindow() != mine) {
                 SelectWindow(mine);
                 return true;
             }
 
-            /* The popups are ours; every other click is the dialog's. */
             SetPort(reinterpret_cast<GrafPtr>(mDialog));
             GlobalToLocal(&where);
 
-            if (PtInRect(where, &mGroupPopup)) {
-                short item = TrackPopup(&mGroupPopup, kGroupMenuID,
-                                        mGroupItem);
+            cpart = FindControl(where, mine, &ctl);
+            if (cpart != 0 && ctl != 0) {
+                /* The pane popup. */
+                if (ctl == mGroupCtl) {
+                    if (TrackControl(ctl, where, 0) != 0) {
+                        short g = static_cast<short>(GetControlValue(ctl) - 1);
 
-                if (item >= 1 && item <= kGWGroupCount &&
-                    item - 1 != mGroup) {
-                    ReadGroupBack();
-                    BuildGroup(static_cast<short>(item - 1));
-                    Draw();
+                        if (g >= 0 && g < kGWGroupCount && g != mGroup) {
+                            ReadGroupBack();
+                            BuildGroup(g);
+                            Draw();
+                        }
+                    }
+                    return true;
                 }
-                return true;
-            }
-            for (i = 0; i < mRowCount; i++) {
-                short item;
-
-                if (mRows[i].menuID == 0) continue;
-                if (!PtInRect(where, &mRows[i].popup)) continue;
-                item = TrackPopup(&mRows[i].popup, mRows[i].menuID,
-                                  mRows[i].choice);
-                if (item >= 1 && item <= mRows[i].altCount) {
-                    mRows[i].choice = item;
-                    mDirty = true;
-                    InvalRect(&mRows[i].popup);
+                /* A choice popup, or a list's scroll bar. */
+                for (i = 0; i < mRowCount; i++) {
+                    if (ctl == mRows[i].popup) {
+                        if (TrackControl(ctl, where, 0) != 0) mDirty = true;
+                        return true;
+                    }
+                    if (ctl == mRows[i].scroll) {
+                        if (cpart == kInThumb) {
+                            TrackControl(ctl, where, 0);
+                            ScrollList(&mRows[i], kInThumb);
+                        } else if (TrackControl(ctl, where, 0) != 0) {
+                            ScrollList(&mRows[i], cpart);
+                        }
+                        return true;
+                    }
                 }
-                return true;
             }
         }
     }
@@ -888,17 +952,15 @@ bool PrefsWindow::HandleEvent(EventRecord &event)
         return true;
     }
 
-    /*
-     * Everything else belongs to the dialog. DialogSelect is what gives the
-     * entry fields their selection, their caret and tabbing between them,
-     * which is the whole reason they are dialog items.
-     */
     if (IsDialogEvent(&event)) {
         if (DialogSelect(&event, &which, &hit) && which == mDialog) {
             if (hit == kItemSave) Save();
             else if (hit == kItemRevert) Revert();
             else mDirty = true;
         }
+        /* Typing into the list can have moved it. */
+        for (hit = 0; hit < mRowCount; hit++)
+            if (mRows[hit].scroll != 0) SyncScroll(&mRows[hit]);
         return true;
     }
     return false;
