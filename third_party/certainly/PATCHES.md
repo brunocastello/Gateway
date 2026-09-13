@@ -813,3 +813,71 @@ This diagnoses; it does not repair. It was written because
 `www.floodgap.com` fails with `TLS 1 1.3` — the 1.3 state machine, not the
 1.2 engine that §23 addressed — and none of the seventeen sites could be
 ruled in or out from here. The next log from that host names the line.
+
+---
+
+## §25 — a TLS 1.2 ServerHello with no extensions was rejected as malformed
+
+*Certainly patch, in `src/tls13_handshake.c`. This is the one that makes
+`www.floodgap.com` reachable.*
+
+`tls13_parse_server_hello()` opened with
+
+```c
+/*
+ * Minimum ServerHello size:
+ * 4 (hs header) + 2 (version) + 32 (random) + 1 (session_id_len) +
+ * 2 (cipher suite) + 1 (compression) + 2 (extensions length) = 44
+ */
+if (msg_len < 44) {
+```
+
+The extensions length is not mandatory. RFC 5246 7.4.1.3 makes the whole
+extensions block optional in a TLS 1.2 ServerHello — its presence is detected
+by whether any bytes follow `compression_method` — so a server with no
+extensions to send stops after 42 bytes. TLS 1.3 does require extensions, but
+a 1.3 server is not who sends a short hello; recognising a 1.2 one and handing
+over to BearSSL is the entire reason this function parses a hello it cannot
+use.
+
+Forty lines further down the function already knew that:
+
+```c
+if (pos + 2 > msg_len) {
+        /* No extensions at all — this is a TLS 1.2 ServerHello */
+        return kTLS13_Fallback12;
+}
+```
+
+which was unreachable for exactly the servers it was written for. The minimum
+is now 42. Every field between is bounds-checked individually, so nothing else
+had to change: a 42-byte hello walks version, random, an empty session id,
+the suite and the compression byte, finds no extensions, and falls back.
+
+### Why floodgap and almost nothing else
+
+`www.floodgap.com` runs HTTPi on AIX and has no TLS 1.3 at all — a 1.3
+ClientHello draws a `handshake_failure` — so it always takes the fallback
+path, where almost nothing else goes. The size then comes down to what
+Certainly asks for. Against OpenSSL's ClientHello the same server answers with
+57 bytes, because OpenSSL offers `ec_point_formats` and `renegotiation_info`
+and it echoes both:
+
+```
+02 00 00 35 03 03 <32-byte random> 00 c0 2f 00
+00 0d ff 01 00 01 00 00 0b 00 04 03 00 01 02
+```
+
+That is 42 bytes of hello, a 2-byte extensions length and 13 bytes of
+extensions. Certainly's ClientHello offers neither extension, so the server
+has nothing to put in the block and omits it: 57 − 15 = 42, one byte under the
+gate. A server that echoes anything at all clears 44 and was never affected,
+which is why this survived every other host.
+
+### How it was found
+
+Not by reading. `TLS 1` in the log was one of seventeen `BR_ERR_BAD_PARAM`
+sites and three rounds of inference had not narrowed it. §24 made those sites
+answer `0x3000 | __LINE__`; the next log said `TLS 0x3319 1.3`, and
+`0x319` is line 793. The line-numbered codes stay, because the next one of
+these should cost one build rather than four.

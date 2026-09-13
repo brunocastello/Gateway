@@ -785,11 +785,21 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
     uint16_t negotiated_version = 0;
 
     /*
-     * Minimum ServerHello size:
+     * Minimum ServerHello size (Gateway patch, PATCHES.md §25):
      * 4 (hs header) + 2 (version) + 32 (random) + 1 (session_id_len) +
-     * 2 (cipher suite) + 1 (compression) + 2 (extensions length) = 44
+     * 2 (cipher suite) + 1 (compression) = 42.
+     *
+     * This read 44, counting a 2-byte extensions length as mandatory. It is
+     * not. RFC 5246 7.4.1.3 makes the extensions block optional in a TLS 1.2
+     * ServerHello -- its presence is detected by whether any bytes follow
+     * compression_method -- so a server with nothing to say sends 42 bytes
+     * and stops. TLS 1.3 does require extensions, but a 1.3 server is not
+     * who sends this: the whole point of parsing a short hello is to
+     * recognise a 1.2 one and hand over. The check below, "no extensions at
+     * all -- this is a TLS 1.2 ServerHello", was unreachable for exactly the
+     * servers it was written for.
      */
-    if (msg_len < 44) {
+    if (msg_len < 42) {
         hs->error = TLS13_FAIL_AT;
         return kTLS13_Error;
     }
