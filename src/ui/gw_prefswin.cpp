@@ -63,8 +63,8 @@ const short kPaneRight   = kBoxRight - 14;
  */
 const short kEntryLeft   = kPaneLeft + 132;
 const short kEntryWidth  = 210;
-const short kEntryHeight = 19;
-const short kRowHeight   = 23;
+const short kEntryHeight = 22;
+const short kRowHeight   = 26;
 const short kHintHeight  = 13;
 const short kListHeight  = 84;
 const short kButtonW     = 74;
@@ -316,6 +316,22 @@ void PrefsWindow::DropPane()
  * control panel labels its fields with. Right-aligned against the field
  * column for a field's own label, left for a hint.
  */
+/*
+ * The small system font, which is what the Internet control panel sets on
+ * every control in it. Without it a control draws in the system font at 12
+ * point, which is taller than the rows and is why the entry field's text was
+ * cut off at the bottom.
+ */
+void SmallFont(ControlHandle c)
+{
+    ControlFontStyleRec style;
+
+    if (c == 0) return;
+    style.flags = kControlUseFontMask;
+    style.font = kControlFontSmallSystemFont;
+    SetControlFontStyle(c, &style);
+}
+
 ControlHandle MakeLabel(WindowPtr w, const Rect *r, const char *text,
                         SInt16 just)
 {
@@ -367,18 +383,12 @@ void PrefsWindow::BuildPane(int group)
 
         switch (f[i].kind) {
         case kGWFieldFlag: {
-            ControlFontStyleRec style;
-
             SetRect(&r, kPaneLeft, v, kPaneRight, (short)(v + 18));
             ToPascal(f[i].label, s);
             row->ctl = NewControl(mWindow, &r, s, true,
                                   mValue[i][0] == '1' ? 1 : 0, 0, 1,
                                   kControlCheckBoxProc, 0);
-            if (row->ctl != 0) {
-                style.flags = kControlUseFontMask;
-                style.font = kControlFontSmallSystemFont;
-                SetControlFontStyle(row->ctl, &style);
-            }
+            SmallFont(row->ctl);
             break;
         }
 
@@ -419,7 +429,10 @@ void PrefsWindow::BuildPane(int group)
                 ToPascal("", s);
                 row->ctl = NewControl(mWindow, &r, s, true, chosen, id, 0,
                                       kControlPopupButtonProc, 0);
-                if (row->ctl != 0) SetControlValue(row->ctl, chosen);
+                if (row->ctl != 0) {
+                    SetControlValue(row->ctl, chosen);
+                    SmallFont(row->ctl);
+                }
             }
             break;
         }
@@ -435,6 +448,7 @@ void PrefsWindow::BuildPane(int group)
             row->ctl = NewControl(mWindow, &r, s, true, 0, 0, 0,
                                   kControlEditTextProc, 0);
             SetText(row->ctl, mList);
+            SmallFont(row->ctl);
 
             SetRect(&r, (short)(kPaneRight - kScrollW), (short)(v + 16),
                     kPaneRight, (short)(v + 16 + kListHeight));
@@ -457,6 +471,7 @@ void PrefsWindow::BuildPane(int group)
                                       ? kControlEditTextPasswordProc
                                       : kControlEditTextProc, 0);
             SetText(row->ctl, mValue[i]);
+            SmallFont(row->ctl);
             break;
         }
 
@@ -584,7 +599,10 @@ bool PrefsWindow::Open()
         ToPascal("", s);
         mGroupPopup = NewControl(mWindow, &r, s, true, 1, kGroupMenuID, 0,
                                  kControlPopupButtonProc, 0);
-        if (mGroupPopup != 0) SetControlValue(mGroupPopup, 1);
+        if (mGroupPopup != 0) {
+            SetControlValue(mGroupPopup, 1);
+            SmallFont(mGroupPopup);
+        }
 
         SetRect(&r, 0, 0, kButtonW, kButtonH);
         ToPascal("Save", s);
@@ -593,6 +611,8 @@ bool PrefsWindow::Open()
         ToPascal("Revert", s);
         mRevert = NewControl(mWindow, &r, s, true, 0, 0, 1,
                              kControlPushButtonProc, 0);
+        SmallFont(mSave);
+        SmallFont(mRevert);
         /* The system's own default ring, not one drawn round the button. */
         if (mSave != 0) {
             Boolean on = true;
