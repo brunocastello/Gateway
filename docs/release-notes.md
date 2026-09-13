@@ -44,6 +44,14 @@ A hello that genuinely asks for SSL 2.0 still fails, and so does one asking for 
 
 **This has not been run against a real browser.** The conversion is tested on the host and reasoned through against RFC 5246 Appendix E.2, including the transcript hashing that decides whether the last message of the handshake succeeds. Whether a period Internet Explorer completes a handshake through it is exactly what 0.3.4 is for. `third_party/certainly/PATCHES.md` §22 has the detail, including the one change from the original patch that was left out and why.
 
+## Sites without TLS 1.3 now work at all (new in 0.3.4)
+
+Gateway always opens a connection to a site with a TLS 1.3 hello, and falls back to TLS 1.2 when the site has no 1.3. That fallback had never once completed, so a site serving only TLS 1.2 could not be fetched — it failed as a handshake error, a certificate error, or a read failure depending on where it got to, and none of those named the real cause.
+
+Two faults, both needed: Gateway rejected any TLS 1.2 ServerHello that carried no extensions, which is legal and is what a server with nothing to add sends; and once past that, it treated an ordinary outgoing record as evidence that the handshake had restarted, so the first read after the request always failed on a connection with nothing wrong with it. `third_party/certainly/PATCHES.md` §25 and §26 have the detail.
+
+Most of the web hides this, because a host with TLS 1.3 goes near neither. The sites this matters for are the small, hand-run, old-web ones — which are the sites this program exists for. `www.floodgap.com` is the worked example and the one that found both.
+
 ## Typing an https:// URL
 
 With `connect_mitm = 1`, a `CONNECT` **to port 443** is no longer a pipe Gateway stays out of. Any other port stays a raw tunnel, because nothing obliges a `CONNECT` to be a TLS one — `git`, ssh through a proxy and anything else that only wants bytes moved keep working exactly as before. Gateway answers it, presents a certificate it made for that host, and speaks TLS 1.0 to the browser while speaking TLS 1.3 to the site.
