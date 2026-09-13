@@ -290,7 +290,7 @@
  */
 #ifndef BR_SSE2
 #if (BR_i386 || BR_amd64) && (BR_GCC_4_4 || BR_CLANG_3_7 || BR_MSC_2005)
-#define BR_SSE2   1
+//#define BR_SSE2   1
 #endif
 #endif
 
