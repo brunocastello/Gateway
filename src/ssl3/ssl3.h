@@ -43,10 +43,14 @@ void ssl3_phash(void *dst, size_t len,
 	const unsigned char *seed, size_t seed_len);
 
 /*
- * SSL 3.0 MAC. Returns 36 bytes (16 MD5 + 20 SHA-1).
- * The secret is NOT used in the hash chain (it is used in key derivation only).
+ * SSL 3.0 MAC (RFC 6101, section 5.2.3) with the negotiated hash:
+ *   MAC = HASH(secret || pad2 || HASH(secret || pad1
+ *          || seq || type || len || data))
+ * with 48-byte pads for MD5 and 40-byte pads for SHA-1. Writes exactly
+ * the hash output length (16 for MD5, 20 for SHA-1) to mac.
  */
-void ssl3_mac(const void *secret, size_t secret_len,
+void ssl3_mac(const br_hash_class *hash,
+	const void *secret, size_t secret_len,
 	uint64_t seq, unsigned char type, unsigned char *len,
 	const unsigned char *data, size_t data_len,
 	unsigned char *mac);

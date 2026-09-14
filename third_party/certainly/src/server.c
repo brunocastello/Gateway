@@ -166,21 +166,28 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
         } else {
             s->state = kMacTLS_Error;
             s->error = kMacTLS_ErrHandshake;
-            if (err >= BR_ERR_SEND_FATAL_ALERT) {
-                char suites[192];
+            {
+                char suites[256];
                 size_t pos = 0;
                 unsigned i;
                 suites[0] = '\0';
-                for (i = 0; i < s->sc.client_suites_num && pos < sizeof(suites)-6; i++) {
-                    int n = snprintf(suites + pos, sizeof(suites) - pos, "%s%04x",
-                        (i ? "," : ""), s->sc.client_suites[i][1] ? s->sc.client_suites[i][1] : s->sc.client_suites[i][0]);
+                for (i = 0; i < s->sc.client_suites_num && pos < sizeof(suites)-12; i++) {
+                    int n = snprintf(suites + pos, sizeof(suites) - pos, "%s%04x:%04x",
+                        (i ? "," : ""), s->sc.client_suites[i][0], s->sc.client_suites[i][1]);
                     if (n < 0) break;
                     pos += (size_t)n;
                 }
                 if (s->sc.client_suites_num == 0)
                     snprintf(suites, sizeof(suites), "(none)");
-                gw_log("MITM handshake failed: BearSSL %d (alert %d), client version %04x, %u suite(s) [%s]",
-                    err, err - BR_ERR_SEND_FATAL_ALERT, s->sc.client_max_version, s->sc.client_suites_num, suites);
+                if (err >= BR_ERR_SEND_FATAL_ALERT) {
+                gw_log("MITM handshake failed: BearSSL %d (alert %d), client version %04x, %u suite(s) [%s], chosen %04x/%04x",
+                    err, err - BR_ERR_SEND_FATAL_ALERT, s->sc.client_max_version, s->sc.client_suites_num, suites,
+                    s->sc.eng.session.cipher_suite, s->sc.eng.session.version);
+                } else {
+                gw_log("MITM handshake failed: BearSSL %d, client version %04x, %u suite(s) [%s], chosen %04x/%04x",
+                    err, s->sc.client_max_version, s->sc.client_suites_num, suites,
+                    s->sc.eng.session.cipher_suite, s->sc.eng.session.version);
+                }
                 if (s->sc.client_suites_num == 0 && s->sc.eng.hbuf_in && s->sc.eng.hlen_in >= 6) {
                     char raw[193];
                     size_t dump = s->sc.eng.hlen_in > 64 ? 64 : s->sc.eng.hlen_in;
@@ -192,8 +199,6 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
                     }
                     gw_log("  ClientHello raw %u bytes: %s", (unsigned)s->sc.eng.hlen_in, raw);
                 }
-            } else {
-                gw_log("MITM handshake failed: BearSSL %d, client version %04x", err, s->sc.client_max_version);
             }
         }
         return s->state;

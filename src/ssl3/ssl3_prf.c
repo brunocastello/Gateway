@@ -24,7 +24,7 @@ ssl3_phash(void *dst, size_t len,
 	const unsigned char *seed, size_t seed_len)
 {
 	unsigned char *buf = (unsigned char *)dst;
-	unsigned char A[64];
+	unsigned char A[128];
 	unsigned char tmp[128];
 	unsigned char hash_out[64];
 	size_t hlen;

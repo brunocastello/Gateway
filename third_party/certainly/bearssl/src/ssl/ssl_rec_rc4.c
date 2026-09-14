@@ -92,7 +92,7 @@ rc4_in_decrypt(const br_sslrec_in_class **ctx,
 	unsigned char len_buf[2];
 	len_buf[0] = (plain_len >> 8) & 0xFF;
 	len_buf[1] = plain_len & 0xFF;
-	ssl3_mac(cc->mac_key, mac_len, cc->seq,
+	ssl3_mac(cc->hash, cc->mac_key, mac_len, cc->seq,
 		(unsigned char)record_type, len_buf,
 		data, plain_len, mac);
 
@@ -130,7 +130,7 @@ rc4_out_encrypt(const br_sslrec_out_class **ctx,
 
 	len_buf[0] = (plain_len >> 8) & 0xFF;
 	len_buf[1] = plain_len & 0xFF;
-	ssl3_mac(cc->mac_key, mac_len, cc->seq,
+	ssl3_mac(cc->hash, cc->mac_key, mac_len, cc->seq,
 		(unsigned char)record_type, len_buf,
 		plain, plain_len, mac);
 

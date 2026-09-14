@@ -76,33 +76,6 @@ ssl3_finished(const br_ssl_engine_context *cc,
 	return 0;
 }
 
-static void
-ssl3_compute_record_mac(const br_ssl_engine_context *cc,
-	unsigned char *buf, size_t *buf_len,
-	int is_outgoing)
-{
-	unsigned char mac[SSL3_MAC_LEN];
-	unsigned char len_buf[2];
-	uint64_t seq = 0;
-	unsigned char type;
-	size_t data_len;
-	const unsigned char *data;
-
-	(void)cc;
-	(void)is_outgoing;
-
-	type = buf[0];
-	len_buf[0] = buf[3];
-	len_buf[1] = buf[4];
-	data_len = ((size_t)buf[3] << 8) | (size_t)buf[4];
-	data = buf + SSL3_HDR_LEN;
-
-	ssl3_mac(NULL, 0, seq, type, len_buf, data, data_len, mac);
-
-	memcpy(buf + SSL3_HDR_LEN + data_len, mac, SSL3_MAC_LEN);
-	*buf_len = SSL3_HDR_LEN + data_len + SSL3_MAC_LEN;
-}
-
 void
 ssl3_server_init(br_ssl_server_context *sc)
 {
@@ -124,8 +97,8 @@ compute_key_block_ssl3(br_ssl_engine_context *cc,
 	unsigned char *kb, size_t kb_len)
 {
 	br_tls_prf_seed_chunk seed[2] = {
-		{ cc->client_random, sizeof cc->client_random },
-		{ cc->server_random, sizeof cc->server_random }
+		{ cc->server_random, sizeof cc->server_random },
+		{ cc->client_random, sizeof cc->client_random }
 	};
 	ssl3_prf(kb, kb_len, cc->session.master_secret,
 		sizeof cc->session.master_secret, "key expansion", 2, seed);
@@ -147,8 +120,8 @@ br_ssl_engine_switch_rc4_in(br_ssl_engine_context *cc,
 	compute_key_block_ssl3(cc, kb, kb_len);
 
 	if (mac_id == br_md5_ID) {
-	hash = &br_md5_vtable;
-	rc4_hash = &br_md5_vtable;
+		hash = &br_md5_vtable;
+		rc4_hash = &br_md5_vtable;
 	} else {
 		hash = &br_sha1_vtable;
 		rc4_hash = &br_sha1_vtable;
@@ -187,8 +160,8 @@ br_ssl_engine_switch_rc4_out(br_ssl_engine_context *cc,
 	compute_key_block_ssl3(cc, kb, kb_len);
 
 	if (mac_id == br_md5_ID) {
-	hash = &br_md5_vtable;
-	rc4_hash = &br_md5_vtable;
+		hash = &br_md5_vtable;
+		rc4_hash = &br_md5_vtable;
 	} else {
 		hash = &br_sha1_vtable;
 		rc4_hash = &br_sha1_vtable;

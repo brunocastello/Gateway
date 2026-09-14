@@ -1,15 +1,18 @@
 /*
- * ssl3_mac.c — SSL 3.0 MAC implementation.
+ * ssl3_mac.c — SSL 3.0 MAC implementation (RFC 6101, section 5.2.3).
  *
- * SSL 3.0 MAC (RFC 6101, section 3) is defined as:
- *   MAC_hash(seq, type, len, data) =
- *     MD5(pad1 || hash(pad2 || seq || type || len || data))
- *     || SHA1(pad1 || hash(pad2 || seq || type || len || data))
- * where pad1 = 0x36 repeated 48 bytes, pad2 = 0x5C repeated 48 bytes.
- * The secret is NOT part of the hash chain (it is used in key
- * derivation only). This is fundamentally different from HMAC.
+ *   MAC_hash(secret, seq, type, len, data) =
+ *     HASH(secret || pad2 || HASH(secret || pad1
+ *          || seq || type || len || data))
  *
- * The output is 16 + 20 = 36 bytes.
+ * where HASH is MD5 (16-byte output) or SHA-1 (20-byte output) according
+ * to the cipher suite, pad1 is 0x36 repeated 48 bytes for MD5 (40 for
+ * SHA-1), and pad2 is 0x5C repeated likewise. This is fundamentally
+ * different from HMAC (the secret prefixes both hashes, and the pads
+ * sit between secret and data rather than being XORed into a key).
+ *
+ * Only the negotiated hash is computed; exactly its output length is
+ * written to mac.
  */
 
 #include "ssl3.h"
@@ -17,78 +20,69 @@
 
 #include <string.h>
 
-static const unsigned char pad1[48] = {
-	0x36,0x36,0x36,0x36,0x36,0x36,0x36,0x36,
-	0x36,0x36,0x36,0x36,0x36,0x36,0x36,0x36,
-	0x36,0x36,0x36,0x36,0x36,0x36,0x36,0x36,
-	0x36,0x36,0x36,0x36,0x36,0x36,0x36,0x36,
-	0x36,0x36,0x36,0x36,0x36,0x36,0x36,0x36,
-	0x36,0x36,0x36,0x36,0x36,0x36,0x36,0x36,
-};
-
-static const unsigned char pad2[48] = {
-	0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,
-	0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,
-	0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,
-	0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,
-	0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,0x5C,
-};
-
 void
-ssl3_mac(const void *secret, size_t secret_len,
+ssl3_mac(const br_hash_class *hash,
+	const void *secret, size_t secret_len,
 	uint64_t seq, unsigned char type, unsigned char *len,
 	const unsigned char *data, size_t data_len,
 	unsigned char *mac)
 {
-	unsigned char len_buf[2];
 	unsigned char seq_buf[8];
-	unsigned char inner_hash[64];
-	size_t hlen;
+	unsigned char inner[20];
+	unsigned char pad[48];
+	size_t pad_len, hlen, i;
 	br_md5_context md5_ctx;
 	br_sha1_context sha1_ctx;
-	size_t i;
+	int is_md5 = (hash == &br_md5_vtable);
 
-	(void)secret;
-	(void)secret_len;
-
-	/* Encode length as 2-byte big-endian */
-	len_buf[0] = len[0];
-	len_buf[1] = len[1];
+	if (is_md5) {
+		pad_len = 48;
+		hlen = 16;
+	} else {
+		pad_len = 40;
+		hlen = 20;
+	}
 
 	/* Encode sequence as 8-byte big-endian */
 	for (i = 0; i < 8; i++) {
-		seq_buf[i] = (seq >> (56 - 8 * i)) & 0xFF;
+		seq_buf[i] = (unsigned char)((seq >> (56 - 8 * i)) & 0xFF);
 	}
 
-	/* Inner hash: hash(pad2 || seq || type || len || data) */
-	br_md5_init(&md5_ctx);
-	br_md5_update(&md5_ctx, pad2, 48);
-	br_md5_update(&md5_ctx, seq_buf, 8);
-	br_md5_update(&md5_ctx, &type, 1);
-	br_md5_update(&md5_ctx, len_buf, 2);
-	br_md5_update(&md5_ctx, data, data_len);
-	br_md5_out(&md5_ctx, inner_hash);
-	hlen = br_digest_size(&br_md5_vtable);
+	/* inner = HASH(secret || pad1 || seq || type || len || data) */
+	memset(pad, 0x36, pad_len);
+	if (is_md5) {
+		br_md5_init(&md5_ctx);
+		br_md5_update(&md5_ctx, secret, secret_len);
+		br_md5_update(&md5_ctx, pad, pad_len);
+		br_md5_update(&md5_ctx, seq_buf, 8);
+		br_md5_update(&md5_ctx, &type, 1);
+		br_md5_update(&md5_ctx, len, 2);
+		br_md5_update(&md5_ctx, data, data_len);
+		br_md5_out(&md5_ctx, inner);
+	} else {
+		br_sha1_init(&sha1_ctx);
+		br_sha1_update(&sha1_ctx, secret, secret_len);
+		br_sha1_update(&sha1_ctx, pad, pad_len);
+		br_sha1_update(&sha1_ctx, seq_buf, 8);
+		br_sha1_update(&sha1_ctx, &type, 1);
+		br_sha1_update(&sha1_ctx, len, 2);
+		br_sha1_update(&sha1_ctx, data, data_len);
+		br_sha1_out(&sha1_ctx, inner);
+	}
 
-	/* Outer hash: MD5(pad1 || inner_hash) */
-	br_md5_init(&md5_ctx);
-	br_md5_update(&md5_ctx, pad1, 48);
-	br_md5_update(&md5_ctx, inner_hash, hlen);
-	br_md5_out(&md5_ctx, mac);
-
-	/* Inner hash: SHA1(pad2 || seq || type || len || data) */
-	br_sha1_init(&sha1_ctx);
-	br_sha1_update(&sha1_ctx, pad2, 48);
-	br_sha1_update(&sha1_ctx, seq_buf, 8);
-	br_sha1_update(&sha1_ctx, &type, 1);
-	br_sha1_update(&sha1_ctx, len_buf, 2);
-	br_sha1_update(&sha1_ctx, data, data_len);
-	br_sha1_out(&sha1_ctx, inner_hash);
-	hlen = br_digest_size(&br_sha1_vtable);
-
-	/* Outer hash: SHA1(pad1 || inner_hash) */
-	br_sha1_init(&sha1_ctx);
-	br_sha1_update(&sha1_ctx, pad1, 48);
-	br_sha1_update(&sha1_ctx, inner_hash, hlen);
-	br_sha1_out(&sha1_ctx, mac + 16);
+	/* mac = HASH(secret || pad2 || inner) */
+	memset(pad, 0x5C, pad_len);
+	if (is_md5) {
+		br_md5_init(&md5_ctx);
+		br_md5_update(&md5_ctx, secret, secret_len);
+		br_md5_update(&md5_ctx, pad, pad_len);
+		br_md5_update(&md5_ctx, inner, hlen);
+		br_md5_out(&md5_ctx, mac);
+	} else {
+		br_sha1_init(&sha1_ctx);
+		br_sha1_update(&sha1_ctx, secret, secret_len);
+		br_sha1_update(&sha1_ctx, pad, pad_len);
+		br_sha1_update(&sha1_ctx, inner, hlen);
+		br_sha1_out(&sha1_ctx, mac);
+	}
 }
