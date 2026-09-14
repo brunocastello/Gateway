@@ -186,29 +186,6 @@ int GWConfig_Set(const char *key, const char *value)
     return 1;
 }
 
-int GWConfig_SetList(const char *key, const char *const *values, int count)
-{
-    static char updated[GW_PREFS_MAX];
-    size_t n;
-
-    if (!sLoaded) return 0;
-
-    n = gw_prefs_set_list(sText, (size_t)sLen, key, values, count,
-                          updated, sizeof(updated));
-    if (n == 0) {
-        gw_log("cannot save %s: prefs file would exceed %d bytes",
-               key, (int)GW_PREFS_MAX);
-        return 0;
-    }
-
-    if (!GWPlat_WritePrefs(updated, (long)n)) return 0;
-
-    memcpy(sText, updated, n);
-    sLen = (long)n;
-    sText[sLen] = '\0';
-    return 1;
-}
-
 int GWConfig_GetNth(const char *key, int n, char *out, size_t cap)
 {
     if (cap) out[0] = '\0';

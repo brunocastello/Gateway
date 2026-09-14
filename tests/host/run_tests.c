@@ -1363,50 +1363,6 @@ static void test_prefs_list(void)
 
 /* ------------------------------------------------------------------ */
 
-static void test_prefs_list_write(void)
-{
-    static const char text[] =
-        "# the hosts fetched live\n"
-        "wayback_live = old.example\n"
-        "wayback_live = gone.example\n"
-        "http_port = 8765\n";
-    static const char *vals[] = { "frogfind.com", "68k.news", "floodgap.com" };
-    char out[1024];
-    size_t n;
-
-    printf("gw_prefs_set_list\n");
-
-    n = gw_prefs_set_list(text, sizeof(text) - 1, "wayback_live",
-                          vals, 3, out, sizeof(out));
-    check(n > 0 && n < sizeof(out), "the list is written");
-    out[n] = '\0';
-    check_str(out,
-        "# the hosts fetched live\n"
-        "wayback_live = frogfind.com\n"
-        "wayback_live = 68k.news\n"
-        "wayback_live = floodgap.com\n"
-        "http_port = 8765\n",
-        "every old entry is replaced, in place, and the comment stays");
-
-    /* An empty list removes the key and nothing else. */
-    n = gw_prefs_set_list(text, sizeof(text) - 1, "wayback_live",
-                          vals, 0, out, sizeof(out));
-    out[n] = '\0';
-    check_str(out, "# the hosts fetched live\nhttp_port = 8765\n",
-              "an empty list removes every entry");
-
-    /* A key that is not there yet is appended. */
-    n = gw_prefs_set_list("http_port = 8765\n", 17, "wayback_live",
-                          vals, 1, out, sizeof(out));
-    out[n] = '\0';
-    check_str(out, "http_port = 8765\nwayback_live = frogfind.com\n",
-              "an absent key is appended");
-
-    check(gw_prefs_set_list(text, sizeof(text) - 1, "wayback_live",
-                            vals, 3, out, 20) == 0,
-          "a buffer too small writes nothing rather than half a file");
-}
-
 int main(void)
 {
     test_util();
@@ -1425,7 +1381,6 @@ int main(void)
     test_x509write();
     test_host_match();
     test_prefs_list();
-    test_prefs_list_write();
     test_pac();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);
