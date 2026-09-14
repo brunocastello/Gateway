@@ -26,9 +26,11 @@
 #include "certainly_internal.h"
 
 #include <string.h>
+#include <stdio.h>
 
 #include <bearssl.h>
 #include "../../src/ssl3/ssl3.h"
+#include "../../src/portable/gw_log.h"
 
 struct MacTLS_Server {
     MacTLS_State           state;
@@ -138,6 +140,24 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
         } else {
             s->state = kMacTLS_Error;
             s->error = kMacTLS_ErrHandshake;
+            if (err >= BR_ERR_SEND_FATAL_ALERT) {
+                char suites[192];
+                size_t pos = 0;
+                unsigned i;
+                suites[0] = '\0';
+                for (i = 0; i < s->sc.client_suites_num && pos < sizeof(suites)-6; i++) {
+                    int n = snprintf(suites + pos, sizeof(suites) - pos, "%s%04x",
+                        (i ? "," : ""), s->sc.client_suites[i][1] ? s->sc.client_suites[i][1] : s->sc.client_suites[i][0]);
+                    if (n < 0) break;
+                    pos += (size_t)n;
+                }
+                if (s->sc.client_suites_num == 0)
+                    snprintf(suites, sizeof(suites), "(none)");
+                gw_log("MITM handshake failed: BearSSL %d (alert %d), client version %04x, %u suite(s) [%s]",
+                    err, err - BR_ERR_SEND_FATAL_ALERT, s->sc.client_max_version, s->sc.client_suites_num, suites);
+            } else {
+                gw_log("MITM handshake failed: BearSSL %d, client version %04x", err, s->sc.client_max_version);
+            }
         }
         return s->state;
     }
