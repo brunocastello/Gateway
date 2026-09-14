@@ -1,86 +1,70 @@
 /*
- * gateway_settings.r - Settings window resources for Gateway.
+ * gateway_settings.r - the settings window's menus.
  *
- * Written as raw data blocks (no RIncludes) so it survives both the Universal
- * and Multiversal toolchain arrangements.  Follows Mac OS 9 Platinum HIG:
- *   - Window procID = movableDBoxProc (4) with zoom box
- *   - Pop-up button for section navigation
- *   - Standard controls: checkboxes, edit fields, pop-ups, text area with scroll bar
- *   - Geneva 9 for labels, Monaco 9 for the wayback live list text area
- *   - OK / Cancel buttons at bottom right
+ * Written as raw data blocks rather than through "Types.r", for the reason
+ * given at the top of gateway.r: Rez runs against whichever RIncludes are
+ * linked into the toolchain, and this file has to survive both the Universal
+ * and the Multiversal arrangement.
  *
- * Resource IDs:
- *   Window: 129
- *   Strings: 128 (shared with main app)
- *   Icons: 128 (shared)
+ * These are the menus behind the pop-ups in the Settings window. They are the
+ * only resources it needs: the window, its controls and its entry fields are
+ * all built at run time in src/main.cpp. The IDs are 200 and up, clear of the
+ * menu bar's 128 and 129, which stay in the menu list the whole time a pop-up
+ * is inserted.
+ *
+ * MENU layout, from Inside Macintosh: Macintosh Toolbox Essentials 3-142:
+ *
+ *   short  menu ID
+ *   short  placeholder for the width  (0; CalcMenuSize fills it in)
+ *   short  placeholder for the height (0)
+ *   short  resource ID of the menu definition procedure (0 = the standard one)
+ *   short  placeholder (0)
+ *   long   enable flags, bit 0 for the menu and bit n for item n
+ *   pstr   menu title (empty: a pop-up draws its own)
+ *   then, per item: pstr text, then icon, key equivalent, mark and style bytes
+ *   byte   0, ending the list
  */
 
-/* --------------------------------------------------------------- Window */
-
-/*
- * Settings window: movable dialog box with zoom (procID 4).
- * Width 380, height 290 — big enough for all sections.
- */
-data 'WIND' (129, "Gateway Settings", purgeable) {
-    $"00 04"                          /* procID: movableDBoxProc + zoom */
-    $"00 64 00 A8"                   /* bounds: (100,168) to (480,452) */
-    $"FFFF"                           /* window is in background initially*/
-    $"00 00"                          /* no refCon */
+/* Section selector: the four panes of the Settings window. */
+data 'MENU' (200, "Settings sections", purgeable) {
+    $"00C8"                            /* menu ID 200                       */
+    $"0000 0000"                       /* width and height, computed later  */
+    $"0000"                            /* standard menu definition procedure*/
+    $"0000"                            /* placeholder                       */
+    $"FFFFFFFF"                        /* every item enabled                */
+    $"00"                              /* no title                          */
+    $"0B" "Application"    $"00 00 00 00"
+    $"09" "Web Proxy"      $"00 00 00 00"
+    $"0D" "Wayback Proxy"  $"00 00 00 00"
+    $"04" "Mail"           $"00 00 00 00"
+    $"00"
 };
 
-/* --------------------------------------------------------------- Strings */
-
-data 'STR#' (128, purgeable) {
-    $"06"                              /* item count */
-    /* 1: Settings title */
-    $"0D" "Settings for Gateway..."
-    /* 2: Section labels (used in pop-up) */
-    $"0B" "Application"
-    $"09" "Web Proxy"
-    $"0A" "Wayback Proxy"
-    $"04" "Mail"
-    /* 3: OK / Cancel */
-    $"02" "OK"
-    $"06" "Cancel"
+/* follow_redirects. The values written to the prefs file are "auto",
+ * "always" and "never", in this order; src/main.cpp holds that list. */
+data 'MENU' (201, "Follow redirects", purgeable) {
+    $"00C9"                            /* menu ID 201                       */
+    $"0000 0000"
+    $"0000"
+    $"0000"
+    $"FFFFFFFF"
+    $"00"
+    $"09" "Automatic"      $"00 00 00 00"
+    $"06" "Always"         $"00 00 00 00"
+    $"05" "Never"          $"00 00 00 00"
+    $"00"
 };
 
-/* --------------------------------------------------------------- Icon */
-
-data 'ICN#' (128, "Gateway Settings", purgeable) {
-	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
-	$"00 0F F0 00 00 38 1C 00 00 C0 03 00 01 80 01 80"
-	$"03 07 E0 C0 02 1F F8 40 04 3F FC 20 04 7F FE 20"
-	$"08 FF FF 10 08 FF FF 10 08 FF FF 10 08 FF FF 10"
-	$"11 FC 3F 88 11 F9 9F 88 11 FB DF 88 11 FF FF 88"
-	$"11 F0 0F 88 11 F1 8F 88 11 F1 8F 88 11 F1 8F 88"
-	$"11 F0 0F 88 11 FF FF 88 11 FF FF 88 11 FF FF 88"
-	$"40 00 00 02 40 00 00 02 7F FF FF FE 00 00 00 00"
-	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
-	$"00 0F F0 00 00 3F FC 00 00 FF FF 00 01 FF FF 80"
-	$"03 FF FF C0 03 FF FF C0 07 FF FF E0 07 FF FF E0"
-	$"0F FF FF F0 0F FF FF F0 0F FF FF F0 0F FF FF F0"
-	$"1F FF FF F8 1F FF FF F8 1F FF FF F8 1F FF FF F8"
-	$"1F FF FF F8 1F FF FF F8 1F FF FF F8 1F FF FF F8"
-	$"1F FF FF F8 1F FF FF F8 1F FF FF F8 1F FF FF F8"
-	$"7F FF FF FE 7F FF FF FE 7F FF FF FE 00 00 00 00"
-};
-
-/* --------------------------------------------------------------- Menu */
-
-data 'MENU' (129, purgeable) {
-    $"03"                              /* 3 items: Application, Web Proxy, Wayback */
-    /* Item 1: Application (selected by default) */
-    $"0B" "Application"
-    /* Item 2: Web Proxy */
-    $"09" "Web Proxy"
-    /* Item 3: Wayback Proxy */
-    $"0A" "Wayback Proxy"
-};
-
-data 'MENU' (130, purgeable) {
-    $"04"                              /* 4 items: + Mail */
-    $"0B" "Application"
-    $"09" "Web Proxy"
-    $"0A" "Wayback Proxy"
-    $"04" "Mail"
+/* provider: "outlook", "gmail", "custom", in this order. */
+data 'MENU' (202, "Mail provider", purgeable) {
+    $"00CA"                            /* menu ID 202                       */
+    $"0000 0000"
+    $"0000"
+    $"0000"
+    $"FFFFFFFF"
+    $"00"
+    $"07" "Outlook"        $"00 00 00 00"
+    $"05" "Gmail"          $"00 00 00 00"
+    $"06" "Custom"         $"00 00 00 00"
+    $"00"
 };
