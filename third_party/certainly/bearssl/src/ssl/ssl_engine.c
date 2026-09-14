@@ -1265,6 +1265,64 @@ br_ssl_engine_set_suites(br_ssl_engine_context *cc,
 }
 
 /*
+ * Gateway: SSL 3.0 ClientKeyExchange has no length prefix (RFC 6101
+ * section 5.2.2 sends the RSA-encrypted pre-master secret raw), but
+ * the frozen T0 handshake bytecode parses it TLS-style (read16 length
+ * + blob) and dies with LIMIT_EXCEEDED on the first two ciphertext
+ * bytes. Rewrite the message in place before the handshake code sees
+ * it: insert the missing 2-byte length and fix the handshake header,
+ * pre-feed the original bytes to the transcript hash, and skip the
+ * rewritten bytes as they are read (same hash_skip mechanism as the
+ * SSLv2 conversion above).
+ *
+ * This fires at most once per connection, and only when provably safe:
+ * plaintext handshake record, negotiated SSL 3.0 with an RSA RC4 suite,
+ * buffer positioned exactly at a record start holding exactly one
+ * complete ClientKeyExchange message. Anything else (splits, other
+ * messages, other suites) is left untouched to fail as before.
+ * Returns 1 when the message was rewritten (grown by 2 bytes).
+ */
+static int
+ssl3_rewrite_cke(br_ssl_engine_context *cc,
+	unsigned char *hbuf, size_t hlen)
+{
+	unsigned suite = cc->session.cipher_suite;
+	size_t msglen;
+
+	if (cc->incrypt
+		|| cc->record_type_in != BR_SSL_HANDSHAKE
+		|| cc->session.version != BR_SSL30
+		|| (suite != 0x0003 && suite != 0x0004 && suite != 0x0005)
+		|| cc->ixa != 5
+		|| cc->ixc != 0
+		|| hlen < 4
+		|| hbuf[0] != 0x10)
+	{
+		return 0;
+	}
+	msglen = ((size_t)hbuf[1] << 16)
+		| ((size_t)hbuf[2] << 8)
+		| (size_t)hbuf[3];
+	if (msglen < 48 || msglen > 512 || 4 + msglen != hlen) {
+		return 0;
+	}
+	if (cc->ixb + 2 > cc->ibuf_len) {
+		return 0;
+	}
+	br_multihash_update(&cc->mhash, hbuf, 4 + msglen);
+	memmove(hbuf + 6, hbuf + 4, msglen);
+	hbuf[4] = (unsigned char)(msglen >> 8);
+	hbuf[5] = (unsigned char)msglen;
+	msglen += 2;
+	hbuf[1] = (unsigned char)(msglen >> 16);
+	hbuf[2] = (unsigned char)(msglen >> 8);
+	hbuf[3] = (unsigned char)msglen;
+	cc->ixb += 2;
+	cc->hash_skip += 4 + msglen;
+	return 1;
+}
+
+/*
  * Give control to handshake processor. 'action' is 1 for a close,
  * 2 for a renegotiation, or 0 for a jump due to I/O completion.
  */
@@ -1312,6 +1370,12 @@ jump_handshake(br_ssl_engine_context *cc, int action)
 
 		cc->hlen_in = hlen_in;
 		cc->hlen_out = hlen_out;
+		if (cc->hbuf_in != NULL
+			&& ssl3_rewrite_cke(cc, cc->hbuf_in, hlen_in))
+		{
+			hlen_in += 2;
+			cc->hlen_in += 2;
+		}
 		cc->action = action;
 		cc->hsrun(&cc->cpu);
 		if (br_ssl_engine_closed(cc)) {
