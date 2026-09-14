@@ -23,9 +23,9 @@ both can be finished and proven before a single Mac build.
 
 | | Work | Where it is specified | How it is verified |
 |---|---|---|---|
-| **A** | The allow-list moves to one `;`-separated value: a splitter, a writer fix, and **two** consumers moved onto it | §4.3, *What has to change for the allow-list* | `make -C tests/host test` |
-| **B** | `wayback_api` gets a reader, and the behaviour its default selects | §4.3, *wayback_api* | `make -C tests/host test`, then on the Mac |
-| **C** | The window itself, all seven panes | §§2, 3, 4 | on the Mac |
+| **A** | The allow-list moves to one `;`-separated value: a splitter, a writer fix, and **two** consumers moved onto it | §4.4, *What has to change for the allow-list* | §7, then `make -C tests/host test` |
+| **B** | `wayback_api` gets a reader, and the behaviour its default selects | §4.3, *wayback_api* | §7, then on the Mac |
+| **C** | The window itself, all eight panes | §§2, 3, 4 | on the Mac |
 
 ### Why the order matters
 
@@ -59,24 +59,25 @@ tests are not optional.
 ## 1. What it is
 
 One fixed-size window, titled **Gateway Preferences**, with a pop-up at the top
-that switches between seven panes. Only one pane is visible at a time; the
+that switches between eight panes. Only one pane is visible at a time; the
 window does not resize when the pane changes.
 
 The model is the **Mac OS 9 Internet control panel**. That is the reference the
 window is copied from, and where this document gives a number, the number was
 measured off it.
 
-Seven panes, in this order:
+Eight panes, in this order:
 
 | # | Pane | What it holds |
 |---|------|---------------|
 | 1 | Modules | which listeners run, and the session ceiling |
 | 2 | Web proxy | the `:8765` listener |
-| 3 | Wayback | the `:8888` archive listener, including the live-host allow-list |
-| 4 | Mail | the client-facing half of the mail splice |
-| 5 | Mail upstream | the provider-facing half |
-| 6 | OAuth | token endpoint and credentials |
-| 7 | Log | the log window and the log file |
+| 3 | Wayback | the `:8888` listener, and which snapshot it asks for |
+| 4 | Wayback sites | which sites bypass the archive, and how their pages are handled |
+| 5 | Mail | the client-facing half of the mail splice |
+| 6 | Mail upstream | the provider-facing half |
+| 7 | OAuth | token endpoint and credentials |
+| 8 | Log | the log window and the log file |
 
 ---
 
@@ -143,6 +144,47 @@ is available, left-aligned with the **field's** left edge — not the pane's.
 * Fixed size. Pick it from the tallest pane (Wayback) and leave the others with
   space at the bottom; the reference does the same.
 
+### 2.6 How big, and why Wayback is two panes
+
+The window is fixed, so it has to be as tall as its tallest pane. Budget a pane
+from the numbers in §2.1:
+
+| Row | Height |
+|---|---|
+| Entry field row | 25 (19 box + 6) |
+| Pop-up row | 25, so a mixed column lines up |
+| Checkbox row | 20 |
+| Hint line under either | 14 |
+| Allow-list: title, six lines, hint | 14 + 86 + 14 |
+
+Chrome around the pane comes to roughly 140: title bar, the `Settings for:`
+row, the group box insets, the button row and the margins.
+
+**Every Wayback setting on one pane comes to about 585 px tall.** That does not
+fit a 640 × 480 screen, and it is wildly out of proportion to Gateway's own log
+window, which is 520 × 340. Trimming hints does not save it — even with the
+hints cut to the two that carry information the label cannot, it lands near
+477, which still leaves no room for a menu bar.
+
+So Module 3 takes two panes. Split by what the setting governs: **Wayback** is
+the listener and which snapshot to ask for, **Wayback sites** is which sites
+bypass the archive and what happens to the pages that do not. That gives:
+
+| Pane | Content height |
+|---|---|
+| Wayback | ~190 |
+| Wayback sites | ~256 ← the tallest |
+| Web proxy | ~196 |
+| Mail upstream | ~184 |
+| OAuth | ~178 |
+
+**About 460 × 400**, then — comfortably inside 640 × 480, and in scale with the
+rest of the application.
+
+Treat those figures as a budget to check rather than a measurement: they follow
+from §2.1, which is measured, but the chrome and the checkbox pitch are
+estimates. If a pane overruns, the fix is another split, not a taller window.
+
 ---
 
 ## 3. Control behaviour
@@ -160,7 +202,7 @@ is available, left-aligned with the **field's** left edge — not the pane's.
 * Long single-line values (**Scope**, **Refresh token**, **Client ID**) must
   **not** wrap. They are one line in a one-line box; a wrapping field hides its
   own content. The Wayback allow-list is the one exception and wraps on
-  purpose — see §4.3.
+  purpose — see §4.4.
 * Numeric fields accept digits only.
 
 ### Validation, applied on Save
@@ -219,8 +261,12 @@ nothing. Consider a hint to that effect rather than disabling either.
 
 ### 4.3 Wayback
 
-This is the pane that is currently incomplete: **the allow-list is missing**,
-along with three other settings.
+The listener, and which snapshot it asks the archive for. The rest of Module 3
+is on **Wayback sites** (§4.4); the settings did not fit on one pane, and §2.6
+shows the arithmetic.
+
+Module 3 is currently the most incomplete part of the window: **the allow-list
+is missing**, along with three other settings.
 
 Gateway's Module 3 is a port of `richardg867/WaybackProxy`, and CLAUDE.md
 requires the settings URL to stay compatible with it, so every parameter that
@@ -249,12 +295,103 @@ which upstream keeps in a separate whitelist file rather than a parameter.
 | Era (YYYYMMDD) | `wayback_date` | number, 80 px | 20011231 | Also settable from the browser. |
 | Days newer allowed | `wayback_tolerance` | number, 56 px | 730 | 0 accepts any date. |
 | Connections opening at once | `wayback_connects` | number, 56 px | 1 | The archive refuses bursts. |
+| Nearest available snapshot | `wayback_api` | checkbox | 1 | Off asks the archive for the era exactly. |
+
+#### wayback_api
+
+Upstream's definition, which is the one to go by: *use the Wayback Machine
+Availability API to find the closest available snapshot to the desired date,
+instead of directly requesting that date.* Default true.
+
+It is **not** the module's on/off switch. The Wayback proxy is turned off in
+two places already in this specification: **`wayback_enabled`** on the Modules
+pane, which stops the module being initialised at all, and
+**`wayback_port = 0`** on this pane, which keeps the configured port and binds
+no listener.
+
+**What Gateway does today.** It asks the archive for `/web/<era>/<url>`; the
+archive answers with a redirect to whichever capture is nearest; Gateway checks
+that capture against `wayback_tolerance`, follows the hop itself, and rebuilds
+the target as `/web/<stamp>id_/<url>`. That reaches the closest snapshot by
+following a redirect, which is upstream's behaviour with `WAYBACK_API` **off**.
+The API path — the default — is the one that does not exist.
+
+##### Implementing it
+
+**Off (0) is today's behaviour.** Leave that path exactly as it is.
+
+**On (1)** asks first, then fetches:
+
+1. `GET https://archive.org/wayback/available?url=<url>&timestamp=<era>`
+2. Read `available` and `timestamp` out of the reply.
+3. Build `/web/<timestamp>id_/<url>` on `web.archive.org` and fetch that — the
+   same shape the redirect path already constructs, so the rest of the session
+   is unchanged.
+4. If `available` is false or missing, fail with the "no snapshot near the date
+   Gateway is set to" 404 that the tolerance check already serves.
+
+The parts exist:
+
+* **The request.** `GWStream_ConnectTLS(&stream, host, 443)`, exactly as
+  `GWToken_Request` in `src/proxy/gw_token.c` reaches the OAuth endpoint. That
+  is the working pattern for a TLS fetch Gateway makes on its own account
+  rather than on behalf of a client.
+* **The reply.** `gw_json_string()` and `gw_json_number()` in
+  `src/portable/gw_oauth.c`, which the token response already goes through.
+
+##### Two traps
+
+**Do not read `url` out of the response.** The body looks like this:
+
+```json
+{"url":"example.com",
+ "archived_snapshots":{"closest":{"status":"200","available":true,
+   "url":"http://web.archive.org/web/20011025.../http://example.com/",
+   "timestamp":"20011025000000"}}}
+```
+
+There are **two** `url` members: the top-level echo of the query, and the real
+one nested inside `closest`. `gw_json_string` scans flat for the first match of
+a name, so it would return the echo — a value that looks plausible, is not a
+snapshot, and would send the fetch to the wrong place. Read **`timestamp`**
+instead, which appears only inside `closest`, and build the target yourself as
+in step 3. `available` is likewise unique.
+
+**It is an extra TLS handshake per page.** On this hardware that is the
+expensive step, as the note at the top of `src/proxy/gw_httpproxy.c` says.
+Cache the answer per host and era for the life of the session, or the archive
+gets slower for a result the redirect was already producing.
+
+##### Wiring
+
+A flag on the Wayback settings struct, filled from `wayback_api` beside the
+other four in `gw_core.c`, and tested in the archive branch of
+`redirect_should_follow` in `src/proxy/gw_httpproxy.c`.
+
+##### If the API call is more than you want in the first cut
+
+Ship the **setting** mapped onto the mechanism that already exists: on follows
+the archive's redirect to the nearest capture, off asks for `/web/<era>id_/<url>`
+and refuses anything outside `wayback_tolerance`. The observable behaviour is
+close, the preference round-trips through the settings page the way upstream's
+does — which is what CLAUDE.md's compatibility requirement is about — and the
+Availability API can replace the mechanism later without the setting changing
+meaning. What is not acceptable is a checkbox wired to nothing: it would report
+a choice the program does not honour.
+
+### 4.4 Wayback sites
+
+Which sites bypass the archive, and how the pages that do come from it are
+handled. This pane exists because the Wayback settings do not fit on one —
+see §2.6.
+
+| Label | Key | Control | Default | Hint |
+|---|---|---|---|---|
 | GeoCities fix | `wayback_geocities` | checkbox | 1 | Sends geocities.com to oocities.org. |
 | Let the browser keep snapshots | `wayback_cache` | checkbox | 1 | |
 | Serve the settings page | `wayback_settings` | checkbox | 1 | |
 | Charset in Content-Type | `wayback_ct_encoding` | checkbox | 1 | Off strips it; some period browsers choke. |
 | Quick images | `wayback_quick_images` | checkbox | 1 | Accepted for settings-page compatibility; does nothing. |
-| Nearest available snapshot | `wayback_api` | checkbox | 1 | Off asks the archive for the era exactly. See below. |
 | **Fetched live, not archived** | `wayback_live` | **text area**, see below | see below | Separate with `;`. A plain name covers its subdomains. |
 
 #### The allow-list
@@ -367,89 +504,7 @@ at 2000 bytes and say why rather than losing the tail.
 in this file, which is why the stored value must never start with one. Trimming
 empty entries takes care of it; the writer should not emit a leading separator.
 
-#### wayback_api
-
-Upstream's definition, which is the one to go by: *use the Wayback Machine
-Availability API to find the closest available snapshot to the desired date,
-instead of directly requesting that date.* Default true.
-
-It is **not** the module's on/off switch. The Wayback proxy is turned off in
-two places already in this specification: **`wayback_enabled`** on the Modules
-pane, which stops the module being initialised at all, and
-**`wayback_port = 0`** on this pane, which keeps the configured port and binds
-no listener.
-
-**What Gateway does today.** It asks the archive for `/web/<era>/<url>`; the
-archive answers with a redirect to whichever capture is nearest; Gateway checks
-that capture against `wayback_tolerance`, follows the hop itself, and rebuilds
-the target as `/web/<stamp>id_/<url>`. That reaches the closest snapshot by
-following a redirect, which is upstream's behaviour with `WAYBACK_API` **off**.
-The API path — the default — is the one that does not exist.
-
-##### Implementing it
-
-**Off (0) is today's behaviour.** Leave that path exactly as it is.
-
-**On (1)** asks first, then fetches:
-
-1. `GET https://archive.org/wayback/available?url=<url>&timestamp=<era>`
-2. Read `available` and `timestamp` out of the reply.
-3. Build `/web/<timestamp>id_/<url>` on `web.archive.org` and fetch that — the
-   same shape the redirect path already constructs, so the rest of the session
-   is unchanged.
-4. If `available` is false or missing, fail with the "no snapshot near the date
-   Gateway is set to" 404 that the tolerance check already serves.
-
-The parts exist:
-
-* **The request.** `GWStream_ConnectTLS(&stream, host, 443)`, exactly as
-  `GWToken_Request` in `src/proxy/gw_token.c` reaches the OAuth endpoint. That
-  is the working pattern for a TLS fetch Gateway makes on its own account
-  rather than on behalf of a client.
-* **The reply.** `gw_json_string()` and `gw_json_number()` in
-  `src/portable/gw_oauth.c`, which the token response already goes through.
-
-##### Two traps
-
-**Do not read `url` out of the response.** The body looks like this:
-
-```json
-{"url":"example.com",
- "archived_snapshots":{"closest":{"status":"200","available":true,
-   "url":"http://web.archive.org/web/20011025.../http://example.com/",
-   "timestamp":"20011025000000"}}}
-```
-
-There are **two** `url` members: the top-level echo of the query, and the real
-one nested inside `closest`. `gw_json_string` scans flat for the first match of
-a name, so it would return the echo — a value that looks plausible, is not a
-snapshot, and would send the fetch to the wrong place. Read **`timestamp`**
-instead, which appears only inside `closest`, and build the target yourself as
-in step 3. `available` is likewise unique.
-
-**It is an extra TLS handshake per page.** On this hardware that is the
-expensive step, as the note at the top of `src/proxy/gw_httpproxy.c` says.
-Cache the answer per host and era for the life of the session, or the archive
-gets slower for a result the redirect was already producing.
-
-##### Wiring
-
-A flag on the Wayback settings struct, filled from `wayback_api` beside the
-other four in `gw_core.c`, and tested in the archive branch of
-`redirect_should_follow` in `src/proxy/gw_httpproxy.c`.
-
-##### If the API call is more than you want in the first cut
-
-Ship the **setting** mapped onto the mechanism that already exists: on follows
-the archive's redirect to the nearest capture, off asks for `/web/<era>id_/<url>`
-and refuses anything outside `wayback_tolerance`. The observable behaviour is
-close, the preference round-trips through the settings page the way upstream's
-does — which is what CLAUDE.md's compatibility requirement is about — and the
-Availability API can replace the mechanism later without the setting changing
-meaning. What is not acceptable is a checkbox wired to nothing: it would report
-a choice the program does not honour.
-
-### 4.4 Mail
+### 4.5 Mail
 
 | Label | Key | Control | Default | Hint |
 |---|---|---|---|---|
@@ -473,7 +528,7 @@ those panes as the user set them. An explicit value on those panes always wins
 over the provider default. Consider refreshing the two panes' placeholder text
 when the pop-up changes, so the effect is visible.
 
-### 4.5 Mail upstream
+### 4.6 Mail upstream
 
 | Label | Key | Control | Default (Outlook / Gmail) | Hint |
 |---|---|---|---|---|
@@ -490,7 +545,7 @@ any port except 465, where it is **off**. The checkbox should show that
 computed state when the key is unset, and write an explicit `1` or `0` once the
 user touches it.
 
-### 4.6 OAuth
+### 4.7 OAuth
 
 | Label | Key | Control | Default | Hint |
 |---|---|---|---|---|
@@ -510,7 +565,7 @@ Gmail defaults: host `oauth2.googleapis.com`, path `/token`, scope
 Scope and Refresh token are far longer than their boxes. They stay one line and
 scroll horizontally; they must not grow a second line.
 
-### 4.7 Log
+### 4.8 Log
 
 | Label | Key | Control | Default | Hint |
 |---|---|---|---|---|
@@ -541,9 +596,9 @@ Modules        http_enabled  mail_enabled  wayback_enabled  max_sessions
 Web proxy      http_port  rewrite_https  connect_mitm  follow_redirects
                max_body_mb  max_connects
 Wayback        wayback_port  wayback_date  wayback_tolerance  wayback_connects
-               wayback_geocities  wayback_cache  wayback_settings
-               wayback_ct_encoding  wayback_quick_images  wayback_api
-               wayback_live
+               wayback_api
+Wayback sites  wayback_geocities  wayback_cache  wayback_settings
+               wayback_ct_encoding  wayback_quick_images  wayback_live
 Mail           provider  oauth_user  local_password  imap_port  pop_port
                smtp_port
 Mail upstream  imap_host  imap_upstream_port  pop_host  pop_upstream_port
@@ -606,7 +661,91 @@ Do not repeat these:
 
 ---
 
-## 7. Definition of done
+## 7. Host tests to add
+
+`tests/host/run_tests.c`, run by `make -C tests/host test` and by the
+*Host tests (portable code)* workflow. It compiles `src/portable/*.c` on Linux,
+so everything in **A** and most of **B** is provable here before any Mac build.
+Follow the existing style: a `printf` naming the group, then `check(...)` and
+`check_str(...)` lines. The *prefs lists* group already covers the repeated-key
+form against `gw_prefs_get_nth`; keep those as the regression floor and add to
+them.
+
+### The indexed reader, over both storage forms
+
+| # | Given | Expect |
+|---|---|---|
+| 1 | four `wayback_live` lines, one pattern each | indices 0–3 return them in file order; index 4 returns 0 |
+| 2 | `wayback_live = a.com;*.b.com;c.net` | indices 0–2 return the three; index 3 returns 0 |
+| 3 | a `;` line **and** a later plain line | every entry, in file order, across both |
+| 4 | `a.com ; *.b.com ;c.net` | values trimmed, no leading or trailing spaces |
+| 5 | `a.com;;c.net` | the empty entry is skipped and **does not end the walk** — `c.net` is still reachable |
+| 6 | a trailing `;` | no empty final entry |
+| 7 | `# wayback_live = x` | not an entry; a commented line stays commented |
+| 8 | `wayback_live =` with an empty value | contributes nothing, does not end the walk |
+| 9 | `WAYBACK_LIVE = a.com` | found; key matching is case-insensitive, as the parser already is |
+| 10 | an entry longer than `cap` | truncated, NUL-terminated, nothing written past `cap` |
+
+Case 5 is the one worth writing first. The existing `gw_prefs_get_nth` carries a
+comment explaining that an empty entry is not the end of a list, because
+treating it as one silently lost half the list once already. A splitter can
+reintroduce exactly that bug inside a single value.
+
+### The writer dropping stale duplicates
+
+| # | Given | Expect |
+|---|---|---|
+| 11 | a key present three times, set once | exactly one line for it, carrying the new value |
+| 12 | the other keys around it | untouched, in their original order |
+| 13 | a commented `# key = old` line | **left alone** — it is a comment, not a duplicate |
+| 14 | a key present once, set | unchanged behaviour (regression) |
+| 15 | a key absent, set | appended (regression) |
+| 16 | after 11, read it back | index 0 is the new value, index 1 returns 0 |
+
+### The two consumers agreeing
+
+This is the failure §0 warns about, and it is catchable here rather than on a
+Mac. `gw_pac_build` already takes a callback that yields the nth pattern, and
+the *pac* group already exercises it.
+
+| # | Given | Expect |
+|---|---|---|
+| 17 | one prefs text, read through the new accessor | the pattern sequence the proxy would match on and the sequence handed to `gw_pac_build` are identical |
+| 18 | a `;`-separated list | the generated script names every entry, in order |
+| 19 | the same list in repeated-key form | byte-identical script |
+
+Case 19 is the point: the storage form must not be visible in the output.
+
+### wayback_api
+
+The JSON work is portable; the fetch is not, so test the parsing and the URL
+building and leave the transport to the Mac.
+
+| # | Given | Expect |
+|---|---|---|
+| 20 | a real availability body | reading `timestamp` returns the snapshot stamp |
+| 21 | the same body | reading `url` returns the **top-level echo**, not the snapshot — pin the trap so nobody "simplifies" into it later |
+| 22 | `"available":false` | treated as no snapshot |
+| 23 | no `archived_snapshots` member | treated as no snapshot |
+| 24 | a truncated body | no snapshot, no read past the end |
+| 25 | a stamp and a URL | the built target is `/web/<stamp>id_/<url>` |
+
+A body to test against:
+
+```json
+{"url":"example.com",
+ "archived_snapshots":{"closest":{"status":"200","available":true,
+   "url":"http://web.archive.org/web/20011025000000/http://example.com/",
+   "timestamp":"20011025000000"}}}
+```
+
+Case 21 is not a normal test — it asserts behaviour that is *wrong for the
+caller* — so say in the comment why it is there: `gw_json_string` scans flat, a
+future reader will reach for `url`, and this is the line that stops them.
+
+---
+
+## 8. Definition of done
 
 Work through this before calling it finished. The items that have historically
 been missed are the ones below the interface, and they fail silently.
@@ -622,7 +761,7 @@ been missed are the ones below the interface, and they fail silently.
 - [ ] `pac_next_live_host` (`gw_httpproxy.c`) uses it. **Both, or neither.**
 - [ ] The PAC file and the proxy agree: a host on the list is fetched live by
       the proxy *and* routed direct by the generated script.
-- [ ] Host tests cover all of the above and pass on Linux.
+- [ ] The host tests in §7 are written and pass on Linux.
 
 **B — wayback_api, below the interface**
 
@@ -633,7 +772,7 @@ been missed are the ones below the interface, and they fail silently.
 
 **C — the window**
 
-- [ ] Seven panes, every key in §5 present exactly once.
+- [ ] Eight panes, every key in §5 present exactly once.
 - [ ] Entry fields are **19 px** tall and the 1 px frame *is* the box.
 - [ ] Label baselines sit on their field's text baseline.
 - [ ] Small system font everywhere except `Settings for:` and its pop-up.
