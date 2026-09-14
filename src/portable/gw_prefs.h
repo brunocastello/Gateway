@@ -42,6 +42,20 @@ int gw_prefs_get_nth(const char *text, size_t len, const char *key, int n,
 long gw_prefs_get_num(const char *text, size_t len, const char *key, long def);
 
 /*
+ * The nth entry across all occurrences of a key, splitting each value on ';'.
+ *
+ * Walks every occurrence of the key (like gw_prefs_get_nth), but within each
+ * one, splits the value on ';', trims spaces around entries, and skips empty
+ * ones. Returns 1 when the nth entry exists (whatever its value), 0 only
+ * when there is no nth entry.
+ *
+ * This handles both storage forms — repeated keys and one ;-separated value
+ * — so a file mixing the two forms is read correctly.
+ */
+int gw_prefs_get_nth_split(const char *text, size_t len, const char *key,
+                           int n, char *out, size_t cap);
+
+/*
  * Produce a copy of the prefs text with key set to value, writing it into out.
  * An existing setting is rewritten where it stands, keeping its separator and
  * the file's line endings; a new one is appended. Comments, ordering and

@@ -100,6 +100,93 @@ long gw_prefs_get_num(const char *text, size_t len, const char *key, long def)
     return v < 0 ? def : v;
 }
 
+/*
+ * The nth entry across all occurrences of a key, splitting each value on ';'.
+ *
+ * Walks every occurrence of the key (like gw_prefs_get_nth), but within each
+ * one, splits the value on ';', trims spaces around entries, and skips empty
+ * ones. Returns 1 when the nth entry exists (whatever its value), 0 only
+ * when there is no nth entry.
+ *
+ * This handles both storage forms — repeated keys and one ;-separated value
+ * — so a file mixing the two forms is read correctly.
+ */
+int gw_prefs_get_nth_split(const char *text, size_t len, const char *key,
+                           int n, char *out, size_t cap)
+{
+    size_t off = 0;
+    size_t klen = strlen(key);
+    int    seen = 0;   /* index across all entries */
+
+    if (cap) out[0] = '\0';
+
+    while (off < len) {
+        size_t line_end, next, i;
+
+        gw_prefs_line(text, len, off, &line_end, &next);
+
+        /* trim leading blanks */
+        i = off;
+        while (i < line_end && (text[i] == ' ' || text[i] == '\t')) i++;
+
+        if (i < line_end && text[i] != '#' && text[i] != ';') {
+            size_t ke = i;
+            while (ke < line_end && text[ke] != '=' && text[ke] != ':') ke++;
+            if (ke < line_end) {
+                size_t kend = ke;
+                while (kend > i && (text[kend - 1] == ' ' ||
+                                    text[kend - 1] == '\t')) kend--;
+                if (kend - i == klen && gw_strnicmp(text + i, key, klen) == 0) {
+                    /* Found an occurrence: split its value on ';'. */
+                    size_t vs = ke + 1;
+                    while (vs < line_end &&
+                           (text[vs] == ' ' || text[vs] == '\t')) vs++;
+
+                    /* Walk through each ';' separated entry. */
+                    size_t entry_start = vs;
+                    while (1) {
+                        /* Scan forward until we hit ';' or the end of line. */
+                        size_t scan = entry_start;
+                        while (scan < line_end && text[scan] != ';')
+                            scan++;
+
+                        /* Trim trailing spaces from this entry. */
+                        size_t es = entry_start;
+                        while (es < line_end &&
+                               (text[es] == ' ' || text[es] == '\t'))
+                            es++;
+                        size_t ee = scan;
+                        while (ee > es &&
+                               (text[ee - 1] == ' ' ||
+                                text[ee - 1] == '\t'))
+                            ee--;
+
+                        if (ee > es) {
+                            /* Non-empty entry: check if this is our index. */
+                            if (seen++ == n) {
+                                size_t copy_len = ee - es;
+                                if (cap > 0 && copy_len >= cap)
+                                    copy_len = cap - 1;
+                                gw_copy_n(out, cap,
+                                          text + es, copy_len);
+                                return 1;
+                            }
+                        }
+
+                        /* If we hit the end, done. Otherwise skip ';' and start next. */
+                        if (scan == line_end)
+                            break;
+                        vs = scan + 1;
+                        entry_start = vs;
+                    }
+                }
+            }
+        }
+        off = next;
+    }
+    return 0;
+}
+
 /* The line ending the file already uses, so an edit does not mix conventions. */
 static const char *gw_prefs_eol(const char *text, size_t len)
 {
@@ -147,7 +234,9 @@ size_t gw_prefs_set(const char *text, size_t len, const char *key,
         }
 
         if (is_match && !replaced) {
-            /* Rewrite in place, keeping the key exactly as the user typed it. */
+            /* Rewrite in place, keeping the key exactly as the user typed it.
+             * Drop all later occurrences of this key — they are stale copies
+             * that would reappear on the next read. */
             size_t ke = i;
             while (ke < line_end && text[ke] != '=' && text[ke] != ':') ke++;
             if (used + (ke - off) + 2 + vlen + eol_len > cap) return 0;
@@ -160,6 +249,9 @@ size_t gw_prefs_set(const char *text, size_t len, const char *key,
             memcpy(out + used, eol, eol_len);
             used += eol_len;
             replaced = 1;
+        } else if (is_match) {
+            /* A duplicate of the key we already replaced: skip it entirely.
+             * Comments (lines starting with '#' or ';') are left alone. */
         } else {
             size_t n = next - off;
             if (used + n > cap) return 0;

@@ -193,6 +193,19 @@ int GWConfig_GetNth(const char *key, int n, char *out, size_t cap)
     return gw_prefs_get_nth(sText, (size_t)sLen, key, n, out, cap);
 }
 
+/*
+ * The nth entry across all occurrences of a key, splitting each value on ';'.
+ *
+ * Thin wrapper over gw_prefs_get_nth_split that supplies the loaded prefs
+ * text. Used for wayback_live, which is stored as one ;-separated value.
+ */
+int GWConfig_GetNthSplit(const char *key, int n, char *out, size_t cap)
+{
+    if (cap) out[0] = '\0';
+    if (!sLoaded) return 0;
+    return gw_prefs_get_nth_split(sText, (size_t)sLen, key, n, out, cap);
+}
+
 long GWConfig_Num(const char *key, long def)
 {
     if (!sLoaded) return def;

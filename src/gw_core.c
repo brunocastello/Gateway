@@ -138,15 +138,13 @@ int GW_WaybackHostIsLive(const char *host)
     int  i;
 
     /*
-     * The allow-list is the same key repeated, one pattern per line, which
-     * reads far better than one enormous value for the thirty-odd entries
-     * this typically holds.
+     * The allow-list is stored as one ;-separated value (or a file mixing
+     * both forms). Walk entries across all occurrences, splitting on ';'.
      */
     for (i = 0; i < 128; i++) {
-        if (!GWConfig_GetNth("wayback_live", i, pattern, sizeof(pattern)))
+        if (!GWConfig_GetNthSplit("wayback_live", i, pattern,
+                                  sizeof(pattern)))
             break;
-        /* A blank entry is not the end of the list. */
-        if (pattern[0] == '\0') continue;
         if (gw_host_matches(pattern, host)) return 1;
     }
     return 0;
@@ -367,6 +365,7 @@ int GW_Init(void)
     sWaybackSet.geocities    = GWConfig_Num("wayback_geocities", 1) != 0;
     sWaybackSet.quick_images = GWConfig_Num("wayback_quick_images", 1) != 0;
     sWaybackSet.ct_encoding  = GWConfig_Num("wayback_ct_encoding", 1) != 0;
+    sWaybackSet.wayback_api  = GWConfig_Num("wayback_api", 1) != 0;
     sWaybackPort = (int)GWConfig_Num("wayback_port", 8888);
 
     return GW_Start();
