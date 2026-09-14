@@ -114,7 +114,8 @@ is available, left-aligned with the **field's** left edge — not the pane's.
   could not be clicked into, once a focus ring on a field nobody had touched.
 * Long single-line values (**Scope**, **Refresh token**, **Client ID**) must
   **not** wrap. They are one line in a one-line box; a wrapping field hides its
-  own content.
+  own content. The Wayback allow-list is the one exception and wraps on
+  purpose — see §4.3.
 * Numeric fields accept digits only.
 
 ### Validation, applied on Save
@@ -174,7 +175,28 @@ nothing. Consider a hint to that effect rather than disabling either.
 ### 4.3 Wayback
 
 This is the pane that is currently incomplete: **the allow-list is missing**,
-along with four other settings.
+along with three other settings.
+
+Gateway's Module 3 is a port of `richardg867/WaybackProxy`, and CLAUDE.md
+requires the settings URL to stay compatible with it, so every parameter that
+project exposes needs a home here. The mapping:
+
+| Upstream parameter | Upstream default | Gateway key |
+|---|---|---|
+| `LISTEN_PORT` | 8888 | `wayback_port` |
+| `DATE` | 20011025 | `wayback_date` (Gateway defaults to 20011231) |
+| `DATE_TOLERANCE` | 365 | `wayback_tolerance` (Gateway defaults to 730; 0, not `null`, disables) |
+| `GEOCITIES_FIX` | true | `wayback_geocities` |
+| `QUICK_IMAGES` | true | `wayback_quick_images` |
+| `WAYBACK_API` | true | `wayback_api` |
+| `CONTENT_TYPE_ENCODING` | true | `wayback_ct_encoding` |
+| `SETTINGS_PAGE` | true | `wayback_settings` |
+| `SILENT` | true | no Wayback key — Gateway logs through the **Log** pane |
+| `HOST` | blank | no key — CLAUDE.md rule 7 settles binding for every listener |
+
+Gateway adds four of its own that upstream has no equivalent for:
+`wayback_enabled`, `wayback_connects`, `wayback_cache`, and `wayback_live`,
+which upstream keeps in a separate whitelist file rather than a parameter.
 
 | Label | Key | Control | Default | Hint |
 |---|---|---|---|---|
@@ -187,51 +209,110 @@ along with four other settings.
 | Serve the settings page | `wayback_settings` | checkbox | 1 | |
 | Charset in Content-Type | `wayback_ct_encoding` | checkbox | 1 | Off strips it; some period browsers choke. |
 | Quick images | `wayback_quick_images` | checkbox | 1 | Accepted for settings-page compatibility; does nothing. |
-| **Fetched live, not archived** | `wayback_live` | **list box**, see below | see below | One host per line. A plain name covers its subdomains. |
+| Nearest available snapshot | `wayback_api` | checkbox | 1 | Off asks the archive for the era exactly. See below. |
+| **Fetched live, not archived** | `wayback_live` | **text area**, see below | see below | Separate with `;`. A plain name covers its subdomains. |
 
 #### The allow-list
 
-`wayback_live` is a **repeated key**: one line in the preferences file per
-pattern, the same key each time. It is the list of hosts that go to the live
-web instead of the archive, and it is the single most-edited setting in this
-module — it is why the pane exists.
+`wayback_live` is the list of hosts that go to the live web instead of the
+archive. It is the most-edited setting in this module and the reason the pane
+needs to exist.
 
-* Control: a multi-line text area with a **scroll bar**, roughly 6 lines tall
-  and the full width of the pane's field column.
-* Content: one glob pattern per line, separated by `\r` (Mac line endings).
-* It must not wrap. A pattern is one line.
-* The scroll bar must be the **same height and top as the text area** and sit
-  immediately to its right. It has been misaligned, drawn over the area's own
-  title, and non-functional in three separate rounds — it needs to actually
-  scroll.
-* Blank lines are dropped on save.
-* Patterns are globs: `frogfind.com` covers the host and its subdomains,
+**Control.** A multi-line text area with a scroll bar, about six lines tall and
+the full width of the field column, holding the patterns **separated by `;`** —
+the way a period browser's "no proxy for" box worked:
+
+```
+frogfind.com;*.frogfind.com;68k.news;*.68k.news;floodgap.com
+```
+
+* This is the one field in the window that **wraps**. Every other field is one
+  line and must not wrap; this one soft-wraps at the box's right edge so a long
+  list stays visible.
+* The scroll bar sits immediately to the right of the text area, with the
+  **same top and the same height**. It has been misaligned, drawn over the
+  area's own title, and non-functional in three separate rounds. It has to
+  actually scroll.
+* Accept newlines as separators on input as well, so a pasted one-per-line list
+  works, and normalise them to `;` on save.
+* Drop empty entries and surrounding spaces on save. The value must never
+  begin with `;` — see the format note below.
+* Patterns are globs. `frogfind.com` covers the host and its subdomains;
   `*.frogfind.com` covers subdomains explicitly.
 
-Reading the list needs an indexed getter over the repeated key. **Writing it
-needs a repeated-key writer that does not currently exist** — the one that did
-was removed in `fa64f91` as unused. It has to come back, or the list is
-read-only and the field should be disabled rather than silently discarding
-edits. Do not ship a control that appears to save and does not.
-
-A sensible default list, if the key is absent:
+**Storage.** One line, one value:
 
 ```
-frogfind.com
-*.frogfind.com
-68k.news
-*.68k.news
-floodgap.com
-*.floodgap.com
-mail.hotmail.com
+wayback_live = frogfind.com;*.frogfind.com;68k.news;*.68k.news
 ```
 
-#### Designed but not built
+This needs no new preferences syntax. `gw_prefs_set` already writes a single
+value and `gw_prefs_get` already reads one, so the text area's contents and the
+stored value are the same string and nothing has to be assembled or taken
+apart on the way through.
 
-`wayback_api` — "use the availability API to find the nearest snapshot",
-default 1 — appears in `docs/module3-wayback.md` and has no reader in the code.
-Either implement it or leave it off this pane; do not add a control that writes
-a key nothing reads.
+A continuation form — a second `+wayback_live` line appending to the first —
+was considered and is not worth it. It would need a new rule in the parser, a
+new writer to emit it, and a back-compatibility path for the repeated keys that
+already exist, and it would buy only shorter lines in a file nobody has to
+read. The single value gets the same result with code that is already written
+and already tested.
+
+**Reading, and old files.** Existing preferences files write the list as a
+repeated key, one `wayback_live` line per pattern, and the indexed reader for
+that already exists. Keep it: read occurrence 0 and split it on `;`, then keep
+walking the later occurrences and take each whole line as one more entry.
+A file written either way then works, and saving once collapses an old file
+into the single-line form.
+
+**One change to the preferences writer is required.** `gw_prefs_set` replaces
+the *first* occurrence of a key and copies every later one through unchanged.
+Saving a `;`-separated list over a file that still has thirty-odd repeated
+`wayback_live` lines would therefore leave all of them in place underneath it —
+and because the reader merges both forms, a host the user *deleted* would come
+straight back from a stale line. Make `gw_prefs_set` drop the later
+occurrences of the key it is setting. It is a few lines in the copy loop, it is
+portable C that the host tests already cover, and no other key in the codebase
+is ever read more than once, so nothing else changes behaviour.
+
+**Limits.** The parser puts no cap on a line's length, and the whole file may
+be 32 KB. The real ceiling is the 2048-byte buffer `GWConfig_Str` hands back:
+about 120 typical patterns, against the 547 bytes the current list occupies.
+Past that it truncates silently, so the text area should stop accepting input
+at 2000 bytes and say why rather than losing the tail.
+
+**A format note.** A line whose first non-blank character is `;` is a comment
+in this file, which is why the stored value must never start with one. Trimming
+empty entries takes care of it; the writer should not emit a leading separator.
+
+#### wayback_api
+
+Upstream's definition, which is the one to go by: *use the Wayback Machine
+Availability API to find the closest available snapshot to the desired date,
+instead of directly requesting that date.* Default true.
+
+It is **not** the module's on/off switch. The Wayback proxy is turned off in
+two places already in this specification: **`wayback_enabled`** on the Modules
+pane, which stops the module being initialised at all, and
+**`wayback_port = 0`** on this pane, which keeps the configured port and binds
+no listener.
+
+**The behaviour exists already and is currently unconditional.** Gateway asks
+the archive for `/web/<era>/<url>`; the archive answers with a redirect to
+whichever capture is nearest; Gateway follows that hop itself and rebuilds the
+target with the `id_` modifier. That is the closest-snapshot result, reached by
+following a redirect rather than by calling the Availability API endpoint. So
+what is missing is the switch, not the feature — with `wayback_api` off,
+Gateway should ask for the era exactly and take what comes back rather than
+following the archive on to a neighbouring capture.
+
+The checkbox therefore belongs on the pane, and the reader goes in with it. It
+is small: a flag on the Wayback settings struct, filled from
+`wayback_api` beside the other four in `gw_core.c`, and a test on that flag in
+the archive branch of `redirect_should_follow` in `src/proxy/gw_httpproxy.c`.
+Ship the control and the reader in the same change — a checkbox that writes a
+key no code consults reports a choice the program will not honour, which is
+worse than leaving it out.
 
 ### 4.4 Mail
 
@@ -316,8 +397,9 @@ Windows the same key may also hold a path, so do not narrow the stored value to
 
 ## 5. Complete key list
 
-Forty-one keys, all of them above. Checked against the codebase; nothing readable
-from preferences is left out.
+Forty-two keys, all of them above. Checked against the codebase in both
+directions: nothing readable from preferences is left off a pane, and nothing
+on a pane is absent from the code — with one deliberate exception, noted below.
 
 ```
 Modules        http_enabled  mail_enabled  wayback_enabled  max_sessions
@@ -325,7 +407,8 @@ Web proxy      http_port  rewrite_https  connect_mitm  follow_redirects
                max_body_mb  max_connects
 Wayback        wayback_port  wayback_date  wayback_tolerance  wayback_connects
                wayback_geocities  wayback_cache  wayback_settings
-               wayback_ct_encoding  wayback_quick_images  wayback_live
+               wayback_ct_encoding  wayback_quick_images  wayback_api
+               wayback_live
 Mail           provider  oauth_user  local_password  imap_port  pop_port
                smtp_port
 Mail upstream  imap_host  imap_upstream_port  pop_host  pop_upstream_port
@@ -335,7 +418,10 @@ OAuth          oauth_host  oauth_path  oauth_scope  oauth_client_id
 Log            show_window  log_file
 ```
 
-Designed, no reader in the code, deliberately absent: `wayback_api`.
+`wayback_api` is the exception: forty-one of these have a reader today, and it
+does not. It is on the Wayback pane anyway because the behaviour it governs is
+already there and hardwired on, and because upstream exposes it — so the reader
+is a small addition rather than a new feature. See §4.3.
 
 ---
 
