@@ -18,8 +18,8 @@
  * The cipher that matters is TLS_RSA_WITH_3DES_EDE_CBC_SHA. BearSSL has no RC4
  * and no single DES, and IE 4 and Netscape 4 have no AES, so 3DES is the whole
  * of the common ground. It is in BearSSL's full RSA server profile already.
- * A browser built for export-grade crypto has no 3DES either and cannot be
- * served at all.
+ * A browser built for export-grade crypto has no 3DES either — SSL 3.0
+ * export suites (RC4_40, RC2_40, DES40) via src/ssl3/ cover Netscape 3.04 Gold.
  */
 
 #include "certainly.h"
@@ -28,6 +28,7 @@
 #include <string.h>
 
 #include <bearssl.h>
+#include "../../src/ssl3/ssl3.h"
 
 struct MacTLS_Server {
     MacTLS_State           state;
@@ -93,6 +94,7 @@ MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
     }
 
     br_ssl_server_init_full_rsa(&s->sc, s->chain, s->chain_len, sk);
+    ssl3_server_init(&s->sc);
     br_ssl_engine_set_buffer(&s->sc.eng, s->iobuf, sizeof(s->iobuf), 0);
 
     /*
