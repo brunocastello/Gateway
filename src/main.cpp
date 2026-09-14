@@ -682,7 +682,6 @@ private:
         TextSize(9);
 
         /* Everything below is in the window's local coordinates. */
-        SetRect(&sectionRect, 14, 10, static_cast<short>(14 + 160), 28);
         SetRect(&contentRect, 16, 42,
                 static_cast<short>(kWidth - 16),
                 static_cast<short>(kHeight - 48));
@@ -695,12 +694,28 @@ private:
                 static_cast<short>(kWidth - 96),
                 static_cast<short>(kHeight - 16));
 
-        /* The section pop-up. min is the menu's resource ID and max is the
-         * width of the title, which is empty here. */
+        /* The section pop-up. Measure the widest menu item and size to fit. */
+        mSection = GetMenu(kSectionMenuID);
+        {
+            short maxW = 0;
+            short nItems = GetMenuItems(mSection);
+            Str255 itemStr;
+            short j;
+
+            for (j = 1; j <= nItems; j++) {
+                GetMenuItemText(mSection, j, itemStr);
+                {
+                    short w = StringWidth(itemStr);
+                    if (w > maxW) maxW = w;
+                }
+            }
+            /* Add a bit of padding for the button frame. */
+            maxW += 20;
+            SetRect(&sectionRect, 14, 10, static_cast<short>(14 + maxW), 28);
+        }
         ToPascal("", title);
         hSection = NewControl(win, &sectionRect, title, false,
                               0, kSectionMenuID, 0, kPopUpProc, 0);
-        mSection = GetMenu(kSectionMenuID);
         if (hSection != nullptr) SetControlValue(hSection, 1);
 
         ToPascal("OK", title);
@@ -761,6 +776,14 @@ private:
             case kFieldNum:
             case kFieldText: {
                 Rect dest, view;
+                short fieldLeft;
+
+                /* Application panel: fields are left-aligned (no label column). */
+                if (s == kSecApp) {
+                    fieldLeft = contentRect.left + 70;
+                } else {
+                    fieldLeft = contentRect.left + kLabelCol;
+                }
 
                 if (f->kind == kFieldNum) {
                     sprintf(value, "%ld", GWConfig_Num(f->key, f->numDefault));
@@ -771,9 +794,8 @@ private:
                 }
 
                 SetRect(&item[i].box,
-                        static_cast<short>(contentRect.left + kLabelCol), y,
-                        static_cast<short>(contentRect.left + kLabelCol +
-                                           f->width),
+                        fieldLeft, y,
+                        static_cast<short>(fieldLeft + f->width),
                         static_cast<short>(y + 16));
                 view = item[i].box;
                 InsetRect(&view, 3, 2);
@@ -1064,13 +1086,23 @@ private:
 
         for (i = 0; i < kSettingsFieldCount; i++) {
             const SettingsField *f = &kSettingsFields[i];
+            short labelX;
 
             if (f->section != section) continue;
             if (f->kind == kFieldCheck) continue;
 
+            /* Application panel: labels are right-aligned before the field,
+             * not at the global label column. */
+            if (f->section == kSecApp) {
+                labelX = static_cast<short>(item[i].box.left - 8 -
+                                            StringWidth(title));
+            } else {
+                labelX = static_cast<short>(contentRect.left + labelCol - 8 -
+                                            StringWidth(title));
+            }
+
             ToPascal(f->label, title);
-            MoveTo(static_cast<short>(contentRect.left + labelCol - 8 -
-                                      StringWidth(title)),
+            MoveTo(labelX,
                    static_cast<short>(item[i].box.top + 12));
             DrawString(title);
 
