@@ -43,7 +43,7 @@
 
 namespace {
 
-const short kWinWidth    = 544;
+const short kWinWidth    = 506;
 
 const short kMargin      = 12;
 const short kPopupTop    = 12;
@@ -61,11 +61,11 @@ const short kPaneRight   = kBoxRight - 14;
  * edge, as the Identity box in the Internet control panel has it, rather than
  * being a fixed width hung off the right.
  */
-const short kEntryLeft   = kPaneLeft + 196;
-const short kEntryWidth  = 214;
-const short kEntryHeight = 22;
-const short kRowHeight   = 27;
-const short kHintHeight  = 14;
+const short kEntryLeft   = kPaneLeft + 158;
+const short kEntryWidth  = 228;
+const short kEntryHeight = 16;
+const short kRowHeight   = 21;
+const short kHintHeight  = 12;
 const short kListHeight  = 92;
 const short kButtonW     = 74;
 const short kButtonH     = 20;
@@ -329,6 +329,17 @@ void SystemFont(ControlHandle c)
 
     if (c == 0) return;
     style.flags = kControlUseFontMask;
+    style.font = kControlFontSmallSystemFont;
+    SetControlFontStyle(c, &style);
+}
+
+/* The one exception: the pane selector keeps the larger font it has now. */
+void BigFont(ControlHandle c)
+{
+    ControlFontStyleRec style;
+
+    if (c == 0) return;
+    style.flags = kControlUseFontMask;
     style.font = kControlFontBigSystemFont;
     SetControlFontStyle(c, &style);
 }
@@ -355,7 +366,7 @@ ControlHandle MakeLabel(WindowPtr w, const Rect *r, const char *text,
 
     style.flags = kControlUseFontMask | kControlUseJustMask;
     style.font = small ? kControlFontSmallSystemFont
-                       : kControlFontBigSystemFont;
+                       : kControlFontSmallSystemFont;
     style.just = just;
     SetControlFontStyle(c, &style);
     return c;
@@ -385,7 +396,7 @@ void PrefsWindow::BuildPane(int group)
 
         switch (f[i].kind) {
         case kGWFieldFlag: {
-            SetRect(&r, kPaneLeft, v, kPaneRight, (short)(v + 20));
+            SetRect(&r, kPaneLeft, v, kPaneRight, (short)(v + 17));
             ToPascal(f[i].label, s);
             row->ctl = NewControl(mWindow, &r, s, true,
                                   mValue[i][0] == '1' ? 1 : 0, 0, 1,
@@ -401,7 +412,7 @@ void PrefsWindow::BuildPane(int group)
             short       chosen = 1;
 
             SetRect(&r, kPaneLeft, (short)(v + 3),
-                    (short)(kEntryLeft - 8), (short)(v + 19));
+                    (short)(kEntryLeft - 6), (short)(v + 15));
             row->label = MakeLabel(mWindow, &r, f[i].label, teFlushRight, false);
 
             ToPascal(f[i].label, s);
@@ -452,6 +463,11 @@ void PrefsWindow::BuildPane(int group)
                                   kControlEditTextProc, 0);
             SetText(row->ctl, mList);
             SystemFont(row->ctl);
+            {
+                TEHandle te = FieldTE(row);
+
+                if (te != 0) (*te)->crOnly = -1;   /* one host per line */
+            }
 
             SetRect(&r, (short)(kPaneRight - kScrollW), (short)(v + 20),
                     kPaneRight, (short)(v + 20 + kListHeight));
@@ -462,7 +478,7 @@ void PrefsWindow::BuildPane(int group)
 
         default:
             SetRect(&r, kPaneLeft, (short)(v + 3),
-                    (short)(kEntryLeft - 8), (short)(v + 19));
+                    (short)(kEntryLeft - 6), (short)(v + 15));
             row->label = MakeLabel(mWindow, &r, f[i].label, teFlushRight, false);
 
             SetRect(&r, kEntryLeft, v,
@@ -475,6 +491,13 @@ void PrefsWindow::BuildPane(int group)
                                       : kControlEditTextProc, 0);
             SetText(row->ctl, mValue[i]);
             SystemFont(row->ctl);
+            {
+                /* One line, no wrapping. The Scope value is long and was
+                 * folding onto a second line inside a field one line tall. */
+                TEHandle te = FieldTE(row);
+
+                if (te != 0) (*te)->crOnly = -1;
+            }
             break;
         }
 
@@ -486,8 +509,9 @@ void PrefsWindow::BuildPane(int group)
         if (f[i].hint != 0) {
             /* The whole pane, in Geneva: the long ones were running off the
              * right and losing their last word. */
-            SetRect(&r, kPaneLeft, (short)(v - 5), kPaneRight,
-                    (short)(v + 10));
+            SetRect(&r, (f[i].kind == kGWFieldFlag ||
+                         f[i].kind == kGWFieldList) ? kPaneLeft : kEntryLeft,
+                    (short)(v - 4), kPaneRight, (short)(v + 9));
             row->hint = MakeLabel(mWindow, &r, f[i].hint, teFlushLeft, true);
             v = (short)(v + kHintHeight);
         }
@@ -501,7 +525,13 @@ void PrefsWindow::BuildPane(int group)
     ToPascal(gw_prefsform_group_name(group), s);
     mGroupBox = NewControl(mWindow, &r, s, true, 0, 0, 1,
                            kControlGroupBoxTextTitleProc, 0);
-    SystemFont(mGroupBox);
+    {
+        ControlFontStyleRec style;
+
+        style.flags = kControlUseFontMask;
+        style.font = kControlFontSmallBoldSystemFont;
+        if (mGroupBox != 0) SetControlFontStyle(mGroupBox, &style);
+    }
 
     {
         short h = (short)(v + 12 + 16 + kButtonH + kMargin);
@@ -611,7 +641,12 @@ bool PrefsWindow::Open()
 
         SetRect(&r, kMargin, (short)(kPopupTop + 3), 96,
                 (short)(kPopupTop + 20));
-        MakeLabel(mWindow, &r, "Settings for:", teFlushRight, false);
+        {
+            ControlHandle lab = MakeLabel(mWindow, &r, "Settings for:",
+                                          teFlushRight, false);
+
+            BigFont(lab);          /* the one control that keeps it */
+        }
 
         if (GetMenuHandle(kGroupMenuID) == 0) {
             MenuHandle menu;
@@ -633,7 +668,7 @@ bool PrefsWindow::Open()
                                        kControlPopupFixedWidthVariant), 0);
         if (mGroupPopup != 0) {
             SetControlValue(mGroupPopup, 1);
-            SystemFont(mGroupPopup);
+            BigFont(mGroupPopup);
         }
 
         SetRect(&r, 0, 0, kButtonW, kButtonH);
