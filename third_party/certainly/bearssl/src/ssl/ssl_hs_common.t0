@@ -833,6 +833,20 @@ hexb| C0AF 2904 | \ TLS_ECDHE_ECDSA_WITH_AES_256_CCM_8
 hexb| CCA8 1504 | \ TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
 hexb| CCA9 2504 | \ TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
 
+\ Gateway: SSL 3.0 RC4 suites. The T0 handshake bytecode compiled
+\ into ssl_hs_client.c / ssl_hs_server.c is frozen (no T0 toolchain
+\ here), so these suites deliberately borrow the AES-128-CBC dispatch
+\ slot (cipher type 1): switch-encryption routes them to the CBC
+\ switch functions, and br_ssl_engine_switch_cbc_in/out (ssl_engine.c)
+\ divert to the SSL 3.0 RC4 record layer by suite ID. The MAC nibble
+\ claims SHA-1 so the pre-TLS-1.2 suite filter keeps them; the real
+\ MAC (MD5 for 0x0003/0x0004, SHA-1 for 0x0005) and the key lengths
+\ likewise come from the suite ID in that same C hook, not from the
+\ translated words below.
+hexb| 0003 0122 | \ SSL3_RSA_EXPORT_RC4_40_MD5
+hexb| 0004 0122 | \ SSL3_RSA_RC4_128_MD5
+hexb| 0005 0122 | \ SSL3_RSA_RC4_128_SHA
+
 hexb| 0000 | \ List terminator.
 
 \ Convert cipher suite identifier to element words. This returns 0 if

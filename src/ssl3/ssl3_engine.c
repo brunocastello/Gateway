@@ -114,15 +114,104 @@ ssl3_server_init(br_ssl_server_context *sc)
 
 	br_ssl_engine_set_versions(cc, SSL3_VERSION, SSL3_VERSION);
 	br_ssl_engine_set_prf10(cc, (br_tls_prf_impl)ssl3_prf);
+	br_ssl_engine_set_default_des_cbc(cc);
 	br_ssl_engine_set_suites(cc, ssl3_suites_with_export,
 		sizeof ssl3_suites_with_export / sizeof ssl3_suites_with_export[0]);
+}
+
+static void
+compute_key_block_ssl3(br_ssl_engine_context *cc,
+	unsigned char *kb, size_t kb_len)
+{
+	br_tls_prf_seed_chunk seed[2] = {
+		{ cc->client_random, sizeof cc->client_random },
+		{ cc->server_random, sizeof cc->server_random }
+	};
+	ssl3_prf(kb, kb_len, cc->session.master_secret,
+		sizeof cc->session.master_secret, "key expansion", 2, seed);
+}
+
+void
+br_ssl_engine_switch_rc4_in(br_ssl_engine_context *cc,
+	int is_client, int prf_id, int mac_id,
+	size_t rc4_key_len, size_t mac_key_len)
+{
+	unsigned char kb[96];
+	size_t kb_len = (mac_key_len + rc4_key_len) * 2;
+	if (kb_len > sizeof kb) kb_len = sizeof kb;
+	const br_hash_class *hash;
+	unsigned char *mac_key;
+	unsigned char *rc4_key;
+	const br_hash_class *rc4_hash;
+
+	compute_key_block_ssl3(cc, kb, kb_len);
+
+	if (mac_id == br_md5_ID) {
+	hash = &br_md5_vtable;
+	rc4_hash = &br_md5_vtable;
+	} else {
+		hash = &br_sha1_vtable;
+		rc4_hash = &br_sha1_vtable;
+	}
+
+	if (is_client) {
+		mac_key = kb + mac_key_len;
+		rc4_key = kb + 2 * mac_key_len + rc4_key_len;
+	} else {
+		mac_key = kb;
+		rc4_key = kb + 2 * mac_key_len;
+	}
+
+	cc->in.rc4.vtable = &br_sslrec_in_rc4_vtable;
+	br_sslrec_in_rc4_vtable.init((const br_sslrec_in_rc4_class **)&cc->in.rc4.vtable,
+		rc4_key, rc4_key_len, rc4_hash,
+		mac_key, mac_key_len);
+	cc->in.rc4.hash = hash;
+	cc->in.rc4.mac_len = mac_id == br_md5_ID ? 16 : 20;
+	cc->incrypt = 1;
+}
+
+void
+br_ssl_engine_switch_rc4_out(br_ssl_engine_context *cc,
+	int is_client, int prf_id, int mac_id,
+	size_t rc4_key_len, size_t mac_key_len)
+{
+	unsigned char kb[96];
+	size_t kb_len = (mac_key_len + rc4_key_len) * 2;
+	if (kb_len > sizeof kb) kb_len = sizeof kb;
+	const br_hash_class *hash;
+	unsigned char *mac_key;
+	unsigned char *rc4_key;
+	const br_hash_class *rc4_hash;
+
+	compute_key_block_ssl3(cc, kb, kb_len);
+
+	if (mac_id == br_md5_ID) {
+	hash = &br_md5_vtable;
+	rc4_hash = &br_md5_vtable;
+	} else {
+		hash = &br_sha1_vtable;
+		rc4_hash = &br_sha1_vtable;
+	}
+
+	if (is_client) {
+		mac_key = kb;
+		rc4_key = kb + 2 * mac_key_len;
+	} else {
+		mac_key = kb + mac_key_len;
+		rc4_key = kb + 2 * mac_key_len + rc4_key_len;
+	}
+
+	cc->out.rc4.vtable = &br_sslrec_out_rc4_vtable;
+	br_sslrec_out_rc4_vtable.init((const br_sslrec_out_rc4_class **)&cc->out.rc4.vtable,
+		rc4_key, rc4_key_len, rc4_hash,
+		mac_key, mac_key_len);
+	cc->out.rc4.hash = hash;
+	cc->out.rc4.mac_len = mac_id == br_md5_ID ? 16 : 20;
 }
 
 void
 ssl3_register_ciphers(br_ssl_engine_context *cc)
 {
-	br_ssl_engine_set_prf10(cc, (br_tls_prf_impl)ssl3_prf);
-	br_ssl_engine_set_versions(cc, SSL3_VERSION, SSL3_VERSION);
-	br_ssl_engine_set_suites(cc, ssl3_suites_with_export,
-		sizeof ssl3_suites_with_export / sizeof ssl3_suites_with_export[0]);
+	(void)cc;
 }

@@ -96,6 +96,7 @@ add_library(bearssl STATIC ${BEARSSL_SOURCES})
 target_include_directories(bearssl
     PUBLIC  ${CERTAINLY_DIR}/bearssl/inc
     PRIVATE ${CERTAINLY_DIR}/bearssl/src
+                 ${CMAKE_SOURCE_DIR}/src
 )
 
 # --------------------------------------------------------------------

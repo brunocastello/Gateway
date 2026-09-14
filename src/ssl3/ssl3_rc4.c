@@ -59,6 +59,7 @@ rc4_stream(unsigned char *S, unsigned char *data, size_t len)
  */
 typedef struct {
 	unsigned char S[256];
+	unsigned i, j;
 } rc4_ctx;
 
 void *
@@ -68,14 +69,31 @@ rc4_setup(const unsigned char *key, size_t key_len)
 	if (ctx == NULL)
 		return NULL;
 	rc4_init(ctx->S, key, key_len);
+	ctx->i = 0;
+	ctx->j = 0;
 	return ctx;
 }
 
 void
 rc4_crypt(void *ctx, const unsigned char *input, unsigned char *output, size_t len)
 {
+	rc4_ctx *c = (rc4_ctx *)ctx;
+	unsigned char *S = c->S;
+	unsigned i = c->i, j = c->j;
+	unsigned char tmp;
+
 	memcpy(output, input, len);
-	rc4_stream(((rc4_ctx *)ctx)->S, output, len);
+	unsigned char *data = output;
+	while (len--) {
+		i = (i + 1) & 0xFF;
+		j = (j + S[i]) & 0xFF;
+		tmp = S[i];
+		S[i] = S[j];
+		S[j] = tmp;
+		*data++ ^= S[(S[i] + S[j]) & 0xFF];
+	}
+	c->i = i;
+	c->j = j;
 }
 
 void

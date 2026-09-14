@@ -17,7 +17,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-static void
+void
 ssl3_phash(void *dst, size_t len,
 	const br_hash_class *dig, size_t hash_size,
 	const void *secret, size_t secret_len,
@@ -25,7 +25,7 @@ ssl3_phash(void *dst, size_t len,
 {
 	unsigned char *buf = (unsigned char *)dst;
 	unsigned char A[64];
-	unsigned char tmp[64];
+	unsigned char tmp[128];
 	unsigned char hash_out[64];
 	size_t hlen;
 	size_t off = 0;

@@ -34,6 +34,15 @@ void ssl3_prf(void *dst, size_t len,
 	size_t seed_num, const br_tls_prf_seed_chunk *seed);
 
 /*
+ * SSL 3.0 P_hash: HASH(secret || seed) || HASH(secret || HASH(secret || seed)) || ...
+ * Used for key block derivation.
+ */
+void ssl3_phash(void *dst, size_t len,
+	const br_hash_class *dig, size_t hash_size,
+	const void *secret, size_t secret_len,
+	const unsigned char *seed, size_t seed_len);
+
+/*
  * SSL 3.0 MAC. Returns 36 bytes (16 MD5 + 20 SHA-1).
  * The secret is NOT used in the hash chain (it is used in key derivation only).
  */

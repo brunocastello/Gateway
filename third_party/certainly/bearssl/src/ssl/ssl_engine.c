@@ -1606,6 +1606,43 @@ compute_key_block(br_ssl_engine_context *cc, int prf_id,
 		"key expansion", 2, seed);
 }
 
+/*
+ * Gateway: SSL 3.0 RC4 suites (0x0003/0x0004/0x0005) borrow the
+ * AES-128-CBC dispatch slot because the T0 handshake bytecode compiled
+ * into ssl_hs_client.c / ssl_hs_server.c is frozen (see cipher-suite-def
+ * in ssl_hs_common.t0). When one of them is negotiated, divert to the
+ * SSL 3.0 RC4 record layer; key and MAC parameters come from the suite
+ * ID, not from the (dummy) T0 stack values. Returns 1 when diverted.
+ */
+static int
+switch_rc4_if_ssl3(br_ssl_engine_context *cc, int is_client, int prf_id,
+	int is_in)
+{
+	unsigned suite = cc->session.cipher_suite;
+	int mac_id;
+	size_t rc4_key_len, mac_key_len;
+
+	if (suite != 0x0003 && suite != 0x0004 && suite != 0x0005) {
+		return 0;
+	}
+	if (suite == 0x0005) {
+		mac_id = br_sha1_ID;
+		mac_key_len = 20;
+	} else {
+		mac_id = br_md5_ID;
+		mac_key_len = 16;
+	}
+	rc4_key_len = (suite == 0x0003) ? 5 : 16;
+	if (is_in) {
+		br_ssl_engine_switch_rc4_in(cc, is_client, prf_id,
+			mac_id, rc4_key_len, mac_key_len);
+	} else {
+		br_ssl_engine_switch_rc4_out(cc, is_client, prf_id,
+			mac_id, rc4_key_len, mac_key_len);
+	}
+	return 1;
+}
+
 /* see inner.h */
 void
 br_ssl_engine_switch_cbc_in(br_ssl_engine_context *cc,
@@ -1616,6 +1653,10 @@ br_ssl_engine_switch_cbc_in(br_ssl_engine_context *cc,
 	unsigned char *cipher_key, *mac_key, *iv;
 	const br_hash_class *imh;
 	size_t mac_key_len, mac_out_len, iv_len;
+
+	if (switch_rc4_if_ssl3(cc, is_client, prf_id, 1)) {
+		return;
+	}
 
 	imh = br_ssl_engine_get_hash(cc, mac_id);
 	mac_out_len = (imh->desc >> BR_HASHDESC_OUT_OFF) & BR_HASHDESC_OUT_MASK;
@@ -1659,6 +1700,10 @@ br_ssl_engine_switch_cbc_out(br_ssl_engine_context *cc,
 	unsigned char *cipher_key, *mac_key, *iv;
 	const br_hash_class *imh;
 	size_t mac_key_len, mac_out_len, iv_len;
+
+	if (switch_rc4_if_ssl3(cc, is_client, prf_id, 0)) {
+		return;
+	}
 
 	imh = br_ssl_engine_get_hash(cc, mac_id);
 	mac_out_len = (imh->desc >> BR_HASHDESC_OUT_OFF) & BR_HASHDESC_OUT_MASK;

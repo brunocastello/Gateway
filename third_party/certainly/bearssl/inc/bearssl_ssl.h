@@ -802,6 +802,31 @@ extern const br_sslrec_in_ccm_class br_sslrec_in_ccm_vtable;
  */
 extern const br_sslrec_out_ccm_class br_sslrec_out_ccm_vtable;
 
+/* RC4 for SSL3 */
+typedef struct br_sslrec_in_rc4_class_ br_sslrec_in_rc4_class;
+struct br_sslrec_in_rc4_class_ {
+	br_sslrec_in_class inner;
+	void (*init)(const br_sslrec_in_rc4_class **ctx, const void *key, size_t key_len, const br_hash_class *hash, const void *mac_key, size_t mac_len);
+};
+typedef struct br_sslrec_out_rc4_class_ br_sslrec_out_rc4_class;
+struct br_sslrec_out_rc4_class_ {
+	br_sslrec_out_class inner;
+	void (*init)(const br_sslrec_out_rc4_class **ctx, const void *key, size_t key_len, const br_hash_class *hash, const void *mac_key, size_t mac_len);
+};
+typedef struct {
+	const void *vtable;
+	uint64_t seq;
+	unsigned char S[256];
+	uint8_t i, j;
+	const br_hash_class *hash;
+	unsigned char mac_key[48];
+	size_t mac_len;
+} br_sslrec_rc4_context;
+typedef br_sslrec_rc4_context br_sslrec_in_rc4_context;
+typedef br_sslrec_rc4_context br_sslrec_out_rc4_context;
+extern const br_sslrec_in_rc4_class br_sslrec_in_rc4_vtable;
+extern const br_sslrec_out_rc4_class br_sslrec_out_rc4_vtable;
+
 /* ===================================================================== */
 
 /**
@@ -912,21 +937,23 @@ typedef struct {
 	/*
 	 * Record handler contexts.
 	 */
-	union {
-		const br_sslrec_in_class *vtable;
-		br_sslrec_in_cbc_context cbc;
-		br_sslrec_gcm_context gcm;
-		br_sslrec_chapol_context chapol;
-		br_sslrec_ccm_context ccm;
-	} in;
-	union {
-		const br_sslrec_out_class *vtable;
-		br_sslrec_out_clear_context clear;
-		br_sslrec_out_cbc_context cbc;
-		br_sslrec_gcm_context gcm;
-		br_sslrec_chapol_context chapol;
-		br_sslrec_ccm_context ccm;
-	} out;
+  union {
+    const br_sslrec_in_class *vtable;
+    br_sslrec_in_cbc_context cbc;
+    br_sslrec_gcm_context gcm;
+    br_sslrec_chapol_context chapol;
+    br_sslrec_ccm_context ccm;
+    br_sslrec_in_rc4_context rc4;
+  } in;
+  union {
+    const br_sslrec_out_class *vtable;
+    br_sslrec_out_clear_context clear;
+    br_sslrec_out_cbc_context cbc;
+    br_sslrec_gcm_context gcm;
+    br_sslrec_chapol_context chapol;
+    br_sslrec_ccm_context ccm;
+    br_sslrec_out_rc4_context rc4;
+  } out;
 
 	/*
 	 * The "application data" flag. Value:

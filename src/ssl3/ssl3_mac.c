@@ -52,8 +52,8 @@ ssl3_mac(const void *secret, size_t secret_len,
 	(void)secret_len;
 
 	/* Encode length as 2-byte big-endian */
-	len_buf[0] = (len[0] >> 8) & 0xFF;
-	len_buf[1] = len[0] & 0xFF;
+	len_buf[0] = len[0];
+	len_buf[1] = len[1];
 
 	/* Encode sequence as 8-byte big-endian */
 	for (i = 0; i < 8; i++) {

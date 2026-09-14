@@ -2352,6 +2352,26 @@ void br_ssl_engine_switch_ccm_out(br_ssl_engine_context *cc,
 	size_t cipher_key_len, size_t tag_len);
 
 /*
+ * Switch to RC4 encryption for outgoing records (SSL3 export suites).
+ *    cc               the engine context
+ *    is_client        non-zero for a client, zero for a server
+ *    prf_id           id of hash function for PRF (ignored if not TLS 1.2+)
+ *    mac_id           hash ID (br_md5_ID=1 or br_sha1_ID=2)
+ *    rc4_key_len      RC4 key length (in bytes)
+ *    mac_key_len      MAC key length (in bytes)
+ */
+void br_ssl_engine_switch_rc4_in(br_ssl_engine_context *cc,
+	int is_client, int prf_id, int mac_id,
+	size_t rc4_key_len, size_t mac_key_len);
+
+/*
+ * Switch to RC4 encryption for outgoing records (SSL3 export suites).
+ */
+void br_ssl_engine_switch_rc4_out(br_ssl_engine_context *cc,
+	int is_client, int prf_id, int mac_id,
+	size_t rc4_key_len, size_t mac_key_len);
+
+/*
  * Calls to T0-generated code.
  */
 void br_ssl_hs_client_init_main(void *ctx);
