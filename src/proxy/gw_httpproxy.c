@@ -34,7 +34,20 @@
 #define GW_HEAD_MAX     16384L
 #define GW_RAW_MAX      16384L
 #define GW_OUT_MAX      32768L
-#define GW_MAX_REDIRECT 5
+/*
+ * How many redirects to follow before calling it a loop.
+ *
+ * Five is plenty for the live web. The archive needs more than twice that,
+ * because it doubles every hop: a page that answered 302 in 2002 is served
+ * as a 302, and the URL it names then draws a second redirect resolving it
+ * to whichever capture is nearest the requested date. www.download.com on
+ * 2 December 2002 redirected to download.cnet.com, which redirected to
+ * download.redir.com.com, which redirected to download.com.com -- three
+ * hops as the site behaved at the time, seven through the archive, and the
+ * page never arrived. The same site in 2004 is one hop and always loaded.
+ */
+#define GW_MAX_REDIRECT    5
+#define GW_MAX_WB_REDIRECT 12
 
 /*
  * The Internet Archive refuses connections for a few seconds when it is asked
@@ -1104,7 +1117,8 @@ static void step_recv_head(GWHttpSession *s)
         gw_url_resolve(&s->target, res.location, strlen(res.location),
                        &s->redirectTo) &&
         redirect_should_follow(s, &res)) {
-        if (s->redirects >= GW_MAX_REDIRECT) {
+        if (s->redirects >= (s->wayback ? GW_MAX_WB_REDIRECT
+                                        : GW_MAX_REDIRECT)) {
             session_fail(s, "HTTP/1.0 508 Loop Detected\r\n"
                             "Connection: close\r\n\r\n"
                             "Gateway: too many redirects.\r\n",
