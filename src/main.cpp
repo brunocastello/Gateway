@@ -697,12 +697,12 @@ private:
         /* The section pop-up. Measure the widest menu item and size to fit. */
         mSection = GetMenu(kSectionMenuID);
         {
-            short maxW = 0;
-            short nItems = GetMenuItems(mSection);
             Str255 itemStr;
             short j;
+            short maxW = 0;
 
-            for (j = 1; j <= nItems; j++) {
+            /* Multiversal has no GetMenuItems, so measure the known items. */
+            for (j = 1; j <= 4; j++) {
                 GetMenuItemText(mSection, j, itemStr);
                 {
                     short w = StringWidth(itemStr);
