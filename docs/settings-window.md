@@ -248,32 +248,69 @@ wayback_live = frogfind.com;*.frogfind.com;68k.news;*.68k.news
 
 This needs no new preferences syntax. `gw_prefs_set` already writes a single
 value and `gw_prefs_get` already reads one, so the text area's contents and the
-stored value are the same string and nothing has to be assembled or taken
-apart on the way through.
+stored value are the same string and nothing has to be assembled or taken apart
+on the way through.
 
 A continuation form — a second `+wayback_live` line appending to the first —
-was considered and is not worth it. It would need a new rule in the parser, a
-new writer to emit it, and a back-compatibility path for the repeated keys that
+was considered and is not worth it. It would need a rule in the parser, a
+writer to emit it, and a back-compatibility path for the repeated keys that
 already exist, and it would buy only shorter lines in a file nobody has to
-read. The single value gets the same result with code that is already written
-and already tested.
+read. The single value gets the same result with code that is already written.
 
-**Reading, and old files.** Existing preferences files write the list as a
-repeated key, one `wayback_live` line per pattern, and the indexed reader for
-that already exists. Keep it: read occurrence 0 and split it on `;`, then keep
-walking the later occurrences and take each whole line as one more entry.
-A file written either way then works, and saving once collapses an old file
-into the single-line form.
+#### What has to change for the allow-list
 
-**One change to the preferences writer is required.** `gw_prefs_set` replaces
-the *first* occurrence of a key and copies every later one through unchanged.
-Saving a `;`-separated list over a file that still has thirty-odd repeated
-`wayback_live` lines would therefore leave all of them in place underneath it —
-and because the reader merges both forms, a host the user *deleted* would come
-straight back from a stale line. Make `gw_prefs_set` drop the later
-occurrences of the key it is setting. It is a few lines in the copy loop, it is
-portable C that the host tests already cover, and no other key in the codebase
-is ever read more than once, so nothing else changes behaviour.
+Six changes. They are small, but **items 3 and 4 have to land together** — see
+the warning under item 4.
+
+**1. The writer drops stale duplicates.** `src/portable/gw_prefs.c`,
+`gw_prefs_set`: it replaces the *first* occurrence of a key and copies every
+later one through unchanged. Saving a `;`-separated list over a file that still
+has thirty-odd repeated `wayback_live` lines would leave all of them in place
+underneath it, and since the reader below merges both forms, a host the user
+*deleted* would come straight back on the next launch. Make it skip the later
+occurrences of the key it is setting — a few lines in the copy loop. No other
+key in the codebase is ever read more than once, so nothing else changes.
+
+**2. A portable indexed reader that understands both forms.** Also in
+`gw_prefs.c`, beside `gw_prefs_get_nth`: given a key and an index, walk the
+occurrences of that key and, within each one, split the value on `;`, returning
+the nth entry across the whole thing. Trim spaces, skip empty entries. It is
+pure string work over the prefs text, so it stays portable and the host tests
+reach it without Retro68.
+
+**3. A thin wrapper in `src/gw_config.c`** that supplies the loaded prefs text
+to it, alongside the existing `GWConfig_GetNth`. Leave `GWConfig_GetNth` as it
+is; other keys do not need splitting.
+
+**4. Both consumers move to the wrapper.** `wayback_live` is read in two
+places today, and both call `GWConfig_GetNth` directly:
+
+* `GW_WaybackHostIsLive` in `src/gw_core.c` — what the proxy routes on.
+* `pac_next_live_host` in `src/proxy/gw_httpproxy.c` — what the
+  auto-configuration script is built from.
+
+> **Change both or neither.** The comment already sitting on the second one
+> says it plainly: a script that routed differently from the proxy it
+> configures would be worse than no script. Convert only the first and the
+> browser's PAC file keeps sending archive traffic for a host the proxy now
+> fetches live, which presents as an intermittent routing bug with nothing
+> wrong at either end.
+
+Mind the limits already in `GW_WaybackHostIsLive` while you are there: it stops
+at 128 entries and reads each pattern into a 256-byte buffer. Both are ample
+for a `;`-separated value, but the splitter has to respect them rather than
+assume one entry per line.
+
+**5. The window saves with `GWConfig_Set`.** One call, one `;`-separated
+string, no list writer involved. The repeated-key writer removed in `fa64f91`
+stays removed — this design is the reason it is not needed.
+
+**6. Tests.** `tests/host/run_tests.c` already has a *prefs lists* block that
+checks `gw_prefs_get_nth` against a repeated key. Extend it: the `;` form, a
+file mixing both forms, entries with spaces around them, an empty entry in the
+middle, and — for change 1 — that setting a key which appears three times
+leaves exactly one line behind. These run on Linux in the host-tests workflow,
+so the whole allow-list path is verifiable without a Mac.
 
 **Limits.** The parser puts no cap on a line's length, and the whole file may
 be 32 KB. The real ceiling is the 2048-byte buffer `GWConfig_Str` hands back:
@@ -297,22 +334,75 @@ pane, which stops the module being initialised at all, and
 **`wayback_port = 0`** on this pane, which keeps the configured port and binds
 no listener.
 
-**The behaviour exists already and is currently unconditional.** Gateway asks
-the archive for `/web/<era>/<url>`; the archive answers with a redirect to
-whichever capture is nearest; Gateway follows that hop itself and rebuilds the
-target with the `id_` modifier. That is the closest-snapshot result, reached by
-following a redirect rather than by calling the Availability API endpoint. So
-what is missing is the switch, not the feature — with `wayback_api` off,
-Gateway should ask for the era exactly and take what comes back rather than
-following the archive on to a neighbouring capture.
+**What Gateway does today.** It asks the archive for `/web/<era>/<url>`; the
+archive answers with a redirect to whichever capture is nearest; Gateway checks
+that capture against `wayback_tolerance`, follows the hop itself, and rebuilds
+the target as `/web/<stamp>id_/<url>`. That reaches the closest snapshot by
+following a redirect, which is upstream's behaviour with `WAYBACK_API` **off**.
+The API path — the default — is the one that does not exist.
 
-The checkbox therefore belongs on the pane, and the reader goes in with it. It
-is small: a flag on the Wayback settings struct, filled from
-`wayback_api` beside the other four in `gw_core.c`, and a test on that flag in
-the archive branch of `redirect_should_follow` in `src/proxy/gw_httpproxy.c`.
-Ship the control and the reader in the same change — a checkbox that writes a
-key no code consults reports a choice the program will not honour, which is
-worse than leaving it out.
+##### Implementing it
+
+**Off (0) is today's behaviour.** Leave that path exactly as it is.
+
+**On (1)** asks first, then fetches:
+
+1. `GET https://archive.org/wayback/available?url=<url>&timestamp=<era>`
+2. Read `available` and `timestamp` out of the reply.
+3. Build `/web/<timestamp>id_/<url>` on `web.archive.org` and fetch that — the
+   same shape the redirect path already constructs, so the rest of the session
+   is unchanged.
+4. If `available` is false or missing, fail with the "no snapshot near the date
+   Gateway is set to" 404 that the tolerance check already serves.
+
+The parts exist:
+
+* **The request.** `GWStream_ConnectTLS(&stream, host, 443)`, exactly as
+  `GWToken_Request` in `src/proxy/gw_token.c` reaches the OAuth endpoint. That
+  is the working pattern for a TLS fetch Gateway makes on its own account
+  rather than on behalf of a client.
+* **The reply.** `gw_json_string()` and `gw_json_number()` in
+  `src/portable/gw_oauth.c`, which the token response already goes through.
+
+##### Two traps
+
+**Do not read `url` out of the response.** The body looks like this:
+
+```json
+{"url":"example.com",
+ "archived_snapshots":{"closest":{"status":"200","available":true,
+   "url":"http://web.archive.org/web/20011025.../http://example.com/",
+   "timestamp":"20011025000000"}}}
+```
+
+There are **two** `url` members: the top-level echo of the query, and the real
+one nested inside `closest`. `gw_json_string` scans flat for the first match of
+a name, so it would return the echo — a value that looks plausible, is not a
+snapshot, and would send the fetch to the wrong place. Read **`timestamp`**
+instead, which appears only inside `closest`, and build the target yourself as
+in step 3. `available` is likewise unique.
+
+**It is an extra TLS handshake per page.** On this hardware that is the
+expensive step, as the note at the top of `src/proxy/gw_httpproxy.c` says.
+Cache the answer per host and era for the life of the session, or the archive
+gets slower for a result the redirect was already producing.
+
+##### Wiring
+
+A flag on the Wayback settings struct, filled from `wayback_api` beside the
+other four in `gw_core.c`, and tested in the archive branch of
+`redirect_should_follow` in `src/proxy/gw_httpproxy.c`.
+
+##### If the API call is more than you want in the first cut
+
+Ship the **setting** mapped onto the mechanism that already exists: on follows
+the archive's redirect to the nearest capture, off asks for `/web/<era>id_/<url>`
+and refuses anything outside `wayback_tolerance`. The observable behaviour is
+close, the preference round-trips through the settings page the way upstream's
+does — which is what CLAUDE.md's compatibility requirement is about — and the
+Availability API can replace the mechanism later without the setting changing
+meaning. What is not acceptable is a checkbox wired to nothing: it would report
+a choice the program does not honour.
 
 ### 4.4 Mail
 
@@ -419,9 +509,10 @@ Log            show_window  log_file
 ```
 
 `wayback_api` is the exception: forty-one of these have a reader today, and it
-does not. It is on the Wayback pane anyway because the behaviour it governs is
-already there and hardwired on, and because upstream exposes it — so the reader
-is a small addition rather than a new feature. See §4.3.
+does not. It is on the pane anyway — upstream exposes it, CLAUDE.md requires
+the settings URL to stay compatible with upstream, and Gateway already
+implements the *off* half of it. §4.3 says what building the *on* half
+involves, and gives a cheaper first cut that still makes the setting honest.
 
 ---
 
