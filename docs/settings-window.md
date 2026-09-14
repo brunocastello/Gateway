@@ -1,13 +1,58 @@
 # Gateway — Settings window specification
 
-This is a build sheet for the Mac OS 9 Settings window. It says what the window
-contains, what every control is bound to, and what the geometry has to be. It
-does not contain code and does not describe the current implementation; build
-it from here.
+This is a build sheet for the Mac OS 9 Settings window: what it contains, what
+every control is bound to, and what the geometry has to be. It contains no code
+and does not describe the current implementation; build it from here.
+
+**It is not only a window.** Two of the settings need work below the interface
+before a control over them can be honest. Section 0 says which, and in what
+order — read it before starting, or you will build a window that looks finished
+and silently does nothing for two of its controls.
 
 The window has been attempted three times. Each attempt failed on the same
 thing — the entry fields — so section 2 is measured from the reference rather
-than described, and should be read before anything else.
+than described, and should be read next.
+
+---
+
+## 0. Scope, and the order to do it in
+
+Three pieces of work. **A and B are not optional and come first**; both are
+plain C with no Mac API in them, both are compiled by the Linux host tests, and
+both can be finished and proven before a single Mac build.
+
+| | Work | Where it is specified | How it is verified |
+|---|---|---|---|
+| **A** | The allow-list moves to one `;`-separated value: a splitter, a writer fix, and **two** consumers moved onto it | §4.3, *What has to change for the allow-list* | `make -C tests/host test` |
+| **B** | `wayback_api` gets a reader, and the behaviour its default selects | §4.3, *wayback_api* | `make -C tests/host test`, then on the Mac |
+| **C** | The window itself, all seven panes | §§2, 3, 4 | on the Mac |
+
+### Why the order matters
+
+Do **C** alone — build the window, add a `wayback_live` text area, add a
+`wayback_api` checkbox — and all three of those things will appear to work and
+none of them will:
+
+* The text area saves a `;`-separated value that **neither consumer can read**.
+  Both still split the list by line, so the whole list arrives as one
+  nonsensical pattern and every host falls through to the archive.
+* Deleting a host from the list **does not delete it**. The old repeated
+  `wayback_live` lines are still in the file underneath the new value, and the
+  merged reader hands them back on the next launch.
+* The `wayback_api` checkbox writes a key **nothing reads**, so the setting
+  reports a choice the program does not honour.
+
+None of the three raises an error, a warning or a failed build. They present as
+the Wayback module behaving oddly, weeks later.
+
+### One thing to know before touching the preferences layer
+
+`src/portable/gw_prefs.c` is shared. `Makefile.win32` takes all of
+`src/portable/*.c`, so the writer change in **A** lands in the Windows build
+too, and `tests/host/Makefile` compiles the same file, which is why the Linux
+tests can prove it. That is a feature — it is the cheapest verification
+available on this project — but it means the change is not Mac-only and its
+tests are not optional.
 
 ---
 
@@ -558,3 +603,53 @@ Do not repeat these:
   to "Web pro" in every pane.
 * Multiversal has no `Controls.h` and no `Scrap.h`; both live in `Multiverse.h`.
   There is a `Dialogs.h`.
+
+---
+
+## 7. Definition of done
+
+Work through this before calling it finished. The items that have historically
+been missed are the ones below the interface, and they fail silently.
+
+**A — the allow-list, below the interface**
+
+- [ ] `gw_prefs_set` drops later occurrences of the key it sets; setting a key
+      that appears three times leaves exactly one line.
+- [ ] An indexed reader in `gw_prefs.c` returns the nth entry across both
+      forms: repeated keys, one `;`-separated value, and a file mixing them.
+- [ ] Spaces around entries are trimmed and empty entries are skipped.
+- [ ] `GW_WaybackHostIsLive` (`gw_core.c`) uses it.
+- [ ] `pac_next_live_host` (`gw_httpproxy.c`) uses it. **Both, or neither.**
+- [ ] The PAC file and the proxy agree: a host on the list is fetched live by
+      the proxy *and* routed direct by the generated script.
+- [ ] Host tests cover all of the above and pass on Linux.
+
+**B — wayback_api, below the interface**
+
+- [ ] A flag on the Wayback settings struct, read from `wayback_api`.
+- [ ] Something acts on it — either the Availability API path, or the mapping
+      onto the existing mechanism that §4.3 offers as a first cut.
+- [ ] Turning it off changes what Gateway fetches, demonstrably.
+
+**C — the window**
+
+- [ ] Seven panes, every key in §5 present exactly once.
+- [ ] Entry fields are **19 px** tall and the 1 px frame *is* the box.
+- [ ] Label baselines sit on their field's text baseline.
+- [ ] Small system font everywhere except `Settings for:` and its pop-up.
+- [ ] The `Settings for:` caption exists.
+- [ ] **Revert** exists, beside Cancel and Save.
+- [ ] A click into a field both focuses it and places the caret.
+- [ ] Scope, Client ID and Refresh token do not wrap; the allow-list does.
+- [ ] The allow-list scroll bar shares the text area's top and height, and
+      scrolls.
+- [ ] Save writes every pane, not the visible one.
+- [ ] Revert refills every pane from the file.
+
+**End to end**
+
+- [ ] Add a host to the allow-list, Save, quit, relaunch: it is there, and the
+      proxy fetches that host live.
+- [ ] Remove it, Save, quit, relaunch: it is gone, and stays gone.
+- [ ] `make -C tests/host test` passes.
+- [ ] The Mac OS 9 workflow builds green.
