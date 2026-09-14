@@ -5,7 +5,9 @@
 
 Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rather than in front of it, so applications written before modern TLS existed can reach the current web, current mail servers, and the Internet Archive. It runs on Mac OS 9 (PowerPC) and on Windows 95 through XP.
 
-**0.3.3 makes a typed `https://` URL work in a browser that has no modern TLS of its own, and takes Gateway back to Windows 95 RTM and, on paper, NT 3.51.** Nothing in 0.3.2 is regressed; everything new is off by default except the link rewriting.
+**0.3.4 removes the checkbox.** 0.3.3 made a typed `https://` URL work in a browser with no modern TLS of its own, but only after unticking "Use SSL 2.0" — a setting every Internet Explorer ships with on, and one whose failure looked like anything except a setting. Gateway now understands the message those browsers send and `connect_mitm` works out of the box. Everything 0.3.3 did it still does; nothing else changed.
+
+0.3.3, still current in everything below, makes a typed `https://` URL work in a browser that has no modern TLS of its own, and takes Gateway back to Windows 95 RTM and, on paper, NT 3.51. Nothing from 0.3.2 is regressed; everything new is off by default except the link rewriting.
 
 ## Which settings you need, and when
 
@@ -20,20 +22,47 @@ There are two ways to get an old browser onto an `https://` site, and they are *
 
 `rewrite_https = 1` is the default, so a fresh install behaves as the second row without being configured.
 
-### If you use `connect_mitm`, untick "Use SSL 2.0"
+### If you use `connect_mitm`, check that "Use TLS 1.0" is ticked
 
-In Internet Explorer: **Tools → Internet Options → Advanced**, down in the Security group. It is **on by default**, and it has to be off. Leave "Use SSL 3.0" and "Use TLS 1.0" ticked. Netscape 4.7 has the same switch under **Security → Navigator → Configure SSL**.
+In Internet Explorer: **Tools → Internet Options → Advanced**, down in the Security group. Netscape 4.7 has the equivalent under **Security → Navigator → Configure SSL**. TLS 1.0 is the oldest protocol Gateway can speak to a browser, so a browser with it switched off has nothing in common with Gateway however capable it otherwise is.
 
-A browser with SSL 2.0 enabled sends its very first message in SSL 2.0 framing, which has no TLS record header at all. BearSSL rejects that format before reading a single field, so the handshake fails **with no certificate warning** — which makes it look like anything except a checkbox. The log names it:
-
-```
-#3 handshake with the browser failed for lite.duckduckgo.com
-   (BearSSL 3: it sent an SSL 2.0-style hello -- untick "Use SSL 2.0" ...)
-```
+"Use SSL 2.0" can be left alone, which is new in 0.3.4 and is the next section. In 0.3.3 it had to be unticked.
 
 ### Internet Explorer 4 and Netscape 4 cannot use `connect_mitm`
 
-Not a setting and not a bug. Those browsers have SSL 3.0 and no TLS; BearSSL has TLS 1.0 and no SSL. There is no version in common and nothing that creates one. Use `rewrite_https` with them and type addresses without a scheme — which works well, and is how the feature came to exist.
+Not a setting and not a bug. Those browsers have SSL 3.0 and no TLS; BearSSL has TLS 1.0 and no SSL. There is no version in common and nothing that creates one. Use `rewrite_https` with them and type addresses without a scheme — which works well, and is how the feature came to exist. What changed in 0.3.4 is the framing, not the version, so this limit is where it was.
+
+## The SSL 2.0 hello is converted rather than refused (new in 0.3.4)
+
+Contributed by [roytam1](https://github.com/roytam1), who wrote the patch.
+
+A browser with "Use SSL 2.0" enabled sends its very first message in SSL 2.0 framing: no TLS record header at all, just a length with its high bit set. What the message *asks for* can still be TLS 1.0 — the framing is a compatibility wrapper from 1996, meant to let a server that had moved on recognise the hello anyway. BearSSL never took that concession up; it rejected the format before reading a single field, and its own comment said the case might one day be handled. So the handshake failed **with no certificate warning**, because there was no certificate yet to warn about, and the log said `BearSSL 3`.
+
+Gateway now reads that wrapper and rewrites what is inside it as an ordinary TLS ClientHello — the challenge becomes the client random, the SSL 2.0 spelling of 3DES becomes the TLS one — and the handshake goes on as though the browser had used TLS framing to begin with. Internet Explorer can be left exactly as it shipped.
+
+A hello that genuinely asks for SSL 2.0 still fails, and so does one asking for SSL 3.0. Nothing below TLS 1.0 is implemented here and nothing below it will be: SSL 3.0 shares none of TLS's key derivation, has its own MAC construction, and is broken by POODLE besides. `BearSSL 3` therefore still appears, meaning something narrower than it used to — the browser has SSL 3.0 and TLS 1.0 both switched off. When the version is the problem, the log now names the version the browser offered and says which side objected.
+
+**This has not been run against a real browser.** The conversion is tested on the host and reasoned through against RFC 5246 Appendix E.2, including the transcript hashing that decides whether the last message of the handshake succeeds. Whether a period Internet Explorer completes a handshake through it is exactly what 0.3.4 is for. `third_party/certainly/PATCHES.md` §22 has the detail, including the one change from the original patch that was left out and why.
+
+## One URL instead of two ports (new in 0.3.4)
+
+Both listeners now serve a proxy auto-configuration script at `/proxy.pac` — `http://192.168.1.5:8765/proxy.pac`, or the same path on `:8888`. In Internet Explorer it goes under **Tools → Internet Options → Connections → LAN Settings → Use automatic configuration script**, and Netscape 4 has the same thing under **Edit → Preferences → Advanced → Proxies**. Every browser this program targets supports it.
+
+**Which port you fetch it from is how you choose.** From `:8765` the script routes every host to the live proxy. From `:8888` it routes every host to the archive *except* the ones on the `wayback_live` allow-list — so the browser stays pointed at one place and a whitelisted site genuinely never reaches `:8888` at all. That is the one thing two port numbers cannot say on their own. Each script names which of the two it is in its first lines, so two bookmarks are tellable apart.
+
+A host on `wayback_live` goes `DIRECT` — not the archive, and not Gateway either. The list names the sites you want left alone, so the script leaves them alone. The consequence is worth knowing for an `https` host on that list: the browser then does its own handshake, which is the thing Gateway normally spares it, so put one there only if the browser can manage modern TLS by itself.
+
+The proxy addresses in the script are taken from the `Host:` header of the request that fetched it, so they are addresses that browser has just demonstrated it can reach — two interfaces, a name from the hosts file, or `127.0.0.1` from the same machine all produce a working script with nothing to fill in. Gateway's own address and anything undotted return `DIRECT`, so re-fetching the script cannot go through the proxy the script describes.
+
+This is automatic *configuration*, not automatic *detection*. WPAD needs DHCP option 252 or a `wpad` DNS record and Gateway can provide neither, so the URL is pasted once. `/wpad.dat` serves the same script for anyone whose network already points WPAD at this machine.
+
+## Sites without TLS 1.3 now work at all (new in 0.3.4)
+
+Gateway always opens a connection to a site with a TLS 1.3 hello, and falls back to TLS 1.2 when the site has no 1.3. That fallback had never once completed, so a site serving only TLS 1.2 could not be fetched — it failed as a handshake error, a certificate error, or a read failure depending on where it got to, and none of those named the real cause.
+
+Two faults, both needed: Gateway rejected any TLS 1.2 ServerHello that carried no extensions, which is legal and is what a server with nothing to add sends; and once past that, it treated an ordinary outgoing record as evidence that the handshake had restarted, so the first read after the request always failed on a connection with nothing wrong with it. `third_party/certainly/PATCHES.md` §25 and §26 have the detail.
+
+Most of the web hides this, because a host with TLS 1.3 goes near neither. The sites this matters for are the small, hand-run, old-web ones — which are the sites this program exists for. `www.floodgap.com` is the worked example and the one that found both.
 
 ## Typing an https:// URL
 

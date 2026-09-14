@@ -77,6 +77,9 @@ int         GW_WaybackConnects(void);
 
 int         GW_WaybackPort(void);
 
+/* 1 when the archive listener is open, which wayback_port alone does not say. */
+int         GW_WaybackListening(void);
+
 /*
  * The one set of Wayback settings, shared by every client. Deliberately
  * global: the workflow is to set an era from the settings page, browse, then

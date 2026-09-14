@@ -79,17 +79,21 @@ want depends on whether the browser can reach TLS 1.0 at all.
 | `connect_mitm = 1`, `rewrite_https = 0` | IE 5, IE 6, Classilla, RetroZilla | Type `https://` and it works. Real https to the browser: padlock, `Secure` cookies, the URL it asked for. |
 | `rewrite_https = 1`, `connect_mitm = 0` | IE 4, Netscape 4.x, IE 5.1 on Mac OS 9 | Type `http://` or no scheme. Links, redirects and subresources all work; the address bar and `Secure` cookies do not. |
 
-**If you use `connect_mitm`, untick "Use SSL 2.0" in the browser.** In Internet
-Explorer it is under Tools → Internet Options → Advanced → Security, and it is
-on by default. A browser with SSL 2.0 enabled sends its ClientHello in SSL 2.0
-framing, which BearSSL rejects before reading a single field — so the handshake
-fails with no certificate warning at all, and the log says `BearSSL 3`. Leave
-SSL 3.0 and TLS 1.0 ticked. Netscape 4.7 has the same switch under Security →
-Navigator → Configure SSL.
+**If you use `connect_mitm`, make sure "Use TLS 1.0" is ticked in the browser.**
+In Internet Explorer it is under Tools → Internet Options → Advanced → Security,
+and Netscape 4.7 has the equivalent under Security → Navigator → Configure SSL.
+TLS 1.0 is the oldest protocol Gateway can speak to a browser, so a browser with
+it switched off has nothing in common with Gateway however capable it is.
 
-**IE 4 and Netscape 4 cannot use `connect_mitm` at all.** They have SSL 3.0 and
-no TLS; BearSSL has TLS 1.0 and no SSL. There is no overlap and no setting that
-creates one, so those browsers want `rewrite_https` instead.
+"Use SSL 2.0" no longer has to be off. Before 0.3.4 a browser with that box
+ticked sent its ClientHello in SSL 2.0 framing and the handshake died before a
+single field was read — no certificate warning, just `BearSSL 3` in the log.
+Gateway now understands that framing and reads the TLS hello inside it, so the
+box can be left as the browser shipped it.
+
+**IE 4 and Netscape 4 still cannot use `connect_mitm`.** Their limit was never
+the framing: they have SSL 3.0 and no TLS, BearSSL has TLS 1.0 and no SSL, and
+no setting creates an overlap. Those browsers want `rewrite_https` instead.
 
 Gateway generates its own certificate authority the first time `connect_mitm`
 needs one — a 1024-bit RSA key and a self-signed certificate, made on the
@@ -183,6 +187,52 @@ without the archive's own toolbar and link rewriting — a 2001 page arrives as
 2001 served it.
 
 ---
+
+## Automatic proxy configuration
+
+Both listeners serve a PAC file at `/proxy.pac`, so a browser can be given one
+URL instead of two ports and a list of exceptions:
+
+```
+http://192.168.1.5:8765/proxy.pac
+http://192.168.1.5:8888/proxy.pac
+```
+
+**Which address you use is the choice of mode**, because that is the only place
+a person gets to state it:
+
+| Fetched from | What the script routes |
+|---|---|
+| `:8765` | Every host to the live proxy. The allow-list does not appear — there is nothing for it to be an exception to. |
+| `:8888` | Every host to the archive, except `wayback_live` hosts, which go **direct** — neither the archive nor Gateway. |
+
+So the browser stays pointed at one place and a whitelisted site never touches
+`:8888` at all. Each script says at the top which of the two it is, so a
+bookmark for each is tellable apart.
+
+A site on `wayback_live` is one you have said to leave alone, so the script
+leaves it alone: `DIRECT`, straight to the site. Note the consequence for an
+`https` one — the browser then does its own handshake, which is what Gateway
+normally spares it, so an https host on the allow-list wants a browser that
+can manage 2026 TLS by itself.
+
+In Internet Explorer the URL goes in **Tools → Internet Options → Connections →
+LAN Settings → Use automatic configuration script**; Netscape 4 has it under
+**Edit → Preferences → Advanced → Proxies → Automatic proxy configuration**.
+`/wpad.dat` answers the same thing for anyone whose network already points WPAD
+here.
+
+The addresses in the script are built from the `Host:` header of the request
+for the script itself, which means they are by construction addresses that
+browser can reach — a machine with two interfaces, a name in the hosts file and
+`127.0.0.1` from the same machine all get a script that works, with nothing to
+configure. Gateway's own address, plain host names and `127.*` return `DIRECT`,
+so a browser re-fetching the script cannot send that request through the proxy
+the script describes.
+
+This is automatic *configuration*, not automatic *detection*: WPAD discovery
+needs DHCP option 252 or a `wpad` DNS record, and Gateway can hand out neither.
+The URL goes in once.
 
 ## Turning modules on and off
 

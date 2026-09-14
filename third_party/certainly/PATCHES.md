@@ -597,3 +597,414 @@ further than the patch did.
 
 None of it has been run on either system. The imports are checked on every
 build; the behaviour is not, and cannot be from here.
+
+---
+
+## §22 — BearSSL accepts the SSLv2-compatible ClientHello framing
+
+*BearSSL patch, in `bearssl/src/ssl/ssl_engine.c`, `bearssl/inc/bearssl_ssl.h`
+and `bearssl/src/ssl/ssl_hs_server.c`. The first BearSSL files Gateway
+modifies; everything above is Certainly. Contributed by roytam1 as
+`roytam1/Gateway@65f2c9f`, taken with its second change dropped — see the end
+of this section.*
+
+A vintage browser with "Use SSL 2.0" checked wraps an otherwise TLS-capable
+CLIENT-HELLO in the 2-byte SSLv2 record header (high bit set) instead of the
+TLS 5-byte header. BearSSL rejected that before any field was read, in
+`recvrec_ack()`:
+
+```c
+/* Note: right now, we reject clients that try to send
+ * a ClientHello in a format compatible with SSL-2.0. ... */
+```
+
+so a browser that could have negotiated TLS 1.0 failed with
+`BR_ERR_UNSUPPORTED_VERSION` (3) over framing alone.
+
+The engine now detects a high-bit first byte on the very first record (only
+then: `version_in` must still be 0 and encryption inactive, otherwise
+`BR_ERR_UNEXPECTED`), gathers the whole SSLv2 message — up to `SSL2_MAX_MSG`
+(2048) bytes, past which `BR_ERR_TOO_LARGE` — and rewrites it in place to a
+plain TLS ClientHello record:
+
+* `CLIENT-HELLO` (msg type 1) only; anything else is `BR_ERR_UNEXPECTED`.
+  A version below 3.0 is still `BR_ERR_UNSUPPORTED_VERSION`: pure SSLv2 and
+  its crypto are not implemented and never will be.
+* TLS suites arrive as `0x00 xx xx` and are kept; the SSLv2 3DES spec
+  `0x07 0x00 0xC0` maps to `TLS_RSA_WITH_3DES_EDE_CBC_SHA` (`0x00 0x0A`),
+  the only suite these browsers share with BearSSL. Other SSLv2-specific
+  specs (RC4, single DES) are dropped, and an empty remainder is
+  `BR_ERR_BAD_CIPHER_SUITE`. The challenge (required 16–32 bytes) becomes
+  `client_random`, left-padded with zeros per RFC 6101 Appendix E. A session
+  id over 32 bytes is `BR_ERR_OVERSIZED_ID`; one of a legal length is
+  dropped rather than echoed, because RFC 5246 Appendix E.2 requires the
+  field empty in a converted hello — a V2 session id can only name an
+  SSLv2 session, which is not resumable here.
+* The rewritten hello carries no extensions — SSLv2 has none — so there is
+  no SNI or secure-renegotiation signalling; the handshake already handles
+  their absence with defaults. Gateway does not need SNI: the leaf is minted
+  from the host in the `CONNECT` line, not from the hello.
+
+`record_type_in = 0x80` (`SSL2_MARKER`, never a real TLS content type) marks
+a message being gathered. Split delivery works: the marker is set once the
+5-byte read completes and conversion runs when the remainder arrives.
+
+### The transcript hash
+
+The Finished messages cover every handshake byte, and the client hashes the
+hello it *sent*, not the one we rewrote. RFC 5246 Appendix E.2 excludes only
+the V2 length header, so the conversion feeds `msg_type` onward straight into
+the multihasher and sets `hash_skip` (new field, `bearssl_ssl.h`) to the
+length of the re-encoded message. The two read paths in `ssl_hs_server.c`
+count that down instead of hashing, so the rewritten bytes are never hashed
+twice. Without this both sides compute different verify data and every
+handshake fails at the last message.
+
+The pre-feed is safe because the multihasher is pristine at that point:
+`ssl_hs_server.t0` runs `multihash-init` inside `do-handshake` immediately
+before `read-ClientHello`, and the V2 framing is only accepted when
+`version_in` is still 0, so a converted hello is always the first thing in
+the transcript.
+
+`ssl_hs_server.c` is generated from `ssl_hs_server.t0` by the T0 compiler,
+which Gateway does not run. The two hash gates live in the generated file
+only; regenerating it drops them, and the Finished failure that follows will
+not look like a missing patch. A comment at the top of the file says so.
+
+### Not taken
+
+The original commit carried a second, undocumented change in
+`jump_handshake()`: a ClientHello whose body version was `0x0300` had the
+byte rewritten to `0x0301` so BearSSL's `version_min` would accept it. That
+is left out. It rewrites the byte before the handshake code hashes it, and
+`hash_skip` does not cover that path, so an ordinary SSL 3.0 hello would
+break its own Finished; the guard is three bytes of pattern against a buffer
+that is frequently positioned mid-message, so it can fire by chance; and a
+client that offered `0x0300` as its maximum is entitled to reject the
+`0x0301` ServerHello it would get back. A browser that can do TLS 1.0 puts
+`0x0301` in the body; one that cannot is asking for SSL 3.0, which BearSSL
+does not implement. §23 names the offered version in the log instead.
+
+### Verification
+
+Not verified here. roytam1 reports testing the conversion on the host with
+mingw-gcc against the vendored tree: an IE-style hello (version `0x0301`,
+ciphers `0700C0`/`00000A`/`010080`, 16-byte challenge) fed byte-at-a-time
+converts to record type 22 with the padded random and the two 3DES suites; a
+normal TLS header is still accepted; a `0x0002` version still fails
+`UNSUPPORTED_VERSION`; a second SSLv2 header fails `UNEXPECTED`. What remains
+untested on both sides is the part that only a real browser can exercise: a
+complete handshake through a converted hello, Finished included.
+
+---
+
+## §23 — the TLS 1.2 fallback could not revive a failed engine
+
+*Certainly patch, in `src/certainly.c`.*
+
+Certainly attempts TLS 1.3 with its own state machine and falls back to
+BearSSL's T0 engine when the server will not do 1.3 — by closing the
+connection, reconnecting, and calling `br_ssl_client_reset()`. That reset is
+not enough on its own, and the fallback discarded what it returned.
+
+`br_ssl_engine_fail()` sets two things:
+
+```c
+if (rc->iomode != BR_IO_FAILED) {
+        rc->iomode = BR_IO_FAILED;
+        rc->err = err;
+}
+```
+
+`br_ssl_client_reset()` calls `br_ssl_engine_hs_reset()`, which clears the
+handshake state, the T0 stacks, `alert` and `shutdown_recv` — and neither
+`iomode` nor `err`. It then ends with
+
+```c
+return br_ssl_engine_last_error(&cc->eng) == BR_ERR_OK;
+```
+
+so against an engine that has ever failed it returns 0 and leaves it failed.
+The only entry point that puts `iomode` back to `BR_IO_INOUT` and `err` back
+to `BR_ERR_OK` is `br_ssl_engine_set_buffers_bidi()`, reached through
+`br_ssl_engine_set_buffer()`. The fallback never called it, so a client
+context that failed once reported the same stale number for the rest of its
+life, and the caller — which ignored the return — went on driving it.
+
+The fallback now re-arms the buffer before resetting the client and treats a
+failed reset as fatal rather than looping on a context that can no longer
+handshake. Suites, versions, trust anchors and the seeded RNG all survive
+`set_buffer`; only the record state is reset, which is exactly what a
+reconnect wants.
+
+### Telling the two handshakes apart
+
+`MacTLS_GetBearSSLError()` reports whichever leg failed, and both use
+`BR_ERR_*` numbering, so `TLS 1` in the log could be the 1.3 parser rejecting
+a ServerHello field or the 1.2 engine refusing to start — opposite faults with
+the same number. `MacTLS_GetTls13Error()` now says which, and `gw_stream.c`
+puts it in the line: `TLS 1 1.3` against `TLS 1 1.2`.
+
+### What this does and does not explain
+
+It was found looking for why `www.floodgap.com` fails. That host has no TLS
+1.3 at all — a 1.3 ClientHello draws a `handshake_failure` alert — so it
+always takes this path, where almost nothing else goes, and the log shows four
+identical reconnects each ending in `TLS 1`. A sticky error reproduces exactly
+like that, where a genuine protocol failure would tend to vary.
+
+That is a motive, not a proof. Nothing here establishes that `err` was
+actually non-zero at the moment of the fallback; the engine's handshake is
+deliberately never started before then (`certainly.c`, the note above
+`MacTLS_Create`), so it should be pristine. The defect is real and worth
+fixing on its own terms either way, and the new log marker is what will
+identify the leg next time rather than leaving it to inference.
+
+---
+
+## §24 — a failed ServerHello could not say which field it disliked
+
+*Certainly patch, in `src/tls13_handshake.c`.*
+
+The TLS 1.3 ServerHello path had seventeen separate ways to answer
+`BR_ERR_BAD_PARAM`. All of them arrive in the log as `TLS 1`, and none of them
+says which field was wrong or even which check ran. Diagnosing one cost three
+rounds of inference about a server nobody here can packet-capture.
+
+Those sites now answer `0x3000 | __LINE__`. Subtract `0x3000` from the number
+in the log and the remainder is the line in `tls13_handshake.c` — for the
+build the log came from, which the `GW_BUILD_ID` stamp identifies, since the
+line numbers move whenever the file does. The rest of the file still answers
+`BR_ERR_BAD_PARAM`; only the path that has needed finding was changed.
+
+`gw_stream.c` prints any code at or above `0x1000` in hex, so the encoded
+families read straight off: `0x1LLDD` is an alert the peer sent, `0x2000|type`
+a record that was not one, `0x3000|line` a rejected field. Plain `BR_ERR_*`
+numbers stay decimal, which is how they are quoted everywhere else.
+
+### The ordering fault behind it
+
+The record header was read in the wrong order:
+
+```c
+record_type = recv_buf[0];
+record_len = get_u16(recv_buf + 3);
+
+if (record_len > TLS13_MAX_CIPHERTEXT) {   /* ran first */
+        ...BAD_PARAM
+}
+...
+if (record_type != TLS13_CT_HANDSHAKE) {   /* could not be reached */
+        hs->error = 0x2000 | (int)record_type;
+}
+```
+
+The length only means anything once the first byte says this is a TLS record
+at all. A server answering 443 with plain text sends `HTTP/`, whose bytes 3
+and 4 read as a 20527-byte record, so the length check rejected it as a bad
+parameter without ever looking at the byte that would have explained it — and
+the unexpected-type branch below was unreachable for any type whose header
+happened to encode an absurd length, which is most of them. The type is now
+validated first.
+
+### Not a fix for anything yet
+
+This diagnoses; it does not repair. It was written because
+`www.floodgap.com` fails with `TLS 1 1.3` — the 1.3 state machine, not the
+1.2 engine that §23 addressed — and none of the seventeen sites could be
+ruled in or out from here. The next log from that host names the line.
+
+---
+
+## §25 — a TLS 1.2 ServerHello with no extensions was rejected as malformed
+
+*Certainly patch, in `src/tls13_handshake.c`. This is the one that makes
+`www.floodgap.com` reachable.*
+
+`tls13_parse_server_hello()` opened with
+
+```c
+/*
+ * Minimum ServerHello size:
+ * 4 (hs header) + 2 (version) + 32 (random) + 1 (session_id_len) +
+ * 2 (cipher suite) + 1 (compression) + 2 (extensions length) = 44
+ */
+if (msg_len < 44) {
+```
+
+The extensions length is not mandatory. RFC 5246 7.4.1.3 makes the whole
+extensions block optional in a TLS 1.2 ServerHello — its presence is detected
+by whether any bytes follow `compression_method` — so a server with no
+extensions to send stops after 42 bytes. TLS 1.3 does require extensions, but
+a 1.3 server is not who sends a short hello; recognising a 1.2 one and handing
+over to BearSSL is the entire reason this function parses a hello it cannot
+use.
+
+Forty lines further down the function already knew that:
+
+```c
+if (pos + 2 > msg_len) {
+        /* No extensions at all — this is a TLS 1.2 ServerHello */
+        return kTLS13_Fallback12;
+}
+```
+
+which was unreachable for exactly the servers it was written for. The minimum
+is now 42. Every field between is bounds-checked individually, so nothing else
+had to change: a 42-byte hello walks version, random, an empty session id,
+the suite and the compression byte, finds no extensions, and falls back.
+
+### Why floodgap and almost nothing else
+
+`www.floodgap.com` runs HTTPi on AIX and has no TLS 1.3 at all — a 1.3
+ClientHello draws a `handshake_failure` — so it always takes the fallback
+path, where almost nothing else goes. The size then comes down to what
+Certainly asks for. Against OpenSSL's ClientHello the same server answers with
+57 bytes, because OpenSSL offers `ec_point_formats` and `renegotiation_info`
+and it echoes both:
+
+```
+02 00 00 35 03 03 <32-byte random> 00 c0 2f 00
+00 0d ff 01 00 01 00 00 0b 00 04 03 00 01 02
+```
+
+That is 42 bytes of hello, a 2-byte extensions length and 13 bytes of
+extensions. Certainly's ClientHello offers neither extension, so the server
+has nothing to put in the block and omits it: 57 − 15 = 42, one byte under the
+gate. A server that echoes anything at all clears 44 and was never affected,
+which is why this survived every other host.
+
+### How it was found
+
+Not by reading. `TLS 1` in the log was one of seventeen `BR_ERR_BAD_PARAM`
+sites and three rounds of inference had not narrowed it. §24 made those sites
+answer `0x3000 | __LINE__`; the next log said `TLS 0x3319 1.3`, and
+`0x319` is line 793. The line-numbered codes stay, because the next one of
+these should cost one build rather than four.
+
+---
+
+## §26 — a connected TLS 1.2 session was put back into handshaking by its own writes
+
+*Certainly patch, in `src/certainly.c`. With §25, this is what makes a
+TLS 1.2-only origin work at all.*
+
+The pump classified the engine's state after every cycle:
+
+```c
+if (st & (BR_SSL_SENDAPP | BR_SSL_RECVAPP)) {
+        ctx->state = kMacTLS_Connected;
+} else if (st & (BR_SSL_SENDREC | BR_SSL_RECVREC)) {
+        /* Only record-level I/O — still handshaking */
+        ctx->state = kMacTLS_Handshaking;
+}
+```
+
+The engine runs on one buffer for both directions —
+`br_ssl_engine_set_buffer(&ctx->sc.eng, ctx->iobuf, sizeof(ctx->iobuf), 0)`,
+where the trailing 0 is `bidi` — so it works one direction at a time. While an
+outgoing record is being pushed out, the engine offers neither `SENDAPP` nor
+`RECVAPP` and `br_ssl_engine_current_state()` is `BR_SSL_SENDREC` alone.
+
+That is not a handshake in progress. It is the ordinary condition of a
+connected session that has just been written to, which is every session in the
+instant after its request goes out. The context went backwards to
+`kMacTLS_Handshaking`, and
+
+```c
+if (ctx->state != kMacTLS_Connected &&
+    ctx->state != kMacTLS_Closing &&
+    ctx->state != kMacTLS_Closed) return -1;
+```
+
+at the top of `MacTLS_Read()` then answered -1 — a read failure reported on a
+connection in perfect health, with no error set anywhere in it. Once
+`Connected`, only `BR_SSL_CLOSED` leaves it now.
+
+### What it looked like
+
+```
+#8 www.floodgap.com read failed: ok [connected, OT 0, TLS 0, 76.79.210.35]
+```
+
+Every part of that line is a consequence. `read failed` is the -1. `ok` is
+`GWStream_ErrorText`, because nothing had failed. `TLS 0` is the engine's
+error, because there was not one. And the version is missing because
+`MacTLS_GetVersion()` also answers only in `Connected` — the same backwards
+state, showing up twice in one line and saying so in neither.
+
+### Why nothing caught it sooner
+
+Nothing had ever reached the TLS 1.2 path. Certainly always opens with a TLS
+1.3 ClientHello, and §25 was rejecting the ServerHello of every server that
+answered it in 1.2, so the fallback ended in an error before any application
+data was read. §25 made the path reachable and this was the next thing in it.
+Both are needed and neither is sufficient: a TLS 1.2-only origin could not be
+fetched from before today.
+
+Most of the web hides this, since a host with TLS 1.3 never goes near either
+bug. `www.floodgap.com` is a small hand-written server on AIX with no 1.3 at
+all, which is why it was the site that found both.
+
+---
+
+## §27 — the tail of every MITM'd response was discarded at close
+
+*Certainly patch, in `src/server.c`, with the matching change in
+`src/proxy/gw_httpproxy.c`. This is why images did not appear on a page
+fetched over `https` with `connect_mitm`.*
+
+`MacTLS_ServerWrite()` stages plaintext in the engine and flushes it into a
+record. The record reaches the socket in `MacTLS_ServerPump()`, which is a
+separate call. `MacTLS_ServerClose()` never pumped:
+
+```c
+if (s->state == kMacTLS_Connected || s->state == kMacTLS_Handshaking)
+        br_ssl_engine_close(&s->sc.eng);
+
+if (s->transport != NULL) {
+        ct_transport_close(s->transport);
+        ct_transport_destroy(s->transport);
+```
+
+and the proxy closed the moment the last byte had been *written*:
+
+```c
+int r = session_flush(s);
+if (r != 0) s->state = kHPDone;      /* -> GWStream_Close(&s->cli) */
+```
+
+So whatever had not yet been pumped was thrown away with the transport. On a
+plaintext hop this is invisible, because the bytes are in the socket by the
+time the write returns and the operating system flushes on close. On a TLS hop
+they are in a buffer Gateway owns.
+
+`GWStream_SendPending()` now answers whether the engine still holds records,
+and `kHPFlushAndClose` waits for it. It cannot hang: pending output counts as
+waiting on the client in the idle check, so a browser that stops reading ends
+the session on the ordinary timeout.
+
+### Why it looked like an image problem
+
+Size decided it. A small body fits one write, so the whole response was staged
+and then discarded — nothing arrived. A large one crosses many
+`session_step()` passes, each of which pumps, so all but the last records were
+already gone. Google's page is chunked and long and rendered; its logo is 2478
+bytes and did not.
+
+The same page over plain `http` was whole, because Google serves its
+subresources under the scheme of the document: from an `http://` page the
+images are fetched over `http` and never touch this path at all. That is what
+made it look like a difference between two schemes rather than between two
+transports, and it is why the upstream side was searched first — the logs show
+every resource fetched identically in both cases, which was true and was not
+the question.
+
+### Also here
+
+`MacTLS_ServerPump()` carried the same state fault as §26 — record-level I/O
+alone read as "still handshaking" — and it is fixed the same way. It was
+latent: `MacTLS_ServerRead()` and `MacTLS_ServerWrite()` consult the engine
+directly rather than `s->state`, and `GWStream_Pump()` will not move a stream
+back out of Ready, so nothing acted on it. Left in place it would have been
+waiting for the first caller that did.

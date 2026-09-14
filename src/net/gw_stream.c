@@ -291,6 +291,12 @@ int GWStream_TlsVersion(const GWStream *s)
     }
 }
 
+unsigned int GWStream_ClientHelloVersion(const GWStream *s)
+{
+    if (s == NULL || !s->tls || s->srv == NULL) return 0;
+    return MacTLS_ServerClientVersion(s->srv);
+}
+
 /*
  * Turn BearSSL's error number into something readable. Only the codes that
  * actually come up in the field are named; the rest fall through to the raw
@@ -329,6 +335,20 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
     UInt32        addr = 0;
     int           tlsErr = 0;
     unsigned int  alert = 0;
+    /*
+     * Which of the two handshakes produced the number. They share BR_ERR_*
+     * numbering, so "TLS 1" alone could be the 1.3 state machine rejecting a
+     * ServerHello field or BearSSL's 1.2 engine refusing to run, and those
+     * want opposite fixes. Naming it saves the guess.
+     */
+    const char   *leg = "";
+    /*
+     * The encoded diagnostics -- 0x1LLDD for an alert, 0x2000|type for a
+     * record that is not one, 0x3000|line for a rejected ServerHello field --
+     * are printed in hex so their parts can be read straight off. A plain
+     * BR_ERR_* number stays decimal, which is how everyone quotes them.
+     */
+    char          code[16];
 
     if (cap == 0) return out;
 
@@ -346,9 +366,29 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
         addr  = (UInt32)MacTLS_GetResolvedAddress(s->sec);
         tlsErr = MacTLS_GetBearSSLError(s->sec);
         alert = MacTLS_GetAlert(s->sec);
+        if (tlsErr != 0)
+            leg = MacTLS_GetTls13Error(s->sec) != 0 ? " 1.3" : " 1.2";
     } else if (s != NULL && s->plain != NULL) {
         otErr = GWConn_LastError(s->plain);
         addr  = GWConn_PeerIPv4(s->plain);
+    }
+
+    /*
+     * Which version was negotiated, when the handshake got far enough to
+     * settle one. A connection that reached TLS 1.2 came through the
+     * fallback -- Certainly always opens with 1.3 -- so this says which of
+     * the two paths the session was actually on when it failed.
+     */
+    {
+        int ver = GWStream_TlsVersion(s);
+        if (ver == 12) leg = " 1.2";
+        else if (ver == 13) leg = " 1.3";
+    }
+
+    if (tlsErr >= 0x1000) {
+        snprintf(code, sizeof(code), "0x%X", (unsigned)tlsErr);
+    } else {
+        snprintf(code, sizeof(code), "%d", tlsErr);
     }
 
     {
@@ -376,17 +416,24 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
             snprintf(why, sizeof(why), ", alert %u/%u",
                      (alert >> 8) & 0xFF, alert & 0xFF);
 
-        snprintf(out, cap, "%s [%s, OT %d, TLS %d, %lu.%lu.%lu.%lu%s]",
-                 GWStream_ErrorText(s), phase, (int)otErr, tlsErr,
+        snprintf(out, cap, "%s [%s, OT %d, TLS %s%s, %lu.%lu.%lu.%lu%s]",
+                 GWStream_ErrorText(s), phase, (int)otErr, code, leg,
                  (unsigned long)((addr >> 24) & 0xFF),
                  (unsigned long)((addr >> 16) & 0xFF),
                  (unsigned long)((addr >> 8) & 0xFF),
                  (unsigned long)(addr & 0xFF), why);
     } else {
-        snprintf(out, cap, "%s [%s, OT %d, TLS %d, name unresolved]",
-                 GWStream_ErrorText(s), phase, (int)otErr, tlsErr);
+        snprintf(out, cap, "%s [%s, OT %d, TLS %s%s, name unresolved]",
+                 GWStream_ErrorText(s), phase, (int)otErr, code, leg);
     }
     return out;
+}
+
+int GWStream_SendPending(const GWStream *s)
+{
+    if (s == NULL || !s->tls) return 0;
+    if (s->srv != NULL) return MacTLS_ServerPendingOut(s->srv);
+    return 0;
 }
 
 const char *GWStream_ErrorText(const GWStream *s)

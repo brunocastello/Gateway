@@ -15,6 +15,7 @@
 #include "gw_http.h"
 #include "gw_mailcmd.h"
 #include "gw_oauth.h"
+#include "gw_pac.h"
 #include "gw_prefs.h"
 #include "gw_rewrite.h"
 #include "gw_x509write.h"
@@ -1213,6 +1214,199 @@ static void test_x509write(void)
     }
 }
 
+/* ------------------------------------------------------------------ */
+
+/* The allow-list the script is built against. */
+static const char *sPacHosts[] = {
+    "floodgap.com", "*.floodgap.com", "68k.news",
+    "bad\"quote.com",              /* must be dropped, not escaped */
+    NULL
+};
+
+static int pac_host(int index, char *out, size_t cap)
+{
+    if (index < 0 || sPacHosts[index] == NULL) return 0;
+    gw_copy_n(out, cap, sPacHosts[index], strlen(sPacHosts[index]));
+    return 1;
+}
+
+static void test_pac(void)
+{
+    char   buf[4096];
+    size_t n;
+
+    printf("pac\n");
+
+    check(gw_pac_is_request("/proxy.pac"), "proxy.pac is the script");
+    check(gw_pac_is_request("/wpad.dat"), "wpad.dat is the script");
+    check(gw_pac_is_request("/PROXY.PAC"), "the match is case-insensitive");
+    check(gw_pac_is_request("/proxy.pac?1758"), "a cache-buster is ignored");
+    check(!gw_pac_is_request("/proxy.pack"), "a longer name is not the script");
+    check(!gw_pac_is_request("/a/proxy.pac"), "only at the root");
+    check(!gw_pac_is_request("/"), "the root is not the script");
+    check(!gw_pac_is_request(NULL), "no path is not the script");
+
+    /* Served from the archive listener: the allow-list is the exception. */
+    n = gw_pac_build("192.168.1.5", 8765, 8888, pac_host, buf, sizeof(buf));
+    check(n > 0 && n == strlen(buf), "the script is built and counted");
+    check(strstr(buf, "function FindProxyForURL(url, host)") != NULL,
+          "the entry point is there");
+    check(strstr(buf, "if (host == \"192.168.1.5\") return \"DIRECT\";") != NULL,
+          "Gateway itself is DIRECT, so a refetch cannot loop");
+    check(strstr(buf, "shExpMatch(host, \"*.floodgap.com\")) return \"DIRECT\";")
+              != NULL,
+          "an allow-listed host goes direct, not through either proxy");
+    check(strstr(buf, "shExpMatch(host, \"68k.news\") ||\n"
+                      "        shExpMatch(host, \"*.68k.news\")") != NULL,
+          "a plain host is emitted in both forms, as the proxy matches it");
+    check(strstr(buf, "8765") == NULL,
+          "the archive script names no live proxy at all");
+    check(strstr(buf, "url") == NULL || strstr(buf, "shExpMatch(url") == NULL,
+          "and decides on the host alone");
+    check(strstr(buf, "return \"PROXY 192.168.1.5:8888\";") != NULL,
+          "everything else goes to the archive");
+    check(strstr(buf, "bad") == NULL,
+          "a pattern that would break the literal is dropped");
+
+    check(strstr(buf, "// The archive:") != NULL,
+          "the script says which of the two it is");
+
+    /* Served from the live listener: everything live, no allow-list. */
+    n = gw_pac_build("gateway.local", 8765, 0, pac_host, buf, sizeof(buf));
+    check(n > 0, "the script is built with no archive listener");
+    check(strstr(buf, "8888") == NULL, "no archive proxy is named");
+    check(strstr(buf, "floodgap") == NULL,
+          "the allow-list is left out when there is nothing to route around");
+    check(strstr(buf, "return \"PROXY gateway.local:8765\";") != NULL,
+          "everything goes to the live proxy");
+    check(strstr(buf, "// The live web:") != NULL,
+          "and says so at the top");
+
+    /* Refusals rather than half a script. */
+    check(gw_pac_build("", 8765, 0, pac_host, buf, sizeof(buf)) == 0,
+          "no authority is refused");
+    check(gw_pac_build("ho\"st", 8765, 0, pac_host, buf, sizeof(buf)) == 0,
+          "an authority that would break the literal is refused");
+    check(gw_pac_build("192.168.1.5", 0, 0, pac_host, buf, sizeof(buf)) == 0,
+          "no live port is refused");
+    check(gw_pac_build("192.168.1.5", 8765, 8888, pac_host, buf, 40) == 0,
+          "a buffer too small yields nothing rather than a truncated script");
+}
+
+/* ------------------------------------------------------------------ */
+
+static void test_host_match(void)
+{
+    printf("gw_host_matches\n");
+
+    /* A plain name covers itself and everything under it. */
+    check(gw_host_matches("howsmyssl.com", "howsmyssl.com"),
+          "a plain name matches itself");
+    check(gw_host_matches("howsmyssl.com", "www.howsmyssl.com"),
+          "a plain name covers its subdomains");
+    check(gw_host_matches("howsmyssl.com", "a.b.howsmyssl.com"),
+          "however deep");
+    check(gw_host_matches("HowsMySSL.com", "WWW.howsmyssl.COM"),
+          "case does not matter");
+
+    /* But only a real subdomain: the dot has to be there. */
+    check(!gw_host_matches("howsmyssl.com", "notmyhowsmyssl.com"),
+          "a suffix that is not a subdomain does not match");
+    check(!gw_host_matches("howsmyssl.com", "howsmyssl.com.evil.test"),
+          "nor a name that merely starts with it");
+    check(!gw_host_matches("howsmyssl.com", "com"),
+          "nor a shorter name");
+
+    /* A glob keeps meaning exactly what it says. */
+    check(gw_host_matches("*.howsmyssl.com", "www.howsmyssl.com"),
+          "a glob still matches subdomains");
+    check(!gw_host_matches("*.howsmyssl.com", "howsmyssl.com"),
+          "a *. glob does not cover the bare name, as globs never did");
+    check(gw_host_matches("*.news", "68k.news"), "a bare-suffix glob works");
+    check(!gw_host_matches("", "howsmyssl.com"), "an empty pattern matches nothing");
+    check(!gw_host_matches("howsmyssl.com", ""), "and nothing matches an empty host");
+}
+
+/* An indexed lookup must not stop at a blank entry. */
+static void test_prefs_list(void)
+{
+    static const char text[] =
+        "wayback_live = frogfind.com\n"
+        "wayback_live =\n"                 /* blank: not the end of the list */
+        "# wayback_live = commented.out\n"
+        "wayback_live = howsmyssl.com\n";
+    char buf[128];
+
+    printf("prefs lists\n");
+
+    check(gw_prefs_get_nth(text, sizeof(text) - 1, "wayback_live", 0,
+                           buf, sizeof(buf)) == 1, "entry 0 is present");
+    check_str(buf, "frogfind.com", "entry 0");
+
+    check(gw_prefs_get_nth(text, sizeof(text) - 1, "wayback_live", 1,
+                           buf, sizeof(buf)) == 1,
+          "a blank entry is reported as present, not as the end");
+    check_str(buf, "", "entry 1 is empty");
+
+    check(gw_prefs_get_nth(text, sizeof(text) - 1, "wayback_live", 2,
+                           buf, sizeof(buf)) == 1,
+          "the entry after the blank is still reachable");
+    check_str(buf, "howsmyssl.com", "entry 2, past the blank and the comment");
+
+    check(gw_prefs_get_nth(text, sizeof(text) - 1, "wayback_live", 3,
+                           buf, sizeof(buf)) == 0, "and then the list ends");
+
+    /* gw_prefs_get keeps its old meaning: set to something, or not. */
+    check(gw_prefs_get(text, sizeof(text) - 1, "wayback_live",
+                       buf, sizeof(buf)) == 1, "gw_prefs_get is unchanged");
+}
+
+/* ------------------------------------------------------------------ */
+
+static void test_prefs_list_write(void)
+{
+    static const char text[] =
+        "# the hosts fetched live\n"
+        "wayback_live = old.example\n"
+        "wayback_live = gone.example\n"
+        "http_port = 8765\n";
+    static const char *vals[] = { "frogfind.com", "68k.news", "floodgap.com" };
+    char out[1024];
+    size_t n;
+
+    printf("gw_prefs_set_list\n");
+
+    n = gw_prefs_set_list(text, sizeof(text) - 1, "wayback_live",
+                          vals, 3, out, sizeof(out));
+    check(n > 0 && n < sizeof(out), "the list is written");
+    out[n] = '\0';
+    check_str(out,
+        "# the hosts fetched live\n"
+        "wayback_live = frogfind.com\n"
+        "wayback_live = 68k.news\n"
+        "wayback_live = floodgap.com\n"
+        "http_port = 8765\n",
+        "every old entry is replaced, in place, and the comment stays");
+
+    /* An empty list removes the key and nothing else. */
+    n = gw_prefs_set_list(text, sizeof(text) - 1, "wayback_live",
+                          vals, 0, out, sizeof(out));
+    out[n] = '\0';
+    check_str(out, "# the hosts fetched live\nhttp_port = 8765\n",
+              "an empty list removes every entry");
+
+    /* A key that is not there yet is appended. */
+    n = gw_prefs_set_list("http_port = 8765\n", 17, "wayback_live",
+                          vals, 1, out, sizeof(out));
+    out[n] = '\0';
+    check_str(out, "http_port = 8765\nwayback_live = frogfind.com\n",
+              "an absent key is appended");
+
+    check(gw_prefs_set_list(text, sizeof(text) - 1, "wayback_live",
+                            vals, 3, out, 20) == 0,
+          "a buffer too small writes nothing rather than half a file");
+}
+
 int main(void)
 {
     test_util();
@@ -1229,6 +1423,10 @@ int main(void)
     test_wayback();
     test_rewrite();
     test_x509write();
+    test_host_match();
+    test_prefs_list();
+    test_prefs_list_write();
+    test_pac();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;

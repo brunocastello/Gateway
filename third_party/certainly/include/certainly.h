@@ -159,6 +159,11 @@ long         MacTLS_GetTransportError(const MacTLS_Context *ctx);
 unsigned int MacTLS_GetAlert(const MacTLS_Context *ctx);
 
 int          MacTLS_GetBearSSLError(const MacTLS_Context *ctx);
+/* Non-zero when the failure came from the TLS 1.3 state machine rather than
+ * from BearSSL's TLS 1.2 engine. MacTLS_GetBearSSLError() reports whichever
+ * of the two failed, using the same BR_ERR_* numbering for both, so this is
+ * how a caller tells them apart -- and the two want opposite fixes. */
+int          MacTLS_GetTls13Error(const MacTLS_Context *ctx);
 
 /* Returns the negotiated protocol version, or kMacTLS_VersionUnknown
  * before the handshake completes (state != kMacTLS_Connected). */
@@ -221,6 +226,17 @@ MacTLS_State   MacTLS_ServerState(const MacTLS_Server *s);
  * whole diagnosis with a client this vintage, and an error page cannot
  * carry it -- the connection it would travel on is the one that broke. */
 int            MacTLS_ServerLastError(const MacTLS_Server *s);
+/* The highest protocol version the client offered in its ClientHello
+ * (0x0300 = SSL 3.0, 0x0301 = TLS 1.0, and so on). This is the number the
+ * server compares against its own minimum, so it is the one worth printing
+ * when that comparison is what failed. Set as the hello is parsed; 0 before
+ * that, and 0 if the hello never arrived. */
+unsigned int   MacTLS_ServerClientVersion(const MacTLS_Server *s);
+/* 1 while the engine still holds encrypted bytes that have not reached the
+ * socket. MacTLS_ServerWrite() only stages plaintext -- the records leave in
+ * MacTLS_ServerPump() -- so a caller that writes and then closes discards
+ * whatever had not been pumped yet. Ask this before closing. */
+int            MacTLS_ServerPendingOut(const MacTLS_Server *s);
 int            MacTLS_ServerRead(MacTLS_Server *s, void *buf, size_t cap);
 int            MacTLS_ServerWrite(MacTLS_Server *s, const void *data, size_t len);
 void           MacTLS_ServerClose(MacTLS_Server *s);

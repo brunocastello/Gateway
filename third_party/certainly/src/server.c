@@ -184,8 +184,18 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
     st = br_ssl_engine_current_state(&s->sc.eng);
     if (st & (BR_SSL_SENDAPP | BR_SSL_RECVAPP))
         s->state = kMacTLS_Connected;
-    else if (st & (BR_SSL_SENDREC | BR_SSL_RECVREC))
-        s->state = kMacTLS_Handshaking;
+    else if (st & (BR_SSL_SENDREC | BR_SSL_RECVREC)) {
+        /*
+         * Record-level I/O alone means "still handshaking" only before the
+         * handshake has finished -- see PATCHES.md §26, which is the same
+         * fault on the client side. One buffer serves both directions, so a
+         * connected session pushing out a record offers neither SENDAPP nor
+         * RECVAPP, and that is the ordinary state of one that has just been
+         * written to.
+         */
+        if (s->state != kMacTLS_Connected)
+            s->state = kMacTLS_Handshaking;
+    }
 
     return s->state;
 }
@@ -238,6 +248,17 @@ int MacTLS_ServerWrite(MacTLS_Server *s, const void *data, size_t len)
     return (int)len;
 }
 
+int MacTLS_ServerPendingOut(const MacTLS_Server *s)
+{
+    unsigned st;
+
+    if (s == NULL) return 0;
+    if (s->state != kMacTLS_Connected && s->state != kMacTLS_Handshaking)
+        return 0;
+    st = br_ssl_engine_current_state((br_ssl_engine_context *)&s->sc.eng);
+    return (st & BR_SSL_SENDREC) != 0;
+}
+
 MacTLS_State MacTLS_ServerState(const MacTLS_Server *s)
 {
     return (s == NULL) ? kMacTLS_Error : s->state;
@@ -252,6 +273,12 @@ int MacTLS_ServerLastError(const MacTLS_Server *s)
      * the honest signature -- asking what went wrong changes nothing.
      */
     return br_ssl_engine_last_error((br_ssl_engine_context *)&s->sc.eng);
+}
+
+unsigned int MacTLS_ServerClientVersion(const MacTLS_Server *s)
+{
+    if (s == NULL) return 0;
+    return s->sc.client_max_version;
 }
 
 void MacTLS_ServerClose(MacTLS_Server *s)

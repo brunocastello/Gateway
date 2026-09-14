@@ -315,6 +315,7 @@ private:
             AppendMenu(mFileMenu, title);
             InsertMenu(mFileMenu, 0);
         }
+
         DrawMenuBar();
     }
 

@@ -19,10 +19,12 @@
 #include <string.h>
 #include <stdio.h>
 
+#include "../gw_config.h"
 #include "../gw_core.h"
 #include "../portable/gw_chunked.h"
 #include "../portable/gw_http.h"
 #include "../portable/gw_log.h"
+#include "../portable/gw_pac.h"
 #include "../gw_ca.h"
 #include "../portable/gw_rewrite.h"
 #include "../portable/gw_url.h"
@@ -206,6 +208,23 @@ static int connecting_count(int wayback)
         if (sSessions[i].state == kHPConnect &&
             sSessions[i].wayback == wayback) n++;
     return n;
+}
+
+/*
+ * Format a TLS version number (in network byte order) as a human-readable
+ * string. The version comes from the client's ClientHello and tells us what
+ * the browser thinks it is speaking. Returns a static string.
+ */
+static const char *tls_version_name(unsigned int ver)
+{
+    switch (ver) {
+    case 0x0300: return "SSL 3.0";
+    case 0x0301: return "TLS 1.0";
+    case 0x0302: return "TLS 1.1";
+    case 0x0303: return "TLS 1.2";
+    case 0x0304: return "TLS 1.3";
+    default:     return NULL;
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -503,6 +522,65 @@ static int wayback_settings(GWHttpSession *s)
 }
 
 /*
+ * The allow-list, one pattern at a time, for the auto-configuration script.
+ *
+ * gw_pac.c is portable and the preferences are not, so the patterns reach it
+ * through here. Same key and same order as GW_WaybackHostIsLive(), because a
+ * script that routed differently from the proxy it configures would be worse
+ * than no script.
+ */
+static int pac_next_live_host(int index, char *out, size_t cap)
+{
+    return GWConfig_GetNth("wayback_live", index, out, cap);
+}
+
+/*
+ * Serve the auto-configuration script.
+ *
+ * The authority comes from the request rather than from anything Gateway
+ * knows about itself, and that is the point: whatever the browser typed to
+ * reach this file is, by construction, an address that browser can reach. A
+ * machine with two interfaces, a name in the hosts file, or 127.0.0.1 from
+ * the same machine all produce a script that works, with nothing to
+ * configure.
+ */
+static void session_serve_pac(GWHttpSession *s)
+{
+    static char page[GW_OUT_MAX / 2];
+    size_t n;
+
+    /*
+     * Which listener served it decides what it says, because choosing the URL
+     * is how a person says which they want.
+     *
+     * From :8765 the answer is the live web for everything, and the
+     * allow-list does not appear -- there is nothing for it to be an
+     * exception to when every host already routes live. From :8888 it is the
+     * archive for everything except the allow-list, which is the routing that
+     * listener performs anyway.
+     *
+     * Serving both the same thing was the first attempt and it was wrong: it
+     * made the two URLs interchangeable, so pasting the :8765 one and getting
+     * archived pages was the only possible outcome and nothing about it was
+     * guessable.
+     */
+    n = s->wayback
+        ? gw_pac_build(s->req.url.host, GW_HttpPort(), GW_WaybackPort(),
+                       pac_next_live_host, page, sizeof(page))
+        : gw_pac_build(s->req.url.host, GW_HttpPort(), 0,
+                       NULL, page, sizeof(page));
+    if (n == 0) {
+        session_fail(s, "HTTP/1.0 500 Internal Server Error\r\n"
+                        "Connection: close\r\n\r\n",
+                     "auto-configuration script would not fit");
+        return;
+    }
+    gw_log("#%ld proxy.pac for %s: %s", s->id, s->req.url.host,
+           s->wayback ? "the archive" : "the live web");
+    session_serve(s, GW_PAC_CONTENT_TYPE, page, n);
+}
+
+/*
  * Point a request at the archive, unless it is for the settings page or for a
  * host on the allow-list. Returns 1 when the session is already finished.
  */
@@ -521,6 +599,18 @@ static int wayback_prepare(GWHttpSession *s)
         gw_log("#%ld live: %s", s->id, s->req.url.host);
         return 0;
     }
+
+    /*
+     * Say when the allow-list did not match, not only when it did.
+     *
+     * A hit printed a line and a miss printed nothing, so a host going to the
+     * archive looked the same whether wayback_live had been consulted or not
+     * -- and the commonest reason for a miss is a pattern that covers the
+     * bare name and not the www one, since the two are separate patterns and
+     * the shipped prefs list both for every host. Naming the host that missed
+     * puts the answer next to the question.
+     */
+    gw_log("#%ld archive: %s is not on wayback_live", s->id, s->req.url.host);
 
     /* GeoCities is not in the archive so much as at its successor. */
     if (set->geocities &&
@@ -558,13 +648,20 @@ static int wayback_prepare(GWHttpSession *s)
  * and the difference between a site whose certificate really does not cover it
  * and Gateway having asked for the wrong thing is the whole diagnosis. So the
  * host it validated against goes in the line.
+ *
+ * `what` names the condition the caller observed, because the stream's own
+ * description can be "ok" -- an origin that completes a handshake and then
+ * closes without answering leaves no error anywhere, and "www.floodgap.com:
+ * ok" as a failure reason says nothing at all. The observation and the error
+ * are different facts and the line now carries both.
  */
-static const char *upstream_why(GWHttpSession *s, char *out, size_t cap)
+static const char *upstream_why(GWHttpSession *s, const char *what,
+                                char *out, size_t cap)
 {
     char desc[192];
 
-    snprintf(out, cap, "%s: %s", s->upHost[0] ? s->upHost : "upstream",
-             GWStream_Describe(&s->up, desc, sizeof(desc)));
+    snprintf(out, cap, "%s %s: %s", s->upHost[0] ? s->upHost : "upstream",
+             what, GWStream_Describe(&s->up, desc, sizeof(desc)));
     return out;
 }
 
@@ -719,12 +816,40 @@ static void step_recv_request(GWHttpSession *s)
                       s->mitmHost, strlen(s->mitmHost));
     }
 
-    gw_log("#%ld %s %s%s:%u%.48s%s", s->id, s->req.method,
+    /*
+     * The listener the session arrived on leads the line.
+     *
+     * It is the one fact that decides whether a request is served from the
+     * archive or the live web, and the log had never carried it -- so a
+     * browser still pointed at :8888 after its configuration was changed
+     * looked exactly like Gateway ignoring the change, with nothing in the
+     * log to separate the two. It is the first thing on the line because it
+     * is the first thing worth checking.
+     */
+    gw_log("#%ld :%d %s %s%s:%u%.40s%s", s->id,
+           s->wayback ? GW_WaybackPort() : GW_HttpPort(), s->req.method,
            s->req.url.tls ? "https " : "", s->req.url.host,
            (unsigned)s->req.url.port, s->req.url.path,
            s->req.shape == kGWShapeConnect ? " (CONNECT)" : "");
 
     s->target = s->req.url;
+
+    /*
+     * The auto-configuration script, on both listeners.
+     *
+     * Origin-form and not a terminated CONNECT means the request is addressed
+     * to Gateway rather than through it: a proxy-configured browser always
+     * sends the absolute form, and the one other source of origin-form
+     * requests is a browser inside a connect_mitm tunnel, which is asking the
+     * real origin and must not be answered here. So this fires exactly when
+     * someone has pointed something straight at Gateway's own address, which
+     * is what fetching the script is.
+     */
+    if (s->req.shape == kGWShapeOrigin && !s->mitm &&
+        gw_pac_is_request(s->req.url.path)) {
+        session_serve_pac(s);
+        return;
+    }
 
     /* Module 3's only entry point on the request side. */
     if (s->wayback && s->req.shape != kGWShapeConnect) {
@@ -891,7 +1016,7 @@ static void step_recv_head(GWHttpSession *s)
              */
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
-                         upstream_why(s, why, sizeof(why)));
+                         upstream_why(s, "read failed", why, sizeof(why)));
             return;
         }
     }
@@ -914,7 +1039,8 @@ static void step_recv_head(GWHttpSession *s)
              */
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
-                         upstream_why(s, why, sizeof(why)));
+                         upstream_why(s, "closed before responding",
+                                      why, sizeof(why)));
         }
         return;
     }
@@ -931,7 +1057,27 @@ static void step_recv_head(GWHttpSession *s)
                               GWStream_TlsVersion(&s->up) == 12 ? "1.2" : "?")
                            : "-",
                  res.status, s->req.url.host);
-    if (res.has_content_length)
+    if (res.status == 206) {
+        /*
+         * A partial response is the browser's cache talking, not the site's:
+         * it asked for a range because it already holds part of the entity.
+         * The range is the whole content of the answer, so a line reporting
+         * only the byte count says nothing about whether the right bytes
+         * came back -- which is the only question a broken image raises.
+         */
+        size_t      crLen = 0;
+        const char *cr = gw_header_find(s->uhead, res.head_len,
+                                        "content-range", &crLen);
+        char        range[64];
+
+        if (cr != NULL) {
+            gw_copy_n(range, sizeof(range), cr, crLen);
+            gw_log("#%ld <- 206 %s %s", s->id, s->req.url.host, range);
+        } else {
+            gw_log("#%ld <- 206 %s with no Content-Range, which is a fault",
+                   s->id, s->req.url.host);
+        }
+    } else if (res.has_content_length)
         gw_log("#%ld <- %d %s %ld bytes", s->id, res.status,
                s->req.url.host, res.content_length);
     else
@@ -1348,35 +1494,54 @@ static void step_mitm_wait(GWHttpSession *s)
          */
         /*
          * The number is the diagnosis, so it goes in the line. With a client
-         * this old the two that matter are BearSSL's 4, meaning it offered a
-         * protocol version older than TLS 1.0 -- which for Internet Explorer 4
-         * means SSL 3.0, all it has -- and 16, meaning it offered no cipher
-         * suite BearSSL implements, which an export-grade build will not.
-         * Neither can be reported any other way: an error page would have to
-         * travel down the connection that just failed.
+         * this old the ones that matter are 3 and the protocol_version alert,
+         * both meaning the browser cannot reach TLS 1.0 and neither saying so
+         * in the same way, and 16, meaning it offered no cipher suite BearSSL
+         * implements, which an export-grade build will not. None of them can
+         * be reported any other way: an error page would have to travel down
+         * the connection that just failed.
          */
         {
             int         err = GWStream_ServerError(&s->cli);
             const char *why = "";
+            char        why_buf[128];
 
             /*
-             * 3 is the one every Internet Explorer produces, and it is not
-             * about which TLS versions the browser has. ssl_engine.c rejects
-             * a ClientHello sent in SSL 2.0 framing -- no record header, a
-             * length with the high bit set, then message type 01 -- so the
-             * byte it reads as a version major is a length byte. IE enables
-             * "Use SSL 2.0" by default and that framing is what it sends.
-             *
-             * Which makes this a setting rather than a limit, and worth
-             * saying in the line: IE 4, Netscape 4.7, IE 5.1 on Mac OS and
-             * IE 6 on Windows Me all failed here identically, and all of them
-             * had that box ticked.
+             * 3 was, until PATCHES.md §22, what every Internet Explorer
+             * produced: BearSSL threw out the SSL 2.0 record framing that IE
+             * sends by default before it read a field, so the box marked
+             * "Use SSL 2.0" had to be unticked whatever the hello inside
+             * asked for. That framing is accepted now, which leaves 3
+             * meaning what it says -- the hello itself asked for a version
+             * below 3.0, so the browser has SSL 3.0 and TLS 1.0 both off,
+             * or has neither to turn on.
              */
             if (err == 3)
-                why = ": it sent an SSL 2.0-style hello -- untick "
-                      "\"Use SSL 2.0\" in Internet Options > Advanced";
-            else if (err == 512 + 70 || err == 256 + 70)
-                why = ": protocol_version alert -- no version in common";
+                why = ": its hello asked for SSL 2.0, which has no "
+                      "implementation here -- tick \"Use TLS 1.0\" in "
+                      "Internet Options > Advanced";
+            /*
+             * 70 is protocol_version, and which direction it went matters.
+             * Sent by us, BearSSL is refusing a hello below its TLS 1.0
+             * minimum, and the version the browser offered is the whole
+             * diagnosis. Sent by the browser, it is refusing our answer.
+             */
+            else if (err == 512 + 70 || err == 256 + 70) {
+                unsigned int ver = GWStream_ClientHelloVersion(&s->cli);
+                const char *name = tls_version_name(ver);
+                const char *dir = (err > 512)
+                    ? "we refused its hello" : "it refused our answer";
+
+                if (name != NULL)
+                    snprintf(why_buf, sizeof why_buf,
+                        ": it offered %s at best and TLS 1.0 is the floor "
+                        "(%s)", name, dir);
+                else
+                    snprintf(why_buf, sizeof why_buf,
+                        ": it offered version 0x%04X and TLS 1.0 is the "
+                        "floor (%s)", ver, dir);
+                why = why_buf;
+            }
             else if (err == 16)
                 why = ": no cipher suite in common (a 40-bit browser?)";
             else if (err == 4)
@@ -1463,7 +1628,8 @@ static void session_step(GWHttpSession *s)
      * actually leaves, so a slot cannot be held by a client that is gone.
      */
     if (GWNet_Ticks() - s->lastActivity > GW_IDLE_TIMEOUT) {
-        int waiting_on_client = (s->outLen > s->outSent) &&
+        int waiting_on_client = (s->outLen > s->outSent ||
+                                 GWStream_SendPending(&s->cli)) &&
                                 !GWStream_PeerGone(&s->cli);
 
         if (!waiting_on_client) {
@@ -1523,7 +1689,8 @@ static void session_step(GWHttpSession *s)
                 session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                                 "Connection: close\r\n\r\n"
                                 "Gateway: could not reach the origin server.\r\n",
-                             upstream_why(s, why, sizeof(why)));
+                             upstream_why(s, "could not be reached",
+                                          why, sizeof(why)));
             }
         }
         break;
@@ -1577,7 +1744,26 @@ static void session_step(GWHttpSession *s)
 
     case kHPFlushAndClose: {
         int r = session_flush(s);
-        if (r != 0) s->state = kHPDone;
+        /*
+         * Handing the last byte to GWStream_Write is not the same as sending
+         * it. On a TLS client hop -- connect_mitm -- a write only stages
+         * plaintext in the engine; the records leave in the pump, which
+         * session_step() runs at the top of the next pass. Going straight to
+         * kHPDone closed the connection before that pass, and everything
+         * staged went with it.
+         *
+         * A plain hop never waits here: the socket already has the bytes, so
+         * GWStream_SendPending() answers 0 and this is the old behaviour.
+         *
+         * It cannot hang. A browser that stops reading leaves bytes pending,
+         * which counts as waiting on the client in the idle check above, and
+         * that ends the session on the ordinary timeout.
+         */
+        if (r < 0) {
+            s->state = kHPDone;
+        } else if (r != 0 && !GWStream_SendPending(&s->cli)) {
+            s->state = kHPDone;
+        }
         break;
     }
 

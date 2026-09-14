@@ -199,6 +199,15 @@ int           GWStream_PeerGone(const GWStream *s);
 
 /* 0 when unknown or plain, otherwise 12 or 13. */
 int           GWStream_TlsVersion(const GWStream *s);
+/* The highest protocol version the browser offered in its ClientHello
+ * (0x0300 = SSL 3.0, 0x0301 = TLS 1.0, and so on). 0 when unknown, plain, or
+ * before the hello arrived. Server side only, so connect_mitm. */
+unsigned int  GWStream_ClientHelloVersion(const GWStream *s);
+/* 1 while TLS still holds bytes that have not reached the socket. A write to
+ * a TLS stream only stages plaintext, so closing on the strength of the write
+ * having returned throws the tail away. Plain streams always answer 0: the
+ * socket has the bytes already. */
+int           GWStream_SendPending(const GWStream *s);
 const char   *GWStream_ErrorText(const GWStream *s);
 
 /*

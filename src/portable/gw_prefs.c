@@ -62,7 +62,16 @@ int gw_prefs_get_nth(const char *text, size_t len, const char *key, int n,
                         while (end > vs && (text[end - 1] == ' ' ||
                                             text[end - 1] == '\t')) end--;
                         gw_copy_n(out, cap, text + vs, end - vs);
-                        return out[0] != '\0';
+                        /*
+                         * 1 because the key is present at this index, even
+                         * when its value is empty. Reporting an empty value
+                         * as "not found" made a caller walking the indices
+                         * stop at the first blank entry and never see the
+                         * ones after it, which is a silent way to lose half
+                         * a list. gw_prefs_get() keeps the old meaning by
+                         * testing the value itself.
+                         */
+                        return 1;
                     }
                 }
             }
@@ -75,7 +84,10 @@ int gw_prefs_get_nth(const char *text, size_t len, const char *key, int n,
 int gw_prefs_get(const char *text, size_t len, const char *key,
                  char *out, size_t cap)
 {
-    return gw_prefs_get_nth(text, len, key, 0, out, cap);
+    /* "Set to something" rather than "present": a key with an empty value
+     * should fall through to the caller's default, as it always has. */
+    if (!gw_prefs_get_nth(text, len, key, 0, out, cap)) return 0;
+    return out[0] != '\0';
 }
 
 long gw_prefs_get_num(const char *text, size_t len, const char *key, long def)
@@ -173,6 +185,102 @@ size_t gw_prefs_set(const char *text, size_t len, const char *key,
         used += vlen;
         memcpy(out + used, eol, eol_len);
         used += eol_len;
+    }
+    return used;
+}
+
+size_t gw_prefs_set_list(const char *text, size_t len, const char *key,
+                         const char *const *values, int count,
+                         char *out, size_t cap)
+{
+    size_t off = 0;
+    size_t used = 0;
+    size_t klen = strlen(key);
+    const char *eol = gw_prefs_eol(text, len);
+    size_t eol_len = strlen(eol);
+    int written = 0;
+
+    if (count < 0) return 0;
+
+    while (off < len) {
+        size_t line_end, next, i;
+        int is_match = 0;
+
+        gw_prefs_line(text, len, off, &line_end, &next);
+
+        i = off;
+        while (i < line_end && (text[i] == ' ' || text[i] == '\t')) i++;
+
+        if (i < line_end && text[i] != '#' && text[i] != ';') {
+            size_t ke = i;
+            while (ke < line_end && text[ke] != '=' && text[ke] != ':') ke++;
+            if (ke < line_end) {
+                size_t kend = ke;
+                while (kend > i && (text[kend - 1] == ' ' ||
+                                    text[kend - 1] == '\t')) kend--;
+                if (kend - i == klen && gw_strnicmp(text + i, key, klen) == 0)
+                    is_match = 1;
+            }
+        }
+
+        if (is_match) {
+            /*
+             * The first one holds the place: a list usually sits under a
+             * comment explaining it, and moving the whole thing to the end of
+             * the file on every save would walk it away from its explanation.
+             * The others are dropped, their values having been written here.
+             */
+            if (!written) {
+                int k;
+
+                for (k = 0; k < count; k++) {
+                    size_t vlen = strlen(values[k]);
+
+                    if (used + klen + 3 + vlen + eol_len > cap) return 0;
+                    memcpy(out + used, key, klen);
+                    used += klen;
+                    out[used++] = ' ';
+                    out[used++] = '=';
+                    out[used++] = ' ';
+                    memcpy(out + used, values[k], vlen);
+                    used += vlen;
+                    memcpy(out + used, eol, eol_len);
+                    used += eol_len;
+                }
+                written = 1;
+            }
+        } else {
+            size_t n = next - off;
+
+            if (used + n > cap) return 0;
+            memcpy(out + used, text + off, n);
+            used += n;
+        }
+        off = next;
+    }
+
+    if (!written && count > 0) {
+        int k;
+
+        if (used > 0 && out[used - 1] != '\n' && out[used - 1] != '\r') {
+            if (used + eol_len > cap) return 0;
+            memcpy(out + used, eol, eol_len);
+            used += eol_len;
+        }
+        for (k = 0; k < count; k++) {
+            size_t vlen = strlen(values[k]);
+
+            if (used + klen + 3 + vlen + eol_len > cap) return 0;
+            memcpy(out + used, key, klen);
+            used += klen;
+            out[used++] = ' ';
+            out[used++] = '=';
+            out[used++] = ' ';
+            memcpy(out + used, values[k], vlen);
+            used += vlen;
+            memcpy(out + used, eol, eol_len);
+            used += eol_len;
+        }
     }
     return used;
 }

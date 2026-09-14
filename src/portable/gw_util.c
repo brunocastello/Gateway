@@ -143,3 +143,26 @@ int gw_glob_match(const char *pattern, const char *text)
     }
     return *text == '\0';
 }
+
+int gw_host_matches(const char *pattern, const char *host)
+{
+    size_t plen, hlen;
+
+    if (pattern == NULL || host == NULL || pattern[0] == '\0') return 0;
+
+    if (strchr(pattern, '*') != NULL || strchr(pattern, '?') != NULL)
+        return gw_glob_match(pattern, host);
+
+    if (gw_stricmp(pattern, host) == 0) return 1;
+
+    /*
+     * A subdomain, which means the separating dot has to be part of what is
+     * compared: without it "howsmyssl.com" would also cover
+     * "notmyhowsmyssl.com", which is a different site owned by someone else.
+     */
+    plen = strlen(pattern);
+    hlen = strlen(host);
+    return hlen > plen + 1 &&
+           host[hlen - plen - 1] == '.' &&
+           gw_strnicmp(host + hlen - plen, pattern, plen) == 0;
+}

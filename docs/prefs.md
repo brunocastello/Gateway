@@ -66,31 +66,35 @@ Four things it cannot help with:
 
 ### What `connect_mitm` needs from the browser
 
-**"Use SSL 2.0" must be off.** This is the one that catches everybody, and it is
-a setting rather than a capability.
+**TLS 1.0, which BearSSL's floor requires.** BearSSL implements TLS 1.0, 1.1
+and 1.2 and no SSL at all — `BR_SSL30` is a header constant with nothing behind
+it. Tick **Use TLS 1.0** under **Tools → Internet Options → Advanced →
+Security**; Netscape 4.7 has the equivalent under **Security → Navigator →
+Configure SSL**. So IE 5.5 and IE 6 work; IE 4, which has SSL 3.0 and no TLS,
+is out of reach whatever its settings say.
 
-A browser with SSL 2.0 enabled sends its ClientHello in SSL 2.0 framing — no
-TLS record header, just a length with its high bit set followed by message type
-`01`. BearSSL rejects that format outright (`ssl_engine.c`, and its own comment
-says so), because the byte it reads as a protocol version is a length byte. The
-handshake dies before a single field is parsed, which is why **no certificate
-warning appears** — there is no certificate yet to warn about.
-
-Internet Explorer ships with that box ticked. Untick it in **Tools → Internet
-Options → Advanced → Security**, leaving SSL 3.0 and TLS 1.0 ticked. Netscape
-4.7 has the same switch under **Security → Navigator → Configure SSL**.
-
-The log names it:
+When the version is what failed, the log gives the number the browser offered
+and says which side objected:
 
 ```
 #3 handshake with the browser failed for lite.duckduckgo.com
-   (BearSSL 3: it sent an SSL 2.0-style hello -- untick "Use SSL 2.0" ...)
+   (BearSSL 582: it offered SSL 3.0 at best and TLS 1.0 is the floor
+    (we refused its hello))
 ```
 
-**Then TLS 1.0, which BearSSL's floor requires.** BearSSL implements TLS 1.0,
-1.1 and 1.2 and no SSL at all — `BR_SSL30` is a header constant with nothing
-behind it. So IE 5.5 and IE 6 work once SSL 2.0 is off; IE 4, which has SSL 3.0
-and no TLS, is out of reach whatever its settings say.
+**"Use SSL 2.0" no longer has to be off.** It used to be the setting that
+caught everybody. A browser with SSL 2.0 enabled sends its ClientHello in SSL
+2.0 framing — no TLS record header, just a length with its high bit set
+followed by message type `01` — and BearSSL rejected that format outright,
+because the byte it reads as a protocol version is a length byte. The
+handshake died before a single field was parsed, which is why **no certificate
+warning appeared**: there was no certificate yet to warn about. The log said
+`BearSSL 3`.
+
+Since 0.3.4 Gateway converts that framing into the TLS hello it stands for
+(`third_party/certainly/PATCHES.md` §22), so the box can stay as the browser
+shipped it. `BearSSL 3` now means something narrower — the hello inside asked
+for SSL 2.0 itself, which happens only when SSL 3.0 and TLS 1.0 are both off.
 
 A browser with its own modern TLS — Classilla, RetroZilla — needs none of this
 and should leave `connect_mitm` off: `CONNECT` is a raw tunnel then, and the
@@ -116,7 +120,7 @@ which proxy it points at.
 | `wayback_settings` | `1` | Serve the settings page on `web.archive.org` and on `gateway`. |
 | `wayback_quick_images` | `1` | Accepted for settings-page compatibility and does nothing. It tells the reference proxy to rewrite asset URLs in the HTML; Gateway fetches with the archive's `id_` modifier, which returns the original bytes with no HTML to rewrite. |
 | `wayback_cache` | `1` | Replace the archive's half-hour freshness with a year, since a snapshot cannot change. `0` passes the origin's caching through unaltered. |
-| `wayback_live` | — | Hosts to fetch live instead of from the archive. Repeat the key, one pattern per line. `*` and `?` are wildcards and matching is case-insensitive, so `*.frogfind.com` covers the subdomains. |
+| `wayback_live` | — | Hosts to fetch live instead of from the archive. Repeat the key, one pattern per line. A plain host name covers the site and everything under it, so `frogfind.com` also matches `www.frogfind.com`; a pattern containing `*` or `?` is a glob and matches only what it says. Case-insensitive either way. A blank entry is skipped rather than ending the list. |
 
 The era is changed from the browser, not from Gateway, by visiting the settings
 page on the Wayback port:

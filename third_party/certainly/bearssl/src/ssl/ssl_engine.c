@@ -599,6 +599,199 @@ recvrec_buf(const br_ssl_engine_context *rc, size_t *len)
 	return NULL;
 }
 
+/*
+ * SSLv2-compatible ClientHello support (Gateway patch).
+ *
+ * Vintage browsers with "Use SSL 2.0" checked (IE, Netscape) wrap an
+ * otherwise TLS-capable CLIENT-HELLO in the 2-byte SSLv2 record header
+ * (high bit set) instead of the TLS 5-byte header. BearSSL rejected
+ * that before any field was read (UNSUPPORTED_VERSION). We accept the
+ * framing and rewrite it to a plain TLS ClientHello, then proceed with
+ * TLS 1.0-1.2 as usual. Pure SSLv2 (version < 3.0) and SSLv2 crypto
+ * are NOT implemented; those fail as before.
+ *
+ * SSLv2 CLIENT-HELLO layout (payload after the 2-byte header):
+ *   msg_type[1] = 1, version[2], cs_len[2], sid_len[2], chall_len[2],
+ *   cipher_specs[cs_len] (3 bytes each), session_id[sid_len],
+ *   challenge[chall_len] (16..32 bytes).
+ * TLS suites appear as 0x00 xx xx; the SSLv2 3DES spec 0x07 0x00 0xC0
+ * maps to TLS_RSA_WITH_3DES_EDE_CBC_SHA (0x00 0x0A), the only suite
+ * these browsers share with BearSSL. Everything else SSLv2-specific
+ * is dropped. Challenge becomes client_random (left-padded with
+ * zeros when shorter than 32 bytes, per RFC 6101 App. E).
+ *
+ * The rewritten message carries no extensions (SSLv2 has none), so
+ * there is no SNI or secure-renegotiation signalling; the handshake
+ * code already handles their absence with defaults. The session id is
+ * likewise dropped: RFC 5246 Appendix E.2 requires it empty (session
+ * resumption MUST use a TLS hello), so a V2 session id can only name
+ * an unresumable SSLv2 session and the handshake proceeds without it.
+ *
+ * Transcript hashing (Finished, CertificateVerify): the RFC excludes
+ * only msg_length, so the peer hashes the V2 body as sent. The body
+ * is fed to the transcript hash here, and hash_skip counts down the
+ * rewritten bytes as the handshake reads them, keeping the re-encoded
+ * message out of the hash. Without this both Finished messages would
+ * mismatch.
+ */
+#define SSL2_MARKER 0x80
+#define SSL2_MAX_MSG 2048
+
+/*
+ * Largest rewritten record: 5 record + 4 handshake + 2 version + 32 random
+ * + 1 session id + 2 suite length + SSL2_MAX_SUITES suite bytes + 2
+ * compression. SSL2_MAX_SUITES also bounds the scratch the suites are
+ * gathered in, so the two cannot drift apart. Both live on the stack of a
+ * function the engine calls, which on Mac OS 9 is the application stack.
+ */
+#define SSL2_MAX_SUITES 512
+#define SSL2_MAX_REC (5 + 4 + 2 + 32 + 1 + 2 + SSL2_MAX_SUITES + 2)
+
+static void
+ssl2_convert_hello(br_ssl_engine_context *rc)
+{
+	unsigned char *p = rc->ibuf;
+	size_t total = rc->ixa;
+	unsigned len, version, cs_len, sid_len, chall_len;
+	unsigned char *cs_ptr, *sid_ptr, *chall_ptr;
+	unsigned char out[SSL2_MAX_REC];
+	unsigned char suites[SSL2_MAX_SUITES];
+	size_t num_suites, i;
+	unsigned char *q;
+	size_t body_len, hs_len, rec_len;
+
+	len = ((unsigned)(p[0] & 0x7F) << 8) | p[1];
+	if (total != (size_t)2 + len) {
+		br_ssl_engine_fail(rc, BR_ERR_BAD_HANDSHAKE);
+		return;
+	}
+	if (len < 9 || len > (SSL2_MAX_MSG - 2)) {
+		br_ssl_engine_fail(rc,
+			len < 9 ? BR_ERR_BAD_HANDSHAKE : BR_ERR_TOO_LARGE);
+		return;
+	}
+	if (p[2] != 1) {
+		br_ssl_engine_fail(rc, BR_ERR_UNEXPECTED);
+		return;
+	}
+	version = ((unsigned)p[3] << 8) | p[4];
+	if ((version >> 8) != 3) {
+		br_ssl_engine_fail(rc, BR_ERR_UNSUPPORTED_VERSION);
+		return;
+	}
+	cs_len = ((unsigned)p[5] << 8) | p[6];
+	sid_len = ((unsigned)p[7] << 8) | p[8];
+	chall_len = ((unsigned)p[9] << 8) | p[10];
+	if ((cs_len % 3) != 0
+		|| 9 + cs_len + sid_len + chall_len != len
+		|| (size_t)11 + cs_len + sid_len + chall_len > total)
+	{
+		br_ssl_engine_fail(rc, BR_ERR_BAD_HANDSHAKE);
+		return;
+	}
+	if (chall_len < 16 || chall_len > 32) {
+		br_ssl_engine_fail(rc, BR_ERR_BAD_HANDSHAKE);
+		return;
+	}
+	if (sid_len > 32) {
+		br_ssl_engine_fail(rc, BR_ERR_OVERSIZED_ID);
+		return;
+	}
+	cs_ptr = p + 11;
+	sid_ptr = cs_ptr + cs_len;
+	chall_ptr = sid_ptr + sid_len;
+
+	/*
+	 * Translate 3-byte specs to 2-byte suites. TLS suites are
+	 * 0x00 xx xx; SSLv2 3DES (0x07 0x00 0xC0) maps to 0x00 0x0A.
+	 * Anything else SSLv2-specific (RC4, single DES) has no TLS
+	 * equivalent here and is dropped.
+	 */
+	num_suites = 0;
+	for (i = 0; i < cs_len; i += 3) {
+		unsigned s0 = cs_ptr[i], s1 = cs_ptr[i + 1], s2 = cs_ptr[i + 2];
+		unsigned suite;
+
+		if (s0 == 0x00) {
+			suite = (s1 << 8) | s2;
+		} else if (s0 == 0x07 && s1 == 0x00 && s2 == 0xC0) {
+			suite = 0x000A;
+		} else {
+			continue;
+		}
+		if (num_suites * 2 + 2 > sizeof suites) {
+			br_ssl_engine_fail(rc, BR_ERR_TOO_LARGE);
+			return;
+		}
+		suites[num_suites * 2] = (unsigned char)(suite >> 8);
+		suites[num_suites * 2 + 1] = (unsigned char)suite;
+		num_suites ++;
+	}
+	if (num_suites == 0) {
+		br_ssl_engine_fail(rc, BR_ERR_BAD_CIPHER_SUITE);
+		return;
+	}
+
+	/*
+	 * Build TLS ClientHello body:
+	 *   version[2] random[32] sid_len[1](0) cipher_len[2] ciphers
+	 *   comp_len[1] comp[1] (null). No extensions, no session (see
+	 *   above): resumption over a V2 hello is not attempted.
+	 */
+	body_len = 2 + 32 + 1 + 2 + num_suites * 2 + 1 + 1;
+	hs_len = 4 + body_len;
+	rec_len = 5 + hs_len;
+	if (rec_len > sizeof out || rec_len > rc->ibuf_len) {
+		br_ssl_engine_fail(rc, BR_ERR_TOO_LARGE);
+		return;
+	}
+
+	/*
+	 * Transcript fix-up: hash the original V2 body (msg_length is
+	 * not part of the handshake message per RFC 5246 App. E.2) and
+	 * mark the rewritten bytes to skip. The multihasher is pristine
+	 * here -- the converted hello is always the first handshake
+	 * message -- so this pre-feed is exactly the transcript prefix.
+	 */
+	br_multihash_update(&rc->mhash, p + 2, len);
+	rc->hash_skip = hs_len;
+
+	q = out + 5 + 4;
+	q[0] = (unsigned char)(version >> 8);
+	q[1] = (unsigned char)version;
+	q += 2;
+	memset(q, 0, 32 - chall_len);
+	memcpy(q + 32 - chall_len, chall_ptr, chall_len);
+	q += 32;
+	*q ++ = 0;
+	q[0] = (unsigned char)((num_suites * 2) >> 8);
+	q[1] = (unsigned char)(num_suites * 2);
+	q += 2;
+	memcpy(q, suites, num_suites * 2);
+	q += num_suites * 2;
+	q[0] = 1;
+	q[1] = 0;
+
+	/* Handshake header. */
+	out[5] = 1;
+	out[6] = (unsigned char)(body_len >> 16);
+	out[7] = (unsigned char)(body_len >> 8);
+	out[8] = (unsigned char)body_len;
+	/* Record header (handshake, record version = client version). */
+	out[0] = 22;
+	out[1] = (unsigned char)(version >> 8);
+	out[2] = (unsigned char)version;
+	out[3] = (unsigned char)(hs_len >> 8);
+	out[4] = (unsigned char)hs_len;
+
+	memcpy(rc->ibuf, out, rec_len);
+	rc->record_type_in = 22;
+	rc->version_in = version;
+	rc->ixa = 5;
+	rc->ixb = 5 + hs_len;
+	rc->ixc = 0;
+}
+
 static void
 recvrec_ack(br_ssl_engine_context *rc, size_t len)
 {
@@ -621,6 +814,18 @@ recvrec_ack(br_ssl_engine_context *rc, size_t len)
 	rc->ixc -= len;
 
 	/*
+	 * SSLv2-compatible ClientHello in progress: wait for the whole
+	 * message, then rewrite it to TLS (see ssl2_convert_hello).
+	 */
+	if (rc->record_type_in == SSL2_MARKER) {
+		if (rc->ixc != 0) {
+			return;
+		}
+		ssl2_convert_hello(rc);
+		return;
+	}
+
+	/*
 	 * If we are receiving a header and did not fully obtained it
 	 * yet, then just wait for the next bytes.
 	 */
@@ -636,16 +841,47 @@ recvrec_ack(br_ssl_engine_context *rc, size_t len)
 		unsigned rlen;
 
 		/*
+		 * SSLv2-compatible ClientHello: 2-byte header with the
+		 * high bit set, instead of the TLS 5-byte header. Only
+		 * as the very first record, before encryption, and only
+		 * on a server (the RFC concession is for servers; a
+		 * client receiving this framing is talking to something
+		 * that is not a TLS server). Switch to gathering the
+		 * SSLv2 message; conversion happens once it is complete.
+		 */
+		if ((rc->ibuf[0] & 0x80) != 0) {
+			unsigned slen;
+			size_t total;
+
+			if (rc->version_in != 0 || rc->incrypt
+				|| rc->hsrun != br_ssl_hs_server_run)
+			{
+				br_ssl_engine_fail(rc, BR_ERR_UNEXPECTED);
+				return;
+			}
+			slen = (((unsigned)rc->ibuf[0] & 0x7F) << 8)
+				| rc->ibuf[1];
+			total = (size_t)2 + slen;
+			if (slen < 9 || total < 5
+				|| total > (size_t)SSL2_MAX_MSG
+				|| total > rc->ibuf_len)
+			{
+				br_ssl_engine_fail(rc,
+					slen < 9 ? BR_ERR_BAD_HANDSHAKE
+						: BR_ERR_TOO_LARGE);
+				return;
+			}
+			rc->record_type_in = SSL2_MARKER;
+			rc->ixa = rc->ixb = 5;
+			rc->ixc = total - 5;
+			return;
+		}
+
+		/*
 		 * Get record type and version. We support only versions
 		 * 3.x (if the version major number does not match, then
 		 * we suppose that the record format is too alien for us
 		 * to process it).
-		 *
-		 * Note: right now, we reject clients that try to send
-		 * a ClientHello in a format compatible with SSL-2.0. It
-		 * is unclear whether this will ever be supported; and
-		 * if we want to support it, then this might be done in
-		 * in the server-specific code, not here.
 		 */
 		rc->record_type_in = rc->ibuf[0];
 		version = br_dec16be(rc->ibuf + 1);
@@ -1313,6 +1549,7 @@ br_ssl_engine_hs_reset(br_ssl_engine_context *cc,
 	cc->cpu.rp = cc->rp_stack;
 	hsinit(&cc->cpu);
 	cc->hsrun = hsrun;
+	cc->hash_skip = 0;
 	cc->shutdown_recv = 0;
 	cc->application_data = 0;
 	cc->alert = 0;
