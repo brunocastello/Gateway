@@ -48,6 +48,7 @@ struct MacTLS_Server {
     size_t                 chain_len;
 
     unsigned char          iobuf[CERTAINLY_IOBUF_SIZE];
+    int                    logged_raw;
 };
 
 MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
@@ -132,6 +133,31 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
 
     st = br_ssl_engine_current_state(&s->sc.eng);
 
+    if (!s->logged_raw) {
+        size_t avail = 0;
+        const unsigned char *pbuf = NULL;
+        char raw[513];
+        size_t dump, k, p = 0;
+        if (s->sc.eng.hbuf_in && s->sc.eng.hlen_in >= 4) {
+            pbuf = s->sc.eng.hbuf_in;
+            avail = s->sc.eng.hlen_in;
+        } else if (s->sc.eng.ibuf && s->sc.eng.ixa != s->sc.eng.ixb) {
+            pbuf = s->sc.eng.ibuf + s->sc.eng.ixa;
+            avail = s->sc.eng.ixb - s->sc.eng.ixa;
+            if (avail > 5 && pbuf[0] == 0x16) { pbuf += 5; avail -= 5; }
+        }
+        if (pbuf && avail >= 4) {
+            s->logged_raw = 1;
+            dump = avail > 96 ? 96 : avail;
+            for (k = 0; k < dump && p + 3 < sizeof(raw); k++) {
+                int n = snprintf(raw + p, sizeof(raw) - p, "%s%02x", k ? " " : "", pbuf[k]);
+                if (n < 0) break;
+                p += (size_t)n;
+            }
+            gw_log("  ClientHello pre-filter avail %u: %s", (unsigned)avail, raw);
+        }
+    }
+
     if (st == BR_SSL_CLOSED) {
         int err = br_ssl_engine_last_error(&s->sc.eng);
 
@@ -155,6 +181,17 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
                     snprintf(suites, sizeof(suites), "(none)");
                 gw_log("MITM handshake failed: BearSSL %d (alert %d), client version %04x, %u suite(s) [%s]",
                     err, err - BR_ERR_SEND_FATAL_ALERT, s->sc.client_max_version, s->sc.client_suites_num, suites);
+                if (s->sc.client_suites_num == 0 && s->sc.eng.hbuf_in && s->sc.eng.hlen_in >= 6) {
+                    char raw[193];
+                    size_t dump = s->sc.eng.hlen_in > 64 ? 64 : s->sc.eng.hlen_in;
+                    size_t k, p = 0;
+                    for (k = 0; k < dump && p + 3 < sizeof(raw); k++) {
+                        int n = snprintf(raw + p, sizeof(raw) - p, "%s%02x", k ? " " : "", s->sc.eng.hbuf_in[k]);
+                        if (n < 0) break;
+                        p += (size_t)n;
+                    }
+                    gw_log("  ClientHello raw %u bytes: %s", (unsigned)s->sc.eng.hlen_in, raw);
+                }
             } else {
                 gw_log("MITM handshake failed: BearSSL %d, client version %04x", err, s->sc.client_max_version);
             }
@@ -189,6 +226,23 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
         if (len > 0) {
             n = ct_transport_recv(s->transport, buf, len);
             if (n > 0) {
+                if (s->logged_raw < 10 && n >= 4) {
+                    size_t dump = (size_t)n > 96 ? 96 : (size_t)n;
+                    size_t off = 0;
+                    s->logged_raw++;
+                    while (off < dump) {
+                        char raw[193];
+                        size_t chunk = dump - off > 32 ? 32 : dump - off;
+                        size_t k, p = 0;
+                        for (k = 0; k < chunk && p + 3 < sizeof(raw); k++) {
+                            int nn = snprintf(raw + p, sizeof(raw) - p, "%s%02x", k ? " " : "", buf[off + k]);
+                            if (nn < 0) break;
+                            p += (size_t)nn;
+                        }
+                        gw_log("  RECV raw %d bytes [%u/%u]: %s", n, (unsigned)off, (unsigned)dump, raw);
+                        off += chunk;
+                    }
+                }
                 br_ssl_engine_recvrec_ack(&s->sc.eng, (size_t)n);
             } else if (n < 0) {
                 if (ct_transport_peer_closed(s->transport)) {
@@ -204,6 +258,38 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
     }
 
     st = br_ssl_engine_current_state(&s->sc.eng);
+    if (!s->logged_raw) {
+        if (s->sc.eng.hbuf_in && s->sc.eng.hlen_in >= 4) {
+            char raw[385];
+            size_t dump = s->sc.eng.hlen_in > 96 ? 96 : s->sc.eng.hlen_in;
+            size_t k, p = 0;
+            s->logged_raw = 1;
+            for (k = 0; k < dump && p + 3 < sizeof(raw); k++) {
+                int n = snprintf(raw + p, sizeof(raw) - p, "%s%02x", k ? " " : "", s->sc.eng.hbuf_in[k]);
+                if (n < 0) break;
+                p += (size_t)n;
+            }
+            gw_log("  ClientHello hbuf %u bytes: %s", (unsigned)s->sc.eng.hlen_in, raw);
+        } else if (s->sc.eng.ibuf && s->sc.eng.ixa != s->sc.eng.ixb) {
+            char raw[385];
+            size_t avail = s->sc.eng.ixb - s->sc.eng.ixa;
+            const unsigned char *pbuf = s->sc.eng.ibuf + s->sc.eng.ixa;
+            size_t dump = avail > 96 ? 96 : avail;
+            size_t k, p = 0;
+            s->logged_raw = 1;
+            if (avail > 5 && pbuf[0] == 0x16) { pbuf += 5; dump = dump > 5 ? dump -5 : 0; }
+            for (k = 0; k < dump && p + 3 < sizeof(raw); k++) {
+                int n = snprintf(raw + p, sizeof(raw) - p, "%s%02x", k ? " " : "", pbuf[k]);
+                if (n < 0) break;
+                p += (size_t)n;
+            }
+            gw_log("  ClientHello ibuf %u bytes: %s", (unsigned)avail, raw);
+        } else if (s->sc.client_max_version != 0 || s->sc.client_suites_num != 0) {
+            s->logged_raw = 1;
+            gw_log("  ClientHello no buf: version %04x suites %u hlen %u ixa %u ixb %u st %x",
+                s->sc.client_max_version, s->sc.client_suites_num, (unsigned)s->sc.eng.hlen_in, (unsigned)s->sc.eng.ixa, (unsigned)s->sc.eng.ixb, st);
+        }
+    }
     if (st & (BR_SSL_SENDAPP | BR_SSL_RECVAPP))
         s->state = kMacTLS_Connected;
     else if (st & (BR_SSL_SENDREC | BR_SSL_RECVREC)) {
