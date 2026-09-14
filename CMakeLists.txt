@@ -192,6 +192,7 @@ add_application(Gateway
     src/main.cpp
     src/ui/gateway.r
     src/ui/gateway_icon.r
+    src/ui/gateway_settings.r
     TYPE "APPL"
     CREATOR "GT9A"
 )

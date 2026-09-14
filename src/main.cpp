@@ -38,6 +38,8 @@
 #include "gw_core.h"
 #include "gw_version.h"
 #include "portable/gw_log.h"   /* GW_LOG_LINES, for scroll limits */
+#include "portable/gw_util.h"  /* gw_parse_dec, gw_stricmp */
+#include "gw_config.h"         /* GWConfig_Num, GWConfig_Set, GWConfig_Load */
 
 namespace {
 
@@ -47,6 +49,7 @@ const short kFileMenuID  = 129;
 const short kAboutItem = 1;
 const short kHideItem  = 1;
 const short kStopItem  = 2;
+const short kSettingsItem = 3;
 const short kQuitItem  = 4;
 
 /*
@@ -111,6 +114,18 @@ const unsigned short kPlatinum = 0xDDDD;
 const short kLineHeight = 11;
 const short kTextLeft   = 6;
 const short kHeaderRows = 0;
+
+/* Control procedure IDs (CDEF numbers). Multiversal does not export these,
+ * so we define them by value. */
+const short kButtonProc       = 0;
+const short kCheckBoxProc     = 4;
+const short kPopUpButtonProc  = 19;
+
+/* TextEdit CDEF (28) — not exported by Multiversal. */
+const short kTextEditProc     = 28;
+
+/* Control reference constants for identification. */
+typedef ControlHandle GWControlRef;
 
 /* Build a Pascal string without relying on the compiler's "\p" literals. */
 void ToPascal(const char *src, Str255 dst)
@@ -309,6 +324,8 @@ private:
             AppendMenu(mFileMenu, title);
             ToPascal("Stop Gateway/S", title);
             AppendMenu(mFileMenu, title);
+            ToPascal("Settings...S", title);
+            AppendMenu(mFileMenu, title);
             ToPascal("(-", title);
             AppendMenu(mFileMenu, title);
             ToPascal("Quit/Q", title);
@@ -397,7 +414,787 @@ private:
      * credits. A real title bar with a close box and no OK button, which is
      * the Mac OS 9 convention -- SimpleText's About box does the same.
      */
-    void DrawAboutContent(WindowPtr w)
+    /*
+     * Settings window handler.
+     *
+     * Creates a movable dialog box with a pop-up section selector at top,
+     * then checkboxes, edit fields and text areas for each preference
+     * section.  Follows Mac OS 9 Platinum HIG exactly: Geneva 9 for
+     * labels, Monaco 9 inside text areas, standard controls (CDEF 4
+     * checkboxes, CDEF 19 pop-up buttons, CDEF 16 scroll bars).
+     */
+    void HandleSettings()    {
+        Rect        bounds;
+        Str255      title;
+        WindowPtr   win;
+        Boolean     done = false;
+        EventRecord event;
+        short       left, top;
+
+        const short kSettingsWidth  = 380;
+        const short kSettingsHeight = 290;
+
+        left = static_cast<short>((qd.screenBits.bounds.right -
+                                   qd.screenBits.bounds.left - kSettingsWidth) / 2);
+        top = static_cast<short>((qd.screenBits.bounds.bottom -
+                                  qd.screenBits.bounds.top - kSettingsHeight) / 3);
+        SetRect(&bounds, left, top,
+                static_cast<short>(left + kSettingsWidth),
+                static_cast<short>(top + kSettingsHeight));
+
+        ToPascal("Settings for Gateway...", title);
+        win = NewCWindow(nullptr, &bounds, title, true,
+                         kZoomDocProc, reinterpret_cast<WindowPtr>(-1L),
+                         true, 0);
+        if (win == nullptr) return;
+
+        SelectWindow(win);
+        SetPort(reinterpret_cast<GrafPtr>(win));
+
+        RGBColor platinum;
+        platinum.red = platinum.green = platinum.blue = kPlatinum;
+        RGBBackColor(&platinum);
+
+        /* ---- Section pop-up button (top left) ---- */
+        const short kSectionPopUpID = 1;
+        Rect popupRect;
+        SetRect(&popupRect, static_cast<short>(bounds.left + 12),
+                static_cast<short>(bounds.top + 8),
+                static_cast<short>(bounds.left + 132),
+                static_cast<short>(bounds.top + 24));
+        ToPascal("", title);
+        ControlHandle hSection = NewControl(win, &popupRect, title,
+                                            true, kPopUpButtonProc, 0, 0, 3,
+                                            kSectionPopUpID);
+
+        /* ---- OK and Cancel buttons (bottom right) ---- */
+        const short kOKBtnID = 1;
+        const short kCancelBtnID = 2;
+        Rect okRect, cancelRect;
+
+        SetRect(&okRect, static_cast<short>(bounds.right - 104),
+                static_cast<short>(bounds.bottom - 28),
+                static_cast<short>(bounds.right - 54),
+                static_cast<short>(bounds.bottom - 12));
+        ToPascal("OK", title);
+        ControlHandle hOK = NewControl(win, &okRect, title,
+                                       true, kButtonProc, 0, 0, 0,
+                                       kOKBtnID);
+
+        SetRect(&cancelRect, static_cast<short>(bounds.right - 48),
+                static_cast<short>(bounds.bottom - 28),
+                static_cast<short>(bounds.right - 4),
+                static_cast<short>(bounds.bottom - 12));
+        ToPascal("Cancel", title);
+        ControlHandle hCancel = NewControl(win, &cancelRect, title,
+                                           true, kButtonProc, 0, 0, 0,
+                                           kCancelBtnID);
+
+        /* ---- Content area (below pop-up, above buttons) ---- */
+        Rect contentRect;
+        SetRect(&contentRect,
+                static_cast<short>(bounds.left + 8),
+                static_cast<short>(bounds.top + 28),
+                static_cast<short>(bounds.right - 16),
+                static_cast<short>(bounds.bottom - 40));
+
+        /* ---- Create controls for each section, all hidden except current ----
+         *
+         * In Classic Toolbox (Multiversal):
+         *   - Checkboxes / pop-up buttons: NewControl with procID 4 or 19
+         *   - Edit fields: TEHandle via CDEF 28 (NewTE / TESetRect) +
+         *     TESetText(TEHandle, Ptr) — second arg is the text buffer
+         *   - Scroll bars: NewControl with procID 16 (kScrollBarProc)
+         *   - Buttons: NewControl with procID 0 (kButtonProc)
+         */
+        const short kMaxSections = 4;
+        ControlHandle sectionControls[kMaxSections][32];
+        short sectionControlCount[kMaxSections];
+        std::memset(sectionControls, 0, sizeof(sectionControls));
+        std::memset(sectionControlCount, 0, sizeof(sectionControlCount));
+
+        /* Section 0: Application (7 controls)
+         *   0=show_window chk, 1=max_sessions edit(TE),
+         *   2=http_enabled chk, 3=mail_enabled chk,
+         *   4=wayback_enabled chk, 5=log_file chk,
+         *   6=max_connects edit(TE) */
+        {
+            short y = contentRect.top;
+            short x = contentRect.left + 4;
+
+            /* show_window checkbox */
+            SetRect(&popupRect, x, y, contentRect.right - 4,
+                    static_cast<short>(y + 12));
+            ToPascal("Show window at launch", title);
+            sectionControls[0][sectionControlCount[0]] =
+                NewControl(win, &popupRect, title, true, kCheckBoxProc, 0,
+                           0, 0, sectionControlCount[0]++);
+            SetControlValue(sectionControls[0][0],
+                            GW_ShowWindowPref() != 0);
+            y += 14;
+
+            /* max_sessions edit field (TEHandle via CDEF 28) */
+            char buf[8];
+            sprintf(buf, "%ld", GWConfig_Num("max_sessions", 12));
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 200),
+                    static_cast<short>(y + 12));
+            ToPascal("Max sessions", title);
+            TEHandle te = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[0]++));
+            TESetText(te, reinterpret_cast<Ptr>(buf),
+                      static_cast<short>(strlen(buf)));
+            y += 14;
+
+            /* http_enabled checkbox */
+            SetRect(&popupRect, x, y, contentRect.right - 4,
+                    static_cast<short>(y + 12));
+            ToPascal("Enable HTTP proxy", title);
+            sectionControls[0][sectionControlCount[0]] =
+                NewControl(win, &popupRect, title, true, kCheckBoxProc, 0,
+                           0, 0, sectionControlCount[0]++);
+            SetControlValue(sectionControls[0][2],
+                            GWConfig_Num("http_enabled", 1) != 0);
+            y += 14;
+
+            /* mail_enabled checkbox */
+            SetRect(&popupRect, x, y, contentRect.right - 4,
+                    static_cast<short>(y + 12));
+            ToPascal("Enable mail splice", title);
+            sectionControls[0][sectionControlCount[0]] =
+                NewControl(win, &popupRect, title, true, kCheckBoxProc, 0,
+                           0, 0, sectionControlCount[0]++);
+            SetControlValue(sectionControls[0][3],
+                            GWConfig_Num("mail_enabled", 1) != 0);
+            y += 14;
+
+            /* wayback_enabled checkbox */
+            SetRect(&popupRect, x, y, contentRect.right - 4,
+                    static_cast<short>(y + 12));
+            ToPascal("Enable Wayback proxy", title);
+            sectionControls[0][sectionControlCount[0]] =
+                NewControl(win, &popupRect, title, true, kCheckBoxProc, 0,
+                           0, 0, sectionControlCount[0]++);
+            SetControlValue(sectionControls[0][4],
+                            GWConfig_Num("wayback_enabled", 1) != 0);
+            y += 14;
+
+            /* log_file checkbox */
+            SetRect(&popupRect, x, y, contentRect.right - 4,
+                    static_cast<short>(y + 12));
+            ToPascal("Write log to file", title);
+            sectionControls[0][sectionControlCount[0]] =
+                NewControl(win, &popupRect, title, true, kCheckBoxProc, 0,
+                           0, 0, sectionControlCount[0]++);
+            SetControlValue(sectionControls[0][5],
+                            GWConfig_Num("log_file", 0) != 0);
+            y += 14;
+
+            /* max_connects edit field (TEHandle via CDEF 28) */
+            char buf2[8];
+            sprintf(buf2, "%ld", GWConfig_Num("max_connects", 8));
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 200),
+                    static_cast<short>(y + 12));
+            ToPascal("Max connects", title);
+            TEHandle te2 = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[0]++));
+            TESetText(te2, reinterpret_cast<Ptr>(buf2),
+                      static_cast<short>(strlen(buf2)));
+        }
+
+        /* Section 1: Web Proxy (5 controls)
+         *   0=http_port edit(TE), 1=follow_redirects pop-up,
+         *   2=rewrite_https chk, 3=connect_mitm chk,
+         *   4=max_body_mb edit(TE) */
+        {
+            short y = contentRect.top;
+            short x = contentRect.left + 4;
+
+            /* http_port edit field (TEHandle via CDEF 28) */
+            char buf[8];
+            sprintf(buf, "%ld", GWConfig_Num("http_port", 8765));
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 200),
+                    static_cast<short>(y + 12));
+            ToPascal("HTTP port", title);
+            TEHandle te = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[1]++));
+            TESetText(te, reinterpret_cast<Ptr>(buf),
+                      static_cast<short>(strlen(buf)));
+            y += 14;
+
+            /* follow_redirects pop-up */
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 230),
+                    static_cast<short>(y + 12));
+            ToPascal("", title);
+            short sel = 0;
+            const char *val = GWConfig_Str("follow_redirects", "auto");
+            if (gw_stricmp(val, "always") == 0) sel = 1;
+            else if (gw_stricmp(val, "never") == 0) sel = 2;
+            sectionControls[1][sectionControlCount[1]] =
+                NewControl(win, &popupRect, title, true, kPopUpButtonProc, 0,
+                           0, sel, sectionControlCount[1]++);
+            y += 14;
+
+            /* rewrite_https checkbox */
+            SetRect(&popupRect, x, y, contentRect.right - 4,
+                    static_cast<short>(y + 12));
+            ToPascal("Rewrite https:// in bodies", title);
+            sectionControls[1][sectionControlCount[1]] =
+                NewControl(win, &popupRect, title, true, kCheckBoxProc, 0,
+                           0, 0, sectionControlCount[1]++);
+            SetControlValue(sectionControls[1][2],
+                            GWConfig_Num("rewrite_https", 1) != 0);
+            y += 14;
+
+            /* connect_mitm checkbox */
+            SetRect(&popupRect, x, y, contentRect.right - 4,
+                    static_cast<short>(y + 12));
+            ToPascal("MITM CONNECT on port 443", title);
+            sectionControls[1][sectionControlCount[1]] =
+                NewControl(win, &popupRect, title, true, kCheckBoxProc, 0,
+                           0, 0, sectionControlCount[1]++);
+            SetControlValue(sectionControls[1][3],
+                            GWConfig_Num("connect_mitm", 0) != 0);
+            y += 14;
+
+            /* max_body_mb edit field (TEHandle via CDEF 28) */
+            char buf2[8];
+            sprintf(buf2, "%ld", GWConfig_Num("max_body_mb", 0));
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 200),
+                    static_cast<short>(y + 12));
+            ToPascal("Max body (MiB)", title);
+            TEHandle te2 = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[1]++));
+            TESetText(te2, reinterpret_cast<Ptr>(buf2),
+                      static_cast<short>(strlen(buf2)));
+        }
+
+        /* Section 2: Wayback Proxy (9 controls)
+         *   0=wayback_port edit(TE), 1=wayback_date edit(TE),
+         *   2=wayback_tolerance edit(TE), 3=text area (skip),
+         *   4=scroll bar (skip),
+         *   5-8 = wayback_geocities, ct_encoding, settings, cache (chk) */
+        {
+            short y = contentRect.top;
+            short x = contentRect.left + 4;
+
+            /* wayback_port edit field (TEHandle via CDEF 28) */
+            char buf[8];
+            sprintf(buf, "%ld", GWConfig_Num("wayback_port", 8888));
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 200),
+                    static_cast<short>(y + 12));
+            ToPascal("Wayback port", title);
+            TEHandle te = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[2]++));
+            TESetText(te, reinterpret_cast<Ptr>(buf),
+                      static_cast<short>(strlen(buf)));
+            y += 14;
+
+            /* wayback_date edit field (TEHandle via CDEF 28) */
+            char buf2[9];
+            sprintf(buf2, "%ld", GWConfig_Num("wayback_date", 20011231));
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 230),
+                    static_cast<short>(y + 12));
+            ToPascal("Wayback date (YYYYMMDD)", title);
+            TEHandle te2 = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[2]++));
+            TESetText(te2, reinterpret_cast<Ptr>(buf2),
+                      static_cast<short>(strlen(buf2)));
+            y += 14;
+
+            /* wayback_tolerance edit field (TEHandle via CDEF 28) */
+            char buf3[8];
+            sprintf(buf3, "%ld", GWConfig_Num("wayback_tolerance", 730));
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 200),
+                    static_cast<short>(y + 12));
+            ToPascal("Wayback tolerance (days)", title);
+            TEHandle te3 = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[2]++));
+            TESetText(te3, reinterpret_cast<Ptr>(buf3),
+                      static_cast<short>(strlen(buf3)));
+            y += 14;
+
+            /* wayback_geocities checkbox */
+            SetRect(&popupRect, x, y, contentRect.right - 4,
+                    static_cast<short>(y + 12));
+            ToPascal("Redirect geocities.com to oocities.org", title);
+            sectionControls[2][sectionControlCount[2]] =
+                NewControl(win, &popupRect, title, true, kCheckBoxProc, 0,
+                           0, 0, sectionControlCount[2]++);
+            SetControlValue(sectionControls[2][5],
+                            GWConfig_Num("wayback_geocities", 1) != 0);
+            y += 14;
+
+            /* wayback_ct_encoding checkbox */
+            SetRect(&popupRect, x, y, contentRect.right - 4,
+                    static_cast<short>(y + 12));
+            ToPascal("Strip charset from Content-Type", title);
+            sectionControls[2][sectionControlCount[2]] =
+                NewControl(win, &popupRect, title, true, kCheckBoxProc, 0,
+                           0, 0, sectionControlCount[2]++);
+            SetControlValue(sectionControls[2][6],
+                            GWConfig_Num("wayback_ct_encoding", 1) != 0);
+            y += 14;
+
+            /* wayback_settings checkbox */
+            SetRect(&popupRect, x, y, contentRect.right - 4,
+                    static_cast<short>(y + 12));
+            ToPascal("Serve settings page", title);
+            sectionControls[2][sectionControlCount[2]] =
+                NewControl(win, &popupRect, title, true, kCheckBoxProc, 0,
+                           0, 0, sectionControlCount[2]++);
+            SetControlValue(sectionControls[2][7],
+                            GWConfig_Num("wayback_settings", 1) != 0);
+            y += 14;
+
+            /* wayback_cache checkbox */
+            SetRect(&popupRect, x, y, contentRect.right - 4,
+                    static_cast<short>(y + 12));
+            ToPascal("Cache archived responses for a year", title);
+            sectionControls[2][sectionControlCount[2]] =
+                NewControl(win, &popupRect, title, true, kCheckBoxProc, 0,
+                           0, 0, sectionControlCount[2]++);
+            SetControlValue(sectionControls[2][8],
+                            GWConfig_Num("wayback_cache", 1) != 0);
+            y += 14;
+
+            /* wayback_live text area with scroll bar */
+            Rect taRect, sbRect;
+            SetRect(&taRect, x + 4, y,
+                    static_cast<short>(contentRect.right - 20),
+                    static_cast<short>(y + 54));
+            TEHandle te = reinterpret_cast<TEHandle>(NewControl(
+                win, &taRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[2]++));
+            TextFont(4); /* Monaco */
+            TextSize(9);
+
+            /* Build the live list text. */
+            char liveText[4096];
+            liveText[0] = '\0';
+            for (int i = 0; ; i++) {
+                char val[256];
+                if (!GWConfig_GetNth("wayback_live", i, val, sizeof(val))) break;
+                if (strlen(val) == 0) continue;
+                size_t el = strlen(liveText);
+                if (el > 0) {
+                    liveText[el] = '\r';
+                    el++;
+                }
+                size_t vlen = strlen(val);
+                if (el + vlen >= sizeof(liveText)) break;
+                memcpy(liveText + el, val, vlen);
+                el += vlen;
+            }
+            TESetText(te, reinterpret_cast<Ptr>(liveText),
+                      static_cast<short>(strlen(liveText)));
+
+            /* Scroll bar for text area */
+            SetRect(&sbRect, static_cast<short>(taRect.right + 1),
+                    taRect.top, static_cast<short>(taRect.right + kScrollWidth),
+                    static_cast<short>(taRect.bottom));
+            ToPascal("", title);
+            sectionControls[2][sectionControlCount[2]] =
+                NewControl(win, &sbRect, title, true, kScrollBarProc, 0,
+                           0, 0, sectionControlCount[2]++);
+        }
+
+        /* Section 3: Mail (9 controls)
+         *   0=imap_port edit(TE), 1=pop_port edit(TE),
+         *   2=smtp_port edit(TE), 3=local_password edit(TE),
+         *   4=provider pop-up, 5=oauth_user edit(TE),
+         *   6=oauth_client_id edit(TE), 7=oauth_client_secret edit(TE),
+         *   8=refresh_token edit(TE) */
+        {
+            short y = contentRect.top;
+            short x = contentRect.left + 4;
+
+            /* imap_port edit field (TEHandle via CDEF 28) */
+            char buf[8];
+            sprintf(buf, "%ld", GWConfig_Num("imap_port", 1993));
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 200),
+                    static_cast<short>(y + 12));
+            ToPascal("IMAP port", title);
+            TEHandle te = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[3]++));
+            TESetText(te, reinterpret_cast<Ptr>(buf),
+                      static_cast<short>(strlen(buf)));
+            y += 14;
+
+            /* pop_port edit field (TEHandle via CDEF 28) */
+            char buf2[8];
+            sprintf(buf2, "%ld", GWConfig_Num("pop_port", 1995));
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 200),
+                    static_cast<short>(y + 12));
+            ToPascal("POP3 port", title);
+            TEHandle te2 = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[3]++));
+            TESetText(te2, reinterpret_cast<Ptr>(buf2),
+                      static_cast<short>(strlen(buf2)));
+            y += 14;
+
+            /* smtp_port edit field (TEHandle via CDEF 28) */
+            char buf3[8];
+            sprintf(buf3, "%ld", GWConfig_Num("smtp_port", 1587));
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 200),
+                    static_cast<short>(y + 12));
+            ToPascal("SMTP port", title);
+            TEHandle te3 = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[3]++));
+            TESetText(te3, reinterpret_cast<Ptr>(buf3),
+                      static_cast<short>(strlen(buf3)));
+            y += 14;
+
+            /* local_password edit field (TEHandle via CDEF 28, masked) */
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 260),
+                    static_cast<short>(y + 12));
+            ToPascal("Local password", title);
+            TEHandle te4 = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[3]++));
+            char pwBuf[128];
+            if (GWConfig_Str("local_password", "", pwBuf, sizeof(pwBuf))) {
+                char masked[128];
+                size_t n = strlen(pwBuf);
+                if (n >= sizeof(masked)) n = sizeof(masked) - 1;
+                for (size_t i = 0; i < n; i++) masked[i] = '*';
+                masked[n] = '\0';
+                TESetText(te4, reinterpret_cast<Ptr>(masked),
+                          static_cast<short>(n));
+            } else {
+                TESetText(te4, reinterpret_cast<Ptr>(""), 0);
+            }
+            y += 14;
+
+            /* provider pop-up */
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 230),
+                    static_cast<short>(y + 12));
+            ToPascal("", title);
+            short sel = 0;
+            const char *prov = GWConfig_Str("provider", "outlook");
+            if (gw_stricmp(prov, "gmail") == 0) sel = 1;
+            else if (gw_stricmp(prov, "custom") == 0) sel = 2;
+            sectionControls[3][sectionControlCount[3]] =
+                NewControl(win, &popupRect, title, true, kPopUpButtonProc, 0,
+                           0, sel, sectionControlCount[3]++);
+            y += 14;
+
+            /* oauth_user edit field (TEHandle via CDEF 28) */
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 260),
+                    static_cast<short>(y + 12));
+            ToPascal("OAuth user", title);
+            TEHandle te5 = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[3]++));
+            char userBuf[128];
+            if (GWConfig_Str("oauth_user", "", userBuf, sizeof(userBuf)))
+                TESetText(te5, reinterpret_cast<Ptr>(userBuf),
+                          static_cast<short>(strlen(userBuf)));
+            else
+                TESetText(te5, reinterpret_cast<Ptr>(""), 0);
+            y += 14;
+
+            /* oauth_client_id edit field (TEHandle via CDEF 28) */
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 260),
+                    static_cast<short>(y + 12));
+            ToPascal("OAuth client ID", title);
+            TEHandle te6 = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[3]++));
+            char cidBuf[128];
+            if (GWConfig_Str("oauth_client_id", "", cidBuf, sizeof(cidBuf)))
+                TESetText(te6, reinterpret_cast<Ptr>(cidBuf),
+                          static_cast<short>(strlen(cidBuf)));
+            else
+                TESetText(te6, reinterpret_cast<Ptr>(""), 0);
+            y += 14;
+
+            /* oauth_client_secret edit field (TEHandle via CDEF 28) */
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 260),
+                    static_cast<short>(y + 12));
+            ToPascal("OAuth client secret", title);
+            TEHandle te7 = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[3]++));
+            char csBuf[128];
+            if (GWConfig_Str("oauth_client_secret", "", csBuf, sizeof(csBuf)))
+                TESetText(te7, reinterpret_cast<Ptr>(csBuf),
+                          static_cast<short>(strlen(csBuf)));
+            else
+                TESetText(te7, reinterpret_cast<Ptr>(""), 0);
+            y += 14;
+
+            /* refresh_token edit field (TEHandle via CDEF 28) */
+            SetRect(&popupRect, x + 140, y, static_cast<short>(x + 260),
+                    static_cast<short>(y + 12));
+            ToPascal("Refresh token", title);
+            TEHandle te8 = reinterpret_cast<TEHandle>(NewControl(
+                win, &popupRect, title, true, kTextEditProc, 0, 0, 0,
+                sectionControlCount[3]++));
+            char rtBuf[512];
+            if (GWConfig_Str("refresh_token", "", rtBuf, sizeof(rtBuf)))
+                TESetText(te8, reinterpret_cast<Ptr>(rtBuf),
+                          static_cast<short>(strlen(rtBuf)));
+            else
+                TESetText(te8, reinterpret_cast<Ptr>(""), 0);
+        }
+
+        /* ---- Event loop: section switching + OK/Cancel ---- */
+        short currentSection = 0;
+
+        /* Hide all sections except 0. */
+        for (int s = 1; s < kMaxSections; s++) {
+            for (short i = 0; i < sectionControlCount[s]; i++)
+                HideControl(sectionControls[s][i]);
+        }
+
+        while (!done && !mDone) {
+            WaitNextEvent(everyEvent, &event, 5, nullptr);
+
+            switch (event.what) {
+            case updateEvt:
+                if (reinterpret_cast<WindowPtr>(event.message) == win) {
+                    BeginUpdate(win);
+                    EraseRect(&contentRect);
+                    for (short i = 0; i < sectionControlCount[currentSection]; i++)
+                        Draw1Control(sectionControls[currentSection][i]);
+                    EndUpdate(win);
+                }
+                break;
+
+            case mouseDown:
+                {
+                    WindowPtr win2;
+                    short part = FindWindow(event.where, &win2);
+
+                    if (part == inGoAway) {
+                        if (TrackGoAway(win, event.where)) done = true;
+                    } else if (part == inDrag) {
+                        Rect limit = qd.screenBits.bounds;
+                        InsetRect(&limit, 4, 4);
+                        DragWindow(win, event.where, &limit);
+                    } else if (win2 == win) {
+                        Point local = event.where;
+                        SetPort(reinterpret_cast<GrafPtr>(win));
+                        GlobalToLocal(&local);
+
+                        ControlHandle hit;
+                        short where = FindControl(local, win, &hit);
+
+                        if (where != 0) {
+                            /* Button click: OK or Cancel */
+                            if (hit == hOK || hit == hCancel) {
+                                done = true;
+                            }
+                        } else {
+                            /* Pop-up button: section change */
+                            if (hit == hSection) {
+                                short newSel = GetControlValue(hSection);
+                                for (short i = 0; i < sectionControlCount[currentSection]; i++)
+                                    HideControl(sectionControls[currentSection][i]);
+                                currentSection = newSel;
+                                for (short i = 0; i < sectionControlCount[currentSection]; i++)
+                                    ShowControl(sectionControls[currentSection][i]);
+                                Redraw();
+                            }
+                        }
+                    }
+                }
+                break;
+
+            case keyDown:
+            case autoKey: {
+                char c = static_cast<char>(event.message & charCodeMask);
+                if (c == '\r' || c == 3) {
+                    done = true;
+                } else if (c == 27) {
+                    done = true;
+                }
+                break;
+            }
+
+            default:
+                break;
+            }
+        }
+
+        /* On OK, save all changed settings. */
+        if (!done || mDone) {
+            /* Cancelled or closed: discard. */
+        } else {
+            char buf[512];
+
+            /* Section 0: Application (7 controls)
+             *   0=show_window chk, 1=max_sessions edit(TE),
+             *   2=http_enabled chk, 3=mail_enabled chk,
+             *   4=wayback_enabled chk, 5=log_file chk,
+             *   6=max_connects edit(TE) */
+            {
+                GWConfig_Set("show_window",
+                             GetControlValue(sectionControls[0][0]) ? "1" : "0");
+                /* TEHandle is a struct (TERec), cast to pointer for member access. */
+                TEHandle te = reinterpret_cast<TEHandle>(sectionControls[0][1]);
+                Byte **tptr = TEGetText(reinterpret_cast<TEPtr>(te));
+                char ebuf[8];
+                memcpy(ebuf, tptr, te->teLength < 7 ? te->teLength + 1 : 8);
+                ebuf[7] = '\0';
+                GWConfig_Set("max_sessions", ebuf);
+                GWConfig_Set("http_enabled",
+                             GetControlValue(sectionControls[0][2]) ? "1" : "0");
+                GWConfig_Set("mail_enabled",
+                             GetControlValue(sectionControls[0][3]) ? "1" : "0");
+                GWConfig_Set("wayback_enabled",
+                             GetControlValue(sectionControls[0][4]) ? "1" : "0");
+                GWConfig_Set("log_file",
+                             GetControlValue(sectionControls[0][5]) ? "1" : "0");
+                TEHandle te2 = reinterpret_cast<TEHandle>(sectionControls[0][6]);
+                Byte **tptr2 = TEGetText(reinterpret_cast<TEPtr>(te2));
+                char ebuf2[8];
+                memcpy(ebuf2, tptr2, te2->teLength < 7 ? te2->teLength + 1 : 8);
+                ebuf2[7] = '\0';
+                GWConfig_Set("max_connects", ebuf2);
+            }
+
+            /* Section 1: Web Proxy (5 controls) */
+            {
+                TEHandle te = reinterpret_cast<TEHandle>(sectionControls[1][0]);
+                Byte **tptr = TEGetText(reinterpret_cast<TEPtr>(te));
+                char ebuf[8];
+                memcpy(ebuf, tptr, te->teLength < 7 ? te->teLength + 1 : 8);
+                ebuf[7] = '\0';
+                GWConfig_Set("http_port", ebuf);
+                {
+                    short sel = GetControlValue(sectionControls[1][1]);
+                    const char *vals[] = { "auto", "always", "never" };
+                    GWConfig_Set("follow_redirects", vals[sel < 3 ? sel : 0]);
+                }
+                GWConfig_Set("rewrite_https",
+                             GetControlValue(sectionControls[1][2]) ? "1" : "0");
+                GWConfig_Set("connect_mitm",
+                             GetControlValue(sectionControls[1][3]) ? "1" : "0");
+                TEHandle te2 = reinterpret_cast<TEHandle>(sectionControls[1][4]);
+                Byte **tptr2 = TEGetText(reinterpret_cast<TEPtr>(te2));
+                char ebuf2[8];
+                memcpy(ebuf2, tptr2, te2->teLength < 7 ? te2->teLength + 1 : 8);
+                ebuf2[7] = '\0';
+                GWConfig_Set("max_body_mb", ebuf2);
+            }
+
+            /* Section 2: Wayback Proxy (9 controls) */
+            {
+                TEHandle te = reinterpret_cast<TEHandle>(sectionControls[2][0]);
+                Byte **tptr = TEGetText(reinterpret_cast<TEPtr>(te));
+                char ebuf[8];
+                memcpy(ebuf, tptr, te->teLength < 7 ? te->teLength + 1 : 8);
+                ebuf[7] = '\0';
+                GWConfig_Set("wayback_port", ebuf);
+                TEHandle te2 = reinterpret_cast<TEHandle>(sectionControls[2][1]);
+                Byte **tptr2 = TEGetText(reinterpret_cast<TEPtr>(te2));
+                char ebuf2[9];
+                memcpy(ebuf2, tptr2, te2->teLength < 8 ? te2->teLength + 1 : 9);
+                ebuf2[8] = '\0';
+                GWConfig_Set("wayback_date", ebuf2);
+                TEHandle te3 = reinterpret_cast<TEHandle>(sectionControls[2][2]);
+                Byte **tptr3 = TEGetText(reinterpret_cast<TEPtr>(te3));
+                char ebuf3[8];
+                memcpy(ebuf3, tptr3, te3->teLength < 7 ? te3->teLength + 1 : 8);
+                ebuf3[7] = '\0';
+                GWConfig_Set("wayback_tolerance", ebuf3);
+                /* skip text area (3) and scroll bar (4) */
+                GWConfig_Set("wayback_geocities",
+                             GetControlValue(sectionControls[2][5]) ? "1" : "0");
+                GWConfig_Set("wayback_ct_encoding",
+                             GetControlValue(sectionControls[2][6]) ? "1" : "0");
+                GWConfig_Set("wayback_settings",
+                             GetControlValue(sectionControls[2][7]) ? "1" : "0");
+                GWConfig_Set("wayback_cache",
+                             GetControlValue(sectionControls[2][8]) ? "1" : "0");
+            }
+
+            /* Section 3: Mail (9 controls) */
+            {
+                TEHandle te = reinterpret_cast<TEHandle>(sectionControls[3][0]);
+                Byte **tptr = TEGetText(reinterpret_cast<TEPtr>(te));
+                char ebuf[8];
+                memcpy(ebuf, tptr, te->teLength < 7 ? te->teLength + 1 : 8);
+                ebuf[7] = '\0';
+                GWConfig_Set("imap_port", ebuf);
+                TEHandle te2 = reinterpret_cast<TEHandle>(sectionControls[3][1]);
+                Byte **tptr2 = TEGetText(reinterpret_cast<TEPtr>(te2));
+                char ebuf2[8];
+                memcpy(ebuf2, tptr2, te2->teLength < 7 ? te2->teLength + 1 : 8);
+                ebuf2[7] = '\0';
+                GWConfig_Set("pop_port", ebuf2);
+                TEHandle te3 = reinterpret_cast<TEHandle>(sectionControls[3][2]);
+                Byte **tptr3 = TEGetText(reinterpret_cast<TEPtr>(te3));
+                char ebuf3[8];
+                memcpy(ebuf3, tptr3, te3->teLength < 7 ? te3->teLength + 1 : 8);
+                ebuf3[7] = '\0';
+                GWConfig_Set("smtp_port", ebuf3);
+                TEHandle te4 = reinterpret_cast<TEHandle>(sectionControls[3][3]);
+                Byte **tptr4 = TEGetText(reinterpret_cast<TEPtr>(te4));
+                char ebuf4[128];
+                memcpy(ebuf4, tptr4, te4->teLength < 127 ? te4->teLength + 1 : 128);
+                ebuf4[127] = '\0';
+                GWConfig_Set("local_password", ebuf4);
+                {
+                    short sel = GetControlValue(sectionControls[3][4]);
+                    const char *vals[] = { "outlook", "gmail", "custom" };
+                    GWConfig_Set("provider", vals[sel < 3 ? sel : 0]);
+                }
+                TEHandle te5 = reinterpret_cast<TEHandle>(sectionControls[3][5]);
+                Byte **tptr5 = TEGetText(reinterpret_cast<TEPtr>(te5));
+                char ebuf5[128];
+                memcpy(ebuf5, tptr5, te5->teLength < 127 ? te5->teLength + 1 : 128);
+                ebuf5[127] = '\0';
+                GWConfig_Set("oauth_user", ebuf5);
+                TEHandle te6 = reinterpret_cast<TEHandle>(sectionControls[3][6]);
+                Byte **tptr6 = TEGetText(reinterpret_cast<TEPtr>(te6));
+                char ebuf6[128];
+                memcpy(ebuf6, tptr6, te6->teLength < 127 ? te6->teLength + 1 : 128);
+                ebuf6[127] = '\0';
+                GWConfig_Set("oauth_client_id", ebuf6);
+                TEHandle te7 = reinterpret_cast<TEHandle>(sectionControls[3][7]);
+                Byte **tptr7 = TEGetText(reinterpret_cast<TEPtr>(te7));
+                char ebuf7[128];
+                memcpy(ebuf7, tptr7, te7->teLength < 127 ? te7->teLength + 1 : 128);
+                ebuf7[127] = '\0';
+                GWConfig_Set("oauth_client_secret", ebuf7);
+                TEHandle te8 = reinterpret_cast<TEHandle>(sectionControls[3][8]);
+                Byte **tptr8 = TEGetText(reinterpret_cast<TEPtr>(te8));
+                char ebuf8[512];
+                memcpy(ebuf8, tptr8, te8->teLength < 511 ? te8->teLength + 1 : 512);
+                ebuf8[511] = '\0';
+                GWConfig_Set("refresh_token", ebuf8);
+            }
+
+            /* Flush prefs to disk. */
+            GWConfig_Load();  /* re-read after saves */
+        }
+
+        /* Dispose all controls. */
+        for (int s = 0; s < kMaxSections; s++) {
+            for (short i = 0; i < sectionControlCount[s]; i++) {
+                /* The wayback text area (section 2, index 3) is a TEHandle:
+                 * dispose it with TEDispose. */
+                if (s == 2 && i == 3)
+                    TEDispose(sectionControls[2][3]);
+                else
+                    DisposeControl(sectionControls[s][i]);
+            }
+        }
+
+        DisposeWindow(win);
+    }    void DrawAboutContent(WindowPtr w)
     {
         GrafPtr  port = reinterpret_cast<GrafPtr>(w);
         Rect     box = port->portRect;
@@ -769,6 +1566,7 @@ private:
         case kFileMenuID:
             if (item == kHideItem) ToggleWindow();
             else if (item == kStopItem) ToggleRunning();
+            else if (item == kSettingsItem) HandleSettings();
             else if (item == kQuitItem) mDone = true;
             break;
 
