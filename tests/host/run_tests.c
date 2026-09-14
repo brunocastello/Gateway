@@ -17,7 +17,6 @@
 #include "gw_oauth.h"
 #include "gw_pac.h"
 #include "gw_prefs.h"
-#include "gw_prefsform.h"
 #include "gw_rewrite.h"
 #include "gw_x509write.h"
 #include "gw_url.h"
@@ -1408,116 +1407,6 @@ static void test_prefs_list_write(void)
           "a buffer too small writes nothing rather than half a file");
 }
 
-static void test_prefsform(void)
-{
-    const GWPrefField *f;
-    char        out[128];
-    const char *why;
-    int         i, count = 0;
-
-    printf("gw_prefsform\n");
-
-    f = gw_prefsform_fields(&count);
-    check(f != NULL && count > 0, "there is a table");
-
-    /* Every field has to be usable by a window that knows nothing else. */
-    for (i = 0; i < count; i++) {
-        check(f[i].key != NULL && f[i].key[0] != '\0', "every field has a key");
-        check(f[i].label != NULL && f[i].label[0] != '\0',
-              "every field has a label");
-        check(f[i].def != NULL, "every field has a default");
-        check(f[i].group >= 0 && f[i].group < kGWGroupCount,
-              "every field is in a real group");
-        if (f[i].kind == kGWFieldChoice)
-            check(f[i].choices != NULL, "every choice field lists its choices");
-        if (f[i].kind == kGWFieldNumber)
-            check(f[i].min <= f[i].max, "every number field has a range");
-        /* Its own default must survive validation, or the window cannot even
-         * draw an untouched file. */
-        check(gw_prefsform_validate(&f[i], f[i].def, out, sizeof(out), &why),
-              "every default is a value the field accepts");
-    }
-
-    check(gw_prefsform_find("http_port") != NULL, "a key can be looked up");
-    check(gw_prefsform_find("HTTP_PORT") != NULL, "case-insensitively");
-
-    /*
-     * Every key Gateway reads has to be in the form. The list is the output
-     * of
-     *
-     *   grep -rhoE 'GWConfig_(Num|Str|GetNth|Set)\("[a-z_]+"' src/ \
-     *     | grep -oE '"[a-z_]+"' | tr -d '"' | sort -u
-     *
-     * so adding a preference and not adding it to the window fails here
-     * rather than being noticed by whoever goes looking for it.
-     */
-    {
-        static const char *const kAllKeys[] = {
-            "connect_mitm", "follow_redirects", "http_enabled", "http_port",
-            "imap_host", "imap_port", "imap_upstream_port", "local_password",
-            "log_file", "mail_enabled", "max_body_mb", "max_connects",
-            "max_sessions", "oauth_client_id", "oauth_client_secret",
-            "oauth_host", "oauth_path", "oauth_scope", "oauth_user",
-            "pop_host", "pop_port", "pop_upstream_port", "provider",
-            "refresh_token", "rewrite_https", "show_window", "smtp_host",
-            "smtp_port", "smtp_starttls", "smtp_upstream_port",
-            "wayback_cache", "wayback_connects", "wayback_ct_encoding",
-            "wayback_date", "wayback_enabled", "wayback_geocities",
-            "wayback_live", "wayback_port", "wayback_quick_images",
-            "wayback_settings", "wayback_tolerance", NULL
-        };
-        int k;
-
-        for (k = 0; kAllKeys[k] != NULL; k++) {
-            if (gw_prefsform_find(kAllKeys[k]) == NULL) {
-                sFailures++;
-                printf("  FAIL  %s is read by Gateway and missing from the "
-                       "Preferences window\n", kAllKeys[k]);
-            }
-            sChecks++;
-        }
-        check(count == k, "and the form carries nothing that is not a key");
-    }
-
-    /* Flags. */
-    f = gw_prefsform_find("rewrite_https");
-    check(gw_prefsform_validate(f, "yes", out, sizeof(out), &why), "yes is on");
-    check_str(out, "1", "and is stored as 1");
-    check(gw_prefsform_validate(f, "OFF", out, sizeof(out), &why), "OFF is off");
-    check_str(out, "0", "and is stored as 0");
-    check(!gw_prefsform_validate(f, "maybe", out, sizeof(out), &why),
-          "anything else is refused");
-    check(why != NULL, "with something to show the person");
-
-    /* Numbers clamp rather than refuse. */
-    f = gw_prefsform_find("max_sessions");
-    check(gw_prefsform_validate(f, "40", out, sizeof(out), &why), "40 is taken");
-    check_str(out, "16", "and clamped to the maximum");
-    check(gw_prefsform_validate(f, "1", out, sizeof(out), &why), "1 is taken");
-    check_str(out, "2", "and clamped to the minimum");
-    check(!gw_prefsform_validate(f, "lots", out, sizeof(out), &why),
-          "but a word is not a number");
-
-    /* Choices are matched loosely and stored exactly. */
-    f = gw_prefsform_find("follow_redirects");
-    check(gw_prefsform_validate(f, "NEVER", out, sizeof(out), &why),
-          "a choice is matched case-insensitively");
-    check_str(out, "never", "and stored in the table's spelling");
-    check(!gw_prefsform_validate(f, "sometimes", out, sizeof(out), &why),
-          "and nothing else is a choice");
-
-    /* Text may not carry a line break into the file. */
-    f = gw_prefsform_find("oauth_user");
-    check(gw_prefsform_validate(f, "someone@example.com", out, sizeof(out), &why),
-          "an address is text");
-    check(!gw_prefsform_validate(f, "a\nhttp_port = 1", out, sizeof(out), &why),
-          "a line break is refused, or it would become a second setting");
-
-    check(gw_prefsform_changed("8765", "8888"), "a difference is a change");
-    check(!gw_prefsform_changed("8765", "8765"), "and sameness is not");
-    check(!gw_prefsform_changed(NULL, ""), "absent and empty are the same");
-}
-
 int main(void)
 {
     test_util();
@@ -1537,7 +1426,6 @@ int main(void)
     test_host_match();
     test_prefs_list();
     test_prefs_list_write();
-    test_prefsform();
     test_pac();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);

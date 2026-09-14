@@ -150,7 +150,6 @@ add_library(gw_portable STATIC
     src/portable/gw_x509write.c
     src/portable/gw_wayback.c
     src/portable/gw_pac.c
-    src/portable/gw_prefsform.c
 )
 target_include_directories(gw_portable PUBLIC src/portable)
 target_compile_options(gw_portable PRIVATE -Wall -Wextra -Wno-unused-parameter)
@@ -189,21 +188,6 @@ target_compile_options(gw_net PRIVATE -Wall -Wno-unused-parameter)
 # main.cpp reaches the core through the plain-C src/gw_core.h.
 # --------------------------------------------------------------------
 
-# --------------------------------------------------------------------
-# The Preferences window. The only part of the UI that needs Apple's
-# Universal Interfaces, because the Mac OS 8.5 look it reproduces is drawn
-# by the Appearance Manager and Multiversal defines none of it. Same
-# arrangement as the Open Transport units in CLAUDE.md rule 3: the headers
-# are PRIVATE here and reach nothing else, and src/main.cpp stays on
-# Multiversal. They meet only through src/ui/gw_prefswin.h, which carries
-# no Toolbox type.
-# --------------------------------------------------------------------
-add_library(gw_prefsui STATIC src/ui/gw_prefswin.cpp)
-target_include_directories(gw_prefsui BEFORE PRIVATE ${GW_UNIV_INC})
-target_include_directories(gw_prefsui PUBLIC src)
-target_link_libraries(gw_prefsui PRIVATE gw_portable)
-target_compile_options(gw_prefsui PRIVATE -Wall -Wno-unused-parameter)
-
 add_application(Gateway
     src/main.cpp
     src/ui/gateway.r
@@ -213,10 +197,7 @@ add_application(Gateway
 )
 
 target_include_directories(Gateway PRIVATE src)
-# AppearanceLib is a CFM import: the Preferences window calls
-# SetThemeWindowBackground and the Appearance control definitions.
-target_link_libraries(Gateway gw_prefsui gw_net gw_portable certainly bearssl
-                      ${GW_OT_LIBS} ${GW_UNIV_LIB}/libAppearanceLib.a)
+target_link_libraries(Gateway gw_net gw_portable certainly bearssl ${GW_OT_LIBS})
 
 set_target_properties(Gateway PROPERTIES COMPILE_OPTIONS -ffunction-sections)
 set_target_properties(Gateway PROPERTIES LINK_FLAGS "-Wl,-gc-sections")
