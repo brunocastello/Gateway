@@ -43,7 +43,7 @@
 
 namespace {
 
-const short kWinWidth    = 500;
+const short kWinWidth    = 544;
 
 const short kMargin      = 12;
 const short kPopupTop    = 12;
@@ -61,11 +61,11 @@ const short kPaneRight   = kBoxRight - 14;
  * edge, as the Identity box in the Internet control panel has it, rather than
  * being a fixed width hung off the right.
  */
-const short kEntryLeft   = kPaneLeft + 176;
-const short kEntryWidth  = 192;
+const short kEntryLeft   = kPaneLeft + 196;
+const short kEntryWidth  = 214;
 const short kEntryHeight = 22;
 const short kRowHeight   = 27;
-const short kHintHeight  = 16;
+const short kHintHeight  = 14;
 const short kListHeight  = 92;
 const short kButtonW     = 74;
 const short kButtonH     = 20;
@@ -334,7 +334,7 @@ void SystemFont(ControlHandle c)
 }
 
 ControlHandle MakeLabel(WindowPtr w, const Rect *r, const char *text,
-                        SInt16 just)
+                        SInt16 just, Boolean small)
 {
     ControlFontStyleRec style;
     ControlHandle       c;
@@ -354,7 +354,8 @@ ControlHandle MakeLabel(WindowPtr w, const Rect *r, const char *text,
                    (Size)strlen(text), (Ptr)text);
 
     style.flags = kControlUseFontMask | kControlUseJustMask;
-    style.font = kControlFontBigSystemFont;
+    style.font = small ? kControlFontSmallSystemFont
+                       : kControlFontBigSystemFont;
     style.just = just;
     SetControlFontStyle(c, &style);
     return c;
@@ -401,7 +402,7 @@ void PrefsWindow::BuildPane(int group)
 
             SetRect(&r, kPaneLeft, (short)(v + 3),
                     (short)(kEntryLeft - 8), (short)(v + 19));
-            row->label = MakeLabel(mWindow, &r, f[i].label, teFlushRight);
+            row->label = MakeLabel(mWindow, &r, f[i].label, teFlushRight, false);
 
             ToPascal(f[i].label, s);
             menu = NewMenu(id, s);
@@ -440,20 +441,20 @@ void PrefsWindow::BuildPane(int group)
         }
 
         case kGWFieldList:
-            SetRect(&r, kPaneLeft, v, kPaneRight, (short)(v + 17));
-            row->label = MakeLabel(mWindow, &r, f[i].label, teFlushLeft);
+            SetRect(&r, kPaneLeft, v, kPaneRight, (short)(v + 18));
+            row->label = MakeLabel(mWindow, &r, f[i].label, teFlushLeft, false);
 
-            SetRect(&r, kPaneLeft, (short)(v + 16),
+            SetRect(&r, kPaneLeft, (short)(v + 20),
                     (short)(kPaneRight - kScrollW + 1),
-                    (short)(v + 16 + kListHeight));
+                    (short)(v + 20 + kListHeight));
             ToPascal("", s);
             row->ctl = NewControl(mWindow, &r, s, true, 0, 0, 0,
                                   kControlEditTextProc, 0);
             SetText(row->ctl, mList);
             SystemFont(row->ctl);
 
-            SetRect(&r, (short)(kPaneRight - kScrollW), (short)(v + 16),
-                    kPaneRight, (short)(v + 16 + kListHeight));
+            SetRect(&r, (short)(kPaneRight - kScrollW), (short)(v + 20),
+                    kPaneRight, (short)(v + 20 + kListHeight));
             row->scroll = NewControl(mWindow, &r, s, true, 0, 0, 0,
                                      kControlScrollBarLiveProc, 0);
             SyncScroll(row);
@@ -462,7 +463,7 @@ void PrefsWindow::BuildPane(int group)
         default:
             SetRect(&r, kPaneLeft, (short)(v + 3),
                     (short)(kEntryLeft - 8), (short)(v + 19));
-            row->label = MakeLabel(mWindow, &r, f[i].label, teFlushRight);
+            row->label = MakeLabel(mWindow, &r, f[i].label, teFlushRight, false);
 
             SetRect(&r, kEntryLeft, v,
                     (short)(kEntryLeft + kEntryWidth),
@@ -478,15 +479,16 @@ void PrefsWindow::BuildPane(int group)
         }
 
         if (f[i].kind == kGWFieldList)
-            v = (short)(v + 16 + kListHeight + 10);
+            v = (short)(v + 20 + kListHeight + 8);
         else
             v = (short)(v + kRowHeight);
 
         if (f[i].hint != 0) {
-            SetRect(&r, (f[i].kind == kGWFieldFlag ||
-                         f[i].kind == kGWFieldList) ? kPaneLeft : kEntryLeft,
-                    (short)(v - 5), kPaneRight, (short)(v + 12));
-            row->hint = MakeLabel(mWindow, &r, f[i].hint, teFlushLeft);
+            /* The whole pane, in Geneva: the long ones were running off the
+             * right and losing their last word. */
+            SetRect(&r, kPaneLeft, (short)(v - 5), kPaneRight,
+                    (short)(v + 10));
+            row->hint = MakeLabel(mWindow, &r, f[i].hint, teFlushLeft, true);
             v = (short)(v + kHintHeight);
         }
         v = (short)(v + 2);
@@ -609,7 +611,7 @@ bool PrefsWindow::Open()
 
         SetRect(&r, kMargin, (short)(kPopupTop + 3), 96,
                 (short)(kPopupTop + 20));
-        MakeLabel(mWindow, &r, "Settings for:", teFlushRight);
+        MakeLabel(mWindow, &r, "Settings for:", teFlushRight, false);
 
         if (GetMenuHandle(kGroupMenuID) == 0) {
             MenuHandle menu;
@@ -624,7 +626,7 @@ bool PrefsWindow::Open()
                 InsertMenu(menu, kInsertHierarchicalMenu);
             }
         }
-        SetRect(&r, 104, kPopupTop, 300, (short)(kPopupTop + kPopupHeight));
+        SetRect(&r, 104, kPopupTop, 262, (short)(kPopupTop + kPopupHeight));
         ToPascal("", s);
         mGroupPopup = NewControl(mWindow, &r, s, true, 1, kGroupMenuID, 0,
                                  (short)(kControlPopupButtonProc +
@@ -721,6 +723,19 @@ bool PrefsWindow::HandleEvent(EventRecord *ev)
                 short part = FindControl(where, mWindow, &hit);
 
                 if (part == 0 || hit == 0 || hit == mRoot) return true;
+            }
+            /*
+             * Focus first. An edit text control will not place a caret for a
+             * click unless it already has the keyboard focus, which is why
+             * the fields were not editable once the pane stopped focusing one
+             * on the way in.
+             */
+            for (i = 0; i < mRowCount; i++) {
+                if (mRows[i].ctl != hit || mRows[i].field == 0) continue;
+                if (mRows[i].field->kind == kGWFieldFlag) break;
+                if (mRows[i].field->kind == kGWFieldChoice) break;
+                SetKeyboardFocus(mWindow, hit, kControlEditTextPart);
+                break;
             }
             HandleControlClick(hit, where, ev->modifiers, 0);
 
