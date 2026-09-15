@@ -755,6 +755,8 @@ ssl2_convert_hello(br_ssl_engine_context *rc)
 	 */
 	br_multihash_update(&rc->mhash, p + 2, len);
 	rc->hash_skip = hs_len;
+	/* Gateway: the side transcript hashes what the peer sent. */
+	gw_hs_append(rc, p + 2, len);
 
 	q = out + 5 + 4;
 	q[0] = (unsigned char)(version >> 8);
@@ -1264,6 +1266,185 @@ br_ssl_engine_set_suites(br_ssl_engine_context *cc,
 	cc->suites_num = suites_num;
 }
 
+/* see inner.h */
+void
+gw_hs_append(br_ssl_engine_context *cc,
+	const unsigned char *data, size_t len)
+{
+	size_t room;
+
+	if (cc->hs_transcript_full) {
+		return;
+	}
+	room = sizeof cc->hs_transcript - cc->hs_transcript_len;
+	if (len > room) {
+		cc->hs_transcript_full = 1;
+		return;
+	}
+	memcpy(cc->hs_transcript + cc->hs_transcript_len, data, len);
+	cc->hs_transcript_len += len;
+}
+
+/*
+ * Gateway: compute an SSL 3.0 Finished verify_data block (RFC 6101
+ * section 5.6.9) over the side transcript:
+ *   md5:  MD5(master + pad2_48 + MD5(msgs + sender + master + pad1_48))
+ *   sha1: SHA(master + pad2_40 + SHA(msgs + sender + master + pad1_40))
+ * with sender "CLNT" (peer is client) or "SRVR". Corroborated against
+ * OpenSSL 1.0.1e ssl3_handshake_mac(). Writes 36 bytes.
+ */
+static void
+ssl3_compute_finished(br_ssl_engine_context *cc, int from_client,
+	unsigned char out[36])
+{
+	static const unsigned char clnt[4] = { 'C', 'L', 'N', 'T' };
+	static const unsigned char srvr[4] = { 'S', 'R', 'V', 'R' };
+	const unsigned char *sender = from_client ? clnt : srvr;
+	const unsigned char *msgs = cc->hs_transcript;
+	size_t msgs_len = cc->hs_transcript_len;
+	const unsigned char *master = cc->session.master_secret;
+	unsigned char pad[48];
+	unsigned char inner[20];
+	br_md5_context md5_ctx;
+	br_sha1_context sha1_ctx;
+
+	memset(pad, 0x36, 48);
+	br_md5_init(&md5_ctx);
+	br_md5_update(&md5_ctx, msgs, msgs_len);
+	br_md5_update(&md5_ctx, sender, 4);
+	br_md5_update(&md5_ctx, master, 48);
+	br_md5_update(&md5_ctx, pad, 48);
+	br_md5_out(&md5_ctx, inner);
+	memset(pad, 0x5C, 48);
+	br_md5_init(&md5_ctx);
+	br_md5_update(&md5_ctx, master, 48);
+	br_md5_update(&md5_ctx, pad, 48);
+	br_md5_update(&md5_ctx, inner, 16);
+	br_md5_out(&md5_ctx, out);
+
+	memset(pad, 0x36, 40);
+	br_sha1_init(&sha1_ctx);
+	br_sha1_update(&sha1_ctx, msgs, msgs_len);
+	br_sha1_update(&sha1_ctx, sender, 4);
+	br_sha1_update(&sha1_ctx, master, 48);
+	br_sha1_update(&sha1_ctx, pad, 40);
+	br_sha1_out(&sha1_ctx, inner);
+	memset(pad, 0x5C, 40);
+	br_sha1_init(&sha1_ctx);
+	br_sha1_update(&sha1_ctx, master, 48);
+	br_sha1_update(&sha1_ctx, pad, 40);
+	br_sha1_update(&sha1_ctx, inner, 20);
+	br_sha1_out(&sha1_ctx, out + 16);
+}
+
+/*
+ * Gateway: receive-side SSL 3.0 Finished bridge. The frozen T0
+ * handshake bytecode reads a 12-byte TLS-style Finished, but a real
+ * SSL 3.0 peer sends 36 bytes (verified above). Verify the message
+ * here with the true construction; on success, shrink it in place to
+ * the 12-zero-byte form the bytecode expects (compute-Finished is
+ * patched to expect zeros), pre-feed the original bytes to the
+ * transcript hash and skip the rewritten bytes as they are read.
+ * Anything unverifiable or misshapen is left untouched to fail as
+ * before. Returns 1 when rewritten (shrunk by 24 bytes).
+ */
+static int
+ssl3_rewrite_finished(br_ssl_engine_context *cc,
+	unsigned char *hbuf, size_t hlen)
+{
+	unsigned suite = cc->session.cipher_suite;
+	unsigned char expect[36];
+	unsigned diff;
+	size_t k;
+
+	if (cc->incrypt == 0
+		|| cc->record_type_in != BR_SSL_HANDSHAKE
+		|| cc->session.version != BR_SSL30
+		|| (suite != 0x0003 && suite != 0x0004 && suite != 0x0005)
+		|| cc->hs_transcript_full
+		|| cc->ixa != 5
+		|| cc->ixc != 0
+		|| hlen != 40
+		|| hbuf[0] != 0x14
+		|| hbuf[1] != 0 || hbuf[2] != 0 || hbuf[3] != 36)
+	{
+		return 0;
+	}
+	ssl3_compute_finished(cc, 1, expect);
+	diff = 0;
+	for (k = 0; k < 36; k++)
+		diff |= (unsigned)(hbuf[4 + k] ^ expect[k]);
+	if (diff != 0) {
+		return 0;
+	}
+	gw_hs_append(cc, hbuf, 40);
+	br_multihash_update(&cc->mhash, hbuf, 40);
+	hbuf[1] = 0; hbuf[2] = 0; hbuf[3] = 12;
+	memset(hbuf + 4, 0, 12);
+	cc->ixb -= 24;
+	cc->hash_skip += 16;
+	return 1;
+}
+
+/*
+ * Gateway: SSL 3.0 ClientKeyExchange has no length prefix (RFC 6101
+ * section 5.2.2 sends the RSA-encrypted pre-master secret raw), but
+ * the frozen T0 handshake bytecode parses it TLS-style (read16 length
+ * + blob) and dies with LIMIT_EXCEEDED on the first two ciphertext
+ * bytes. Rewrite the message in place before the handshake code sees
+ * it: insert the missing 2-byte length and fix the handshake header,
+ * pre-feed the original bytes to the transcript hash, and skip the
+ * rewritten bytes as they are read (same hash_skip mechanism as the
+ * SSLv2 conversion above).
+ *
+ * This fires at most once per connection, and only when provably safe:
+ * plaintext handshake record, negotiated SSL 3.0 with an RSA RC4 suite,
+ * buffer positioned exactly at a record start holding exactly one
+ * complete ClientKeyExchange message. Anything else (splits, other
+ * messages, other suites) is left untouched to fail as before.
+ * Returns 1 when the message was rewritten (grown by 2 bytes).
+ */
+static int
+ssl3_rewrite_cke(br_ssl_engine_context *cc,
+	unsigned char *hbuf, size_t hlen)
+{
+	unsigned suite = cc->session.cipher_suite;
+	size_t msglen;
+
+	if (cc->incrypt
+		|| cc->record_type_in != BR_SSL_HANDSHAKE
+		|| cc->session.version != BR_SSL30
+		|| (suite != 0x0003 && suite != 0x0004 && suite != 0x0005)
+		|| cc->ixa != 5
+		|| cc->ixc != 0
+		|| hlen < 4
+		|| hbuf[0] != 0x10)
+	{
+		return 0;
+	}
+	msglen = ((size_t)hbuf[1] << 16)
+		| ((size_t)hbuf[2] << 8)
+		| (size_t)hbuf[3];
+	if (msglen < 48 || msglen > 512 || 4 + msglen != hlen) {
+		return 0;
+	}
+	if (cc->ixb + 2 > cc->ibuf_len) {
+		return 0;
+	}
+	br_multihash_update(&cc->mhash, hbuf, 4 + msglen);
+	gw_hs_append(cc, hbuf, 4 + msglen);
+	memmove(hbuf + 6, hbuf + 4, msglen);
+	hbuf[4] = (unsigned char)(msglen >> 8);
+	hbuf[5] = (unsigned char)msglen;
+	msglen += 2;
+	hbuf[1] = (unsigned char)(msglen >> 16);
+	hbuf[2] = (unsigned char)(msglen >> 8);
+	hbuf[3] = (unsigned char)msglen;
+	cc->ixb += 2;
+	cc->hash_skip += 4 + msglen;
+	return 1;
+}
+
 /*
  * Give control to handshake processor. 'action' is 1 for a close,
  * 2 for a renegotiation, or 0 for a jump due to I/O completion.
@@ -1312,6 +1493,18 @@ jump_handshake(br_ssl_engine_context *cc, int action)
 
 		cc->hlen_in = hlen_in;
 		cc->hlen_out = hlen_out;
+		if (cc->hbuf_in != NULL
+			&& ssl3_rewrite_cke(cc, cc->hbuf_in, hlen_in))
+		{
+			hlen_in += 2;
+			cc->hlen_in += 2;
+		}
+		if (cc->hbuf_in != NULL
+			&& ssl3_rewrite_finished(cc, cc->hbuf_in, hlen_in))
+		{
+			hlen_in -= 24;
+			cc->hlen_in -= 24;
+		}
 		cc->action = action;
 		cc->hsrun(&cc->cpu);
 		if (br_ssl_engine_closed(cc)) {
@@ -1342,6 +1535,43 @@ jump_handshake(br_ssl_engine_context *cc, int action)
 void
 br_ssl_engine_flush_record(br_ssl_engine_context *cc)
 {
+	/*
+	 * Gateway: expand our SSL 3.0 Finished to its real 36-byte form.
+	 * T0 emits the 12-byte TLS form (frozen bytecode); the peer needs
+	 * 36 bytes computed over the side transcript with the SRVR sender
+	 * (see ssl3_compute_finished). Runs before the payload ack so the
+	 * framing and encryption below transparently cover 40 bytes.
+	 * Anything misshapen is left untouched to fail as before.
+	 */
+	if (cc->record_type_out == BR_SSL_HANDSHAKE
+		&& cc->session.version == BR_SSL30
+		&& (cc->session.cipher_suite == 0x0003
+			|| cc->session.cipher_suite == 0x0004
+			|| cc->session.cipher_suite == 0x0005)
+		&& !cc->hs_transcript_full
+		&& cc->hbuf_out != NULL && cc->saved_hbuf_out != NULL
+		&& cc->hbuf_out - cc->saved_hbuf_out == 16
+		&& cc->saved_hbuf_out[0] == 0x14
+		&& cc->saved_hbuf_out[1] == 0
+		&& cc->saved_hbuf_out[2] == 0
+		&& cc->saved_hbuf_out[3] == 12
+		&& cc->hbuf_out + 24 <= cc->obuf + cc->obuf_len
+		&& cc->hs_transcript_len >= 16
+		&& memcmp(cc->hs_transcript + cc->hs_transcript_len - 16,
+			cc->saved_hbuf_out, 16) == 0)
+	{
+		unsigned char verify[36];
+		/* Exclude our own T0-form message first: the verify covers
+		 * everything up to but not including this Finished. */
+		cc->hs_transcript_len -= 16;
+		ssl3_compute_finished(cc, 0, verify);
+		cc->saved_hbuf_out[1] = 0;
+		cc->saved_hbuf_out[2] = 0;
+		cc->saved_hbuf_out[3] = 36;
+		memcpy(cc->saved_hbuf_out + 4, verify, 36);
+		cc->hbuf_out += 24;
+		gw_hs_append(cc, cc->saved_hbuf_out, 40);
+	}
 	if (cc->hbuf_out != cc->saved_hbuf_out) {
 		sendpld_ack(cc, cc->hbuf_out - cc->saved_hbuf_out);
 	}
@@ -1550,6 +1780,8 @@ br_ssl_engine_hs_reset(br_ssl_engine_context *cc,
 	hsinit(&cc->cpu);
 	cc->hsrun = hsrun;
 	cc->hash_skip = 0;
+	cc->hs_transcript_len = 0;
+	cc->hs_transcript_full = 0;
 	cc->shutdown_recv = 0;
 	cc->application_data = 0;
 	cc->alert = 0;
@@ -1582,6 +1814,17 @@ br_ssl_engine_compute_master(br_ssl_engine_context *cc,
 		{ cc->server_random, sizeof cc->server_random }
 	};
 
+	/*
+	 * Gateway: SSL 3.0 derives the master secret with its own
+	 * A/BB/CCC construction, not any PRF (see ssl3_master_secret).
+	 */
+	if (cc->session.version == BR_SSL30) {
+		ssl3_master_secret(cc->session.master_secret,
+			pms, pms_len,
+			cc->client_random, cc->server_random);
+		return;
+	}
+
 	iprf = br_ssl_engine_get_PRF(cc, prf_id);
 	iprf(cc->session.master_secret, sizeof cc->session.master_secret,
 		pms, pms_len, "master secret", 2, seed);
@@ -1599,6 +1842,15 @@ compute_key_block(br_ssl_engine_context *cc, int prf_id,
 		{ cc->server_random, sizeof cc->server_random },
 		{ cc->client_random, sizeof cc->client_random }
 	};
+
+	/* Gateway: same version gate as above, for the key block. */
+	if (cc->session.version == BR_SSL30) {
+		ssl3_key_block(kb, half_len << 1,
+			cc->session.master_secret,
+			sizeof cc->session.master_secret,
+			cc->client_random, cc->server_random);
+		return;
+	}
 
 	iprf = br_ssl_engine_get_PRF(cc, prf_id);
 	iprf(kb, half_len << 1,

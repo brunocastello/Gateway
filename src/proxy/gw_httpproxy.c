@@ -541,10 +541,13 @@ static int wayback_settings(GWHttpSession *s)
  * through here. Same key and same order as GW_WaybackHostIsLive(), because a
  * script that routed differently from the proxy it configures would be worse
  * than no script.
+ *
+ * Both consumers now use the splitter, so a host on the list is fetched live
+ * by the proxy and routed direct by the PAC script.
  */
 static int pac_next_live_host(int index, char *out, size_t cap)
 {
-    return GWConfig_GetNth("wayback_live", index, out, cap);
+    return GWConfig_GetNthSplit("wayback_live", index, out, cap);
 }
 
 /*

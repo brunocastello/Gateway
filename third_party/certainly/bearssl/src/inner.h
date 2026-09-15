@@ -288,10 +288,15 @@
  * SSE2 intrinsics are available on x86 (32-bit and 64-bit) with
  * GCC 4.4+, Clang 3.7+ and MSC 2005+.
  */
+/*
+ * Gateway: never SSE2. The Windows build's floor is Windows 95 and NT 3.51,
+ * which run on 486 and original Pentium hardware; SSE2 is Pentium 4 and
+ * later. BearSSL dispatches on CPUID at run time, so this is belt and
+ * braces -- but the belt costs nothing here, where throughput is bounded by
+ * a 1997 browser on the other end of the socket rather than by ChaCha20.
+ */
 #ifndef BR_SSE2
-#if (BR_i386 || BR_amd64) && (BR_GCC_4_4 || BR_CLANG_3_7 || BR_MSC_2005)
-#define BR_SSE2   1
-#endif
+#define BR_SSE2   0
 #endif
 
 /*
@@ -2350,6 +2355,48 @@ void br_ssl_engine_switch_ccm_out(br_ssl_engine_context *cc,
 	int is_client, int prf_id,
 	const br_block_ctrcbc_class *bc_impl,
 	size_t cipher_key_len, size_t tag_len);
+
+/*
+ * Switch to RC4 encryption for outgoing records (SSL3 export suites).
+ *    cc               the engine context
+ *    is_client        non-zero for a client, zero for a server
+ *    prf_id           id of hash function for PRF (ignored if not TLS 1.2+)
+ *    mac_id           hash ID (br_md5_ID=1 or br_sha1_ID=2)
+ *    rc4_key_len      RC4 key length (in bytes)
+ *    mac_key_len      MAC key length (in bytes)
+ */
+void br_ssl_engine_switch_rc4_in(br_ssl_engine_context *cc,
+	int is_client, int prf_id, int mac_id,
+	size_t rc4_key_len, size_t mac_key_len);
+
+/*
+ * Switch to RC4 encryption for outgoing records (SSL3 export suites).
+ */
+void br_ssl_engine_switch_rc4_out(br_ssl_engine_context *cc,
+	int is_client, int prf_id, int mac_id,
+	size_t rc4_key_len, size_t mac_key_len);
+
+/*
+ * Gateway: true SSL 3.0 key derivation (RFC 6101 section 6), used by
+ * version-gated call sites in ssl_engine.c. Both take client_random
+ * first; the key block reorders internally (server first).
+ */
+void ssl3_master_secret(unsigned char out[48],
+	const void *pms, size_t pms_len,
+	const unsigned char cli[32], const unsigned char srv[32]);
+void ssl3_key_block(unsigned char *out, size_t len,
+	const void *secret, size_t secret_len,
+	const unsigned char cli[32], const unsigned char srv[32]);
+
+/*
+ * Gateway: append raw handshake bytes to the SSL 3.0 side transcript
+ * (hs_transcript). Call with exactly the bytes fed to the transcript
+ * hash; silently latches hs_transcript_full instead of overflowing.
+ * Used by the handshake read/write gates and the record-layer
+ * rewrites, which all mirror the multihash feed conditions.
+ */
+void gw_hs_append(br_ssl_engine_context *cc,
+	const unsigned char *data, size_t len);
 
 /*
  * Calls to T0-generated code.

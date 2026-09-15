@@ -37,6 +37,7 @@
 
 #include "gw_core.h"
 #include "gw_version.h"
+#include "ui/gw_settings.h"
 #include "portable/gw_log.h"   /* GW_LOG_LINES, for scroll limits */
 
 namespace {
@@ -47,7 +48,8 @@ const short kFileMenuID  = 129;
 const short kAboutItem = 1;
 const short kHideItem  = 1;
 const short kStopItem  = 2;
-const short kQuitItem  = 4;
+const short kSettingsItem = 4;  /* 3 is the separator */
+const short kQuitItem  = 6;  /* 5 is the separator */
 
 /*
  * Finder flags, from Finder.h. Written as literals so this file does not take
@@ -111,6 +113,22 @@ const unsigned short kPlatinum = 0xDDDD;
 const short kLineHeight = 11;
 const short kTextLeft   = 6;
 const short kHeaderRows = 0;
+
+/*
+ * Control procedure IDs. Multiversal does not export the classic names, so
+ * they are written out by value:
+ *
+ *   pushButProc   0    CDEF 0, variant 0
+ *   checkBoxProc  1    CDEF 0, variant 1
+ *   popupMenuProc 1008 CDEF 63, plus popupFixedWidth (1) so the box keeps the
+ *                      width it was given rather than sizing to its widest item
+ *
+ * There is no entry-field CDEF before the Appearance Manager, which is why
+ * the settings window's fields are TextEdit records instead.
+ */
+
+/* movableDBoxProc: a dialog frame with a drag bar and no close or zoom box. */
+const short kMovableDBoxProc = 5;
 
 /* Build a Pascal string without relying on the compiler's "\p" literals. */
 void ToPascal(const char *src, Str255 dst)
@@ -311,6 +329,10 @@ private:
             AppendMenu(mFileMenu, title);
             ToPascal("(-", title);
             AppendMenu(mFileMenu, title);
+            ToPascal("Settings...", title);
+            AppendMenu(mFileMenu, title);
+            ToPascal("(-", title);
+            AppendMenu(mFileMenu, title);
             ToPascal("Quit/Q", title);
             AppendMenu(mFileMenu, title);
             InsertMenu(mFileMenu, 0);
@@ -389,6 +411,25 @@ private:
         case kInPageDown:   Scroll(-page);  break;
         default: break;
         }
+    }
+
+    void HandleSettings()
+    {
+        GWSettings_Run([](void *context, void *rawEvent) -> int {
+            GatewayApp *app = static_cast<GatewayApp *>(context);
+            EventRecord *event = static_cast<EventRecord *>(rawEvent);
+            if (event->what == updateEvt) {
+                WindowPtr hit = reinterpret_cast<WindowPtr>(event->message);
+                BeginUpdate(hit);
+                if (hit == app->mWindow) app->DrawContents();
+                EndUpdate(hit);
+            } else if (event->what == kHighLevelEvent) {
+                AEProcessAppleEvent(event);
+            }
+            return app->mDone;
+        }, this);
+        UpdateWindowMenuItem();
+        if (mWindow != nullptr) Redraw();
     }
 
     /*
@@ -769,6 +810,7 @@ private:
         case kFileMenuID:
             if (item == kHideItem) ToggleWindow();
             else if (item == kStopItem) ToggleRunning();
+            else if (item == kSettingsItem) HandleSettings();
             else if (item == kQuitItem) mDone = true;
             break;
 

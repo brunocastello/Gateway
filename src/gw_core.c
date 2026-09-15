@@ -83,6 +83,25 @@ int GW_ConnectMitm(void)
     return GWConfig_Num("connect_mitm", 0) != 0;
 }
 
+/*
+ * SSL 3.0 on the browser's side of a CONNECT.
+ *
+ * Only reachable through connect_mitm, which is off by default, and only ever
+ * chosen when the client offers nothing better: BearSSL's server takes the
+ * highest version in common, so a browser that can manage TLS 1.0 gets TLS
+ * 1.0. What this opens is the floor -- Netscape 3, IE 3 and IE 4 with no TLS
+ * at all, which until now could only be served by rewrite_https.
+ *
+ * On by default because serving those browsers is the point of the feature
+ * they sit behind, and because the alternative for them is no encryption at
+ * all rather than better encryption. Set allow_sslv3 = 0 to refuse it; the
+ * handshake then fails as it did before, and rewrite_https still works.
+ */
+int GW_AllowSSLv3(void)
+{
+    return GWConfig_Num("allow_sslv3", 1) != 0;
+}
+
 long GW_MaxBodyBytes(void)
 {
     /*
@@ -138,15 +157,13 @@ int GW_WaybackHostIsLive(const char *host)
     int  i;
 
     /*
-     * The allow-list is the same key repeated, one pattern per line, which
-     * reads far better than one enormous value for the thirty-odd entries
-     * this typically holds.
+     * The allow-list is stored as one ;-separated value (or a file mixing
+     * both forms). Walk entries across all occurrences, splitting on ';'.
      */
     for (i = 0; i < 128; i++) {
-        if (!GWConfig_GetNth("wayback_live", i, pattern, sizeof(pattern)))
+        if (!GWConfig_GetNthSplit("wayback_live", i, pattern,
+                                  sizeof(pattern)))
             break;
-        /* A blank entry is not the end of the list. */
-        if (pattern[0] == '\0') continue;
         if (gw_host_matches(pattern, host)) return 1;
     }
     return 0;
@@ -367,6 +384,7 @@ int GW_Init(void)
     sWaybackSet.geocities    = GWConfig_Num("wayback_geocities", 1) != 0;
     sWaybackSet.quick_images = GWConfig_Num("wayback_quick_images", 1) != 0;
     sWaybackSet.ct_encoding  = GWConfig_Num("wayback_ct_encoding", 1) != 0;
+    sWaybackSet.wayback_api  = GWConfig_Num("wayback_api", 1) != 0;
     sWaybackPort = (int)GWConfig_Num("wayback_port", 8888);
 
     return GW_Start();

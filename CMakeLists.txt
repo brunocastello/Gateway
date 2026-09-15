@@ -96,6 +96,9 @@ add_library(bearssl STATIC ${BEARSSL_SOURCES})
 target_include_directories(bearssl
     PUBLIC  ${CERTAINLY_DIR}/bearssl/inc
     PRIVATE ${CERTAINLY_DIR}/bearssl/src
+    # ssl_rec_rc4.c is BearSSL's record layer for the SSL 3.0 suites and
+    # shares src/ssl3's MAC and key schedule.
+    PRIVATE ${CMAKE_SOURCE_DIR}/src
 )
 
 # --------------------------------------------------------------------
@@ -127,6 +130,9 @@ target_include_directories(certainly BEFORE
     PUBLIC  ${CERTAINLY_DIR}/include
     PRIVATE ${CERTAINLY_DIR}/src
     PRIVATE ${CERTAINLY_DIR}/bearssl/inc
+    # server.c bridges the SSL 3.0 handshake and logs through gw_log.
+    PRIVATE ${CMAKE_SOURCE_DIR}/src
+    PRIVATE ${CMAKE_SOURCE_DIR}/src/portable
 )
 target_link_libraries(certainly PRIVATE bearssl)
 target_compile_options(certainly PRIVATE -Wall -Wno-unused-parameter)
@@ -169,15 +175,25 @@ add_library(gw_net STATIC
     src/proxy/gw_httpproxy.c
     src/proxy/gw_mail.c
     src/proxy/gw_token.c
+    src/ssl3/ssl3_prf.c
+    src/ssl3/ssl3_mac.c
+    src/ssl3/ssl3_rc4.c
+    src/ssl3/ssl3_rc2.c
+    src/ssl3/ssl3_engine.c
 )
-target_include_directories(gw_net BEFORE PRIVATE ${GW_UNIV_INC})
+target_include_directories(gw_net BEFORE PRIVATE ${GW_UNIV_INC} src/ssl3)
 target_include_directories(gw_net PUBLIC src)
 # gw_ca.c generates the local authority's key and signs with it, so this one
 # library needs BearSSL's headers and Certainly's entropy pool. Both are
 # PRIVATE: nothing above gw_net has any business seeing them, least of all
 # src/main.cpp, which is a Multiversal translation unit.
+# src/ssl3 needs BearSSL's private inner.h as well: it implements the SSL 3.0
+# key schedule and MAC on BearSSL's hash primitives, and the record layer it
+# serves lives inside BearSSL. Makefile.win32 has carried -I$(BEAR)/src all
+# along, which is why only this build noticed.
 target_include_directories(gw_net PRIVATE
     ${CERTAINLY_DIR}/bearssl/inc
+    ${CERTAINLY_DIR}/bearssl/src
     ${CERTAINLY_DIR}/src
 )
 target_link_libraries(gw_net PUBLIC certainly gw_portable)
@@ -188,16 +204,35 @@ target_compile_options(gw_net PRIVATE -Wall -Wno-unused-parameter)
 # main.cpp reaches the core through the plain-C src/gw_core.h.
 # --------------------------------------------------------------------
 
+# Appearance Manager controls use Apple's headers in this target only.
+add_library(gw_settings STATIC src/ui/gw_settings.cpp)
+target_include_directories(gw_settings BEFORE PRIVATE ${GW_UNIV_INC})
+target_include_directories(gw_settings PRIVATE src)
+target_compile_options(gw_settings PRIVATE -Wall -Wextra -Wno-unused-parameter)
+
 add_application(Gateway
     src/main.cpp
     src/ui/gateway.r
     src/ui/gateway_icon.r
+    src/ui/gateway_settings.r
     TYPE "APPL"
     CREATOR "GT9A"
 )
 
 target_include_directories(Gateway PRIVATE src)
-target_link_libraries(Gateway gw_net gw_portable certainly bearssl ${GW_OT_LIBS})
+#
+# The four core archives are linked as a group, because the SSL 3.0 bridge
+# made their graph cyclic: BearSSL's ssl_rec_rc4.c and certainly's server.c
+# both call into src/ssl3, which lives in gw_net, which already links
+# certainly for gw_ca.c's entropy -- and gw_net sits before bearssl, where a
+# single-pass linker cannot reach back for it. --start-group makes ld rescan
+# until nothing is left undefined, which is cheaper to maintain than an order
+# that is correct only until the next call crosses a library boundary.
+#
+target_link_libraries(Gateway
+    gw_settings ${GW_UNIV_LIB}/libAppearanceLib.a
+    -Wl,--start-group gw_net gw_portable certainly bearssl -Wl,--end-group
+    ${GW_OT_LIBS})
 
 set_target_properties(Gateway PROPERTIES COMPILE_OPTIONS -ffunction-sections)
 set_target_properties(Gateway PROPERTIES LINK_FLAGS "-Wl,-gc-sections")

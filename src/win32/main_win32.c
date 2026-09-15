@@ -31,6 +31,7 @@
 #include "../gw_version.h"
 #include "../gw_config.h"
 #include "../portable/gw_log.h"
+#include "settings_win32.h"
 
 #define GW_CLASS      "GatewayWndClass"
 #define GW_ABOUT_CLASS "GatewayAboutClass"
@@ -46,6 +47,7 @@
 #define IDM_STOP       40003
 #define IDM_ABOUT      40004
 #define IDM_QUIT       40005
+#define IDM_SETTINGS   40006
 
 static HWND  gMain;
 static HWND  gList;
@@ -364,6 +366,8 @@ static void menubar_build(void)
     AppendMenuA(file, MF_STRING, IDM_STOP,    "S&top Gateway");
     AppendMenuA(file, MF_STRING, IDM_STARTUP, "Start with &Windows");
     AppendMenuA(file, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(file, MF_STRING, IDM_SETTINGS, "&Preferences...");
+    AppendMenuA(file, MF_SEPARATOR, 0, NULL);
     AppendMenuA(file, MF_STRING, IDM_QUIT,    "E&xit");
     AppendMenuA(help, MF_STRING, IDM_ABOUT,   "&About Gateway...");
 
@@ -405,6 +409,7 @@ static void tray_menu(void)
     AppendMenuA(menu, MF_STRING | (startup_enabled() ? MF_CHECKED : 0),
                 IDM_STARTUP, "Start with &Windows");
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(menu, MF_STRING, IDM_SETTINGS, "&Preferences...");
     AppendMenuA(menu, MF_STRING, IDM_ABOUT, "&About Gateway...");
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(menu, MF_STRING, IDM_QUIT, "&Quit");
@@ -643,6 +648,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case IDM_SHOW:    window_show(!gShown); break;
         case IDM_STARTUP: startup_set(!startup_enabled()); menubar_sync(); break;
         case IDM_STOP:    toggle_running(); break;
+        case IDM_SETTINGS: GWSettings_Show(gInst); break;
         case IDM_ABOUT:   about_show(); break;
         case IDM_QUIT:    PostMessage(hwnd, WM_DESTROY, 0, 0); break;
         default: break;
@@ -757,6 +763,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
             /* Enter and Escape should close the About box, as they would in
              * a real dialog; IsDialogMessage gives that for nothing. */
             if (gAbout != NULL && IsDialogMessageA(gAbout, &msg)) continue;
+            /* Tab between fields, Enter for Save, Escape for Cancel. */
+            if (GWSettings_Window() != NULL &&
+                IsDialogMessageA(GWSettings_Window(), &msg)) continue;
             TranslateMessage(&msg);
             DispatchMessageA(&msg);
         }

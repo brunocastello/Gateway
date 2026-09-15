@@ -876,8 +876,9 @@ cc: save-session ( -- ) {
 		then
 		can-tls12 ifnot
 			\ Suites compatible with TLS-1.0 and TLS-1.1 are
-			\ exactly the ones that use HMAC/SHA-1.
-			dup 0xF0 and 0x20 <> if
+			\ exactly the ones that use HMAC/SHA-1. SSL 3.0 RC4
+			\ suites (Gateway) may also use MD5.
+			dup 0xF0 and dup 0x20 = swap 0x10 = or ifnot
 				2drop 0 dup
 			then
 		then

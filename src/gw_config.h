@@ -39,6 +39,13 @@ long        GWConfig_Num(const char *key, long def);
  * exists. Used for list-shaped settings such as the Wayback allow-list. */
 int         GWConfig_GetNth(const char *key, int n, char *out, size_t cap);
 
+/*
+ * The nth entry across all occurrences of a key, splitting each value on ';'.
+ *
+ * Used for wayback_live: one ;-separated value, or a file mixing both forms.
+ */
+int         GWConfig_GetNthSplit(const char *key, int n, char *out, size_t cap);
+
 long        GWConfig_Num(const char *key, long def);
 
 /* The nth occurrence of a repeated key, counting from 0. Returns 1 when it

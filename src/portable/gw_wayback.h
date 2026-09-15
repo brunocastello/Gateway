@@ -35,6 +35,7 @@ typedef struct {
     int  geocities;
     int  quick_images;
     int  ct_encoding;
+    int  wayback_api;           /* use the Availability API (default 1) */
 } GWWaybackSettings;
 
 /*

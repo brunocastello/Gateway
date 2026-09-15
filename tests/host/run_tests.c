@@ -1230,6 +1230,99 @@ static int pac_host(int index, char *out, size_t cap)
     return 1;
 }
 
+/*
+ * wayback_api: JSON parsing and URL building.
+ *
+ * §7 test cases 20–25. The JSON work is portable; the fetch is not, so test
+ * the parsing and the URL building and leave the transport to the Mac.
+ */
+static void test_wayback_api(void)
+{
+    static const char body[] =
+        "{\"url\":\"example.com\","
+        "\"archived_snapshots\":{\"closest\":{\"status\":\"200\","
+        "\"available\":true,"
+        "\"url\":\"http://web.archive.org/web/20011025000000/http://example.com/\","
+        "\"timestamp\":\"20011025000000\"}}}";
+    char value[128];
+
+    printf("wayback api\n");
+
+    /* Case 20: a real availability body — reading timestamp returns the stamp. */
+    check(gw_json_string(body, sizeof(body) - 1,
+                         "timestamp", value, sizeof(value)),
+          "case 20: timestamp extracted");
+    check_str(value, "20011025000000", "case 20: timestamp value");
+
+    /* Case 21: reading url returns the top-level echo, not the snapshot.
+     * This asserts behaviour that is wrong for the caller — gw_json_string
+     * scans flat, a future reader will reach for url, and this is the line
+     * that stops them from "simplifying" into it later. */
+    check(gw_json_string(body, sizeof(body) - 1,
+                         "url", value, sizeof(value)),
+          "case 21: url extracted (top-level echo)");
+    check_str(value, "example.com", "case 21: top-level url is the echo");
+
+    /* Case 22: available:false — treated as no snapshot. */
+    {
+        static const char no_snap[] =
+            "{\"url\":\"x.com\","
+            "\"archived_snapshots\":{\"closest\":{"
+            "\"available\":false}}}";
+        check(!gw_json_string(no_snap, sizeof(no_snap) - 1,
+                              "available", value, sizeof(value)),
+              "case 22: available:false is not a string");
+        /* Check the number instead. */
+        check(gw_json_number(no_snap, sizeof(no_snap) - 1,
+                            "available") == -1,
+              "case 22: available:false is not a number");
+    }
+
+    /* Case 23: no archived_snapshots member — treated as no snapshot. */
+    {
+        static const char no_archived[] =
+            "{\"url\":\"x.com\"}";
+        check(!gw_json_string(no_archived, sizeof(no_archived) - 1,
+                              "timestamp", value, sizeof(value)),
+              "case 23: no timestamp when archived_snapshots is absent");
+    }
+
+    /* Case 24: a truncated body — no snapshot, no read past the end. */
+    {
+        static const char truncated[] = "{\"url\":\"x.com\","
+                                        "\"archived_snapshots\":{\"closest\":{";
+        check(!gw_json_string(truncated, sizeof(truncated) - 1,
+                              "timestamp", value, sizeof(value)),
+              "case 24: truncated body returns no timestamp");
+    }
+
+    /* Case 25: a stamp and a URL — the built target is /web/<stamp>id_/<url>. */
+    {
+        static const char body2[] =
+            "{\"url\":\"test.org\","
+            "\"archived_snapshots\":{\"closest\":{"
+            "\"available\":true,"
+            "\"timestamp\":\"20020101120000\"}}}";
+        char stamp[GW_WB_STAMP];
+        char target[GW_MAX_PATH];
+
+        check(gw_json_string(body2, sizeof(body2) - 1,
+                             "timestamp", stamp, sizeof(stamp)),
+              "case 25: timestamp extracted");
+        check_str(stamp, "20020101120000", "case 25: stamp value");
+
+        /* Build the target URL. */
+        {
+            static const char url[] = "http://test.org/page.html";
+            snprintf(target, sizeof(target),
+                     "/web/%sid_/%s", stamp, url);
+            check_str(target,
+                      "/web/20020101120000id_/http://test.org/page.html",
+                      "case 25: target URL built correctly");
+        }
+    }
+}
+
 static void test_pac(void)
 {
     char   buf[4096];
@@ -1361,7 +1454,389 @@ static void test_prefs_list(void)
                        buf, sizeof(buf)) == 1, "gw_prefs_get is unchanged");
 }
 
+/*
+ * The indexed splitter: gw_prefs_get_nth_split.
+ *
+ * §7 test cases 1–10. Both storage forms (repeated keys and one ;-separated
+ * value) are read correctly, spaces are trimmed, empty entries are skipped,
+ * and the walk does not stop at a blank entry inside a value.
+ */
+static void test_prefs_splitter(void)
+{
+    static const char semi[] =
+        "wayback_live = frogfind.com;*.frogfind.com;c.net\n";
+    static const char mixed[] =
+        "wayback_live = frogfind.com;*.frogfind.com\n"
+        "wayback_live = howsmyssl.com;c.net\n";
+    static const char spaces[] =
+        "wayback_live = a.com ; *.b.com ;c.net\n";
+    static const char empty_mid[] =
+        "wayback_live = a.com;;c.net\n";
+    static const char trailing[] =
+        "wayback_live = a.com;b.com;c.net;\n";
+    static const char commented[] =
+        "# wayback_live = x\n"
+        "wayback_live = frogfind.com\n";
+    static const char empty_val[] =
+        "wayback_live =\n"
+        "wayback_live = frogfind.com\n";
+    static const char upper[] =
+        "WAYBACK_LIVE = frogfind.com\n";
+    char buf[128];
+
+    printf("prefs splitter\n");
+
+    /* Case 1: four repeated keys, one pattern each. */
+    {
+        static const char four[] =
+            "wayback_live = a.com\n"
+            "wayback_live = b.com\n"
+            "wayback_live = c.net\n"
+            "wayback_live = d.org\n";
+        check(gw_prefs_get_nth_split(four, sizeof(four) - 1,
+                                     "wayback_live", 0, buf, sizeof(buf)) == 1,
+              "case 1: index 0 exists");
+        check_str(buf, "a.com", "case 1: index 0");
+        check(gw_prefs_get_nth_split(four, sizeof(four) - 1,
+                                     "wayback_live", 3, buf, sizeof(buf)) == 1,
+              "case 1: index 3 exists");
+        check_str(buf, "d.org", "case 1: index 3");
+        check(gw_prefs_get_nth_split(four, sizeof(four) - 1,
+                                     "wayback_live", 4, buf, sizeof(buf)) == 0,
+              "case 1: index 4 returns 0");
+    }
+
+    /* Case 2: one ;-separated value. */
+    check(gw_prefs_get_nth_split(semi, sizeof(semi) - 1,
+                                 "wayback_live", 0, buf, sizeof(buf)) == 1,
+          "case 2: index 0");
+    check_str(buf, "frogfind.com", "case 2: index 0");
+    check(gw_prefs_get_nth_split(semi, sizeof(semi) - 1,
+                                 "wayback_live", 1, buf, sizeof(buf)) == 1,
+          "case 2: index 1");
+    check_str(buf, "*.frogfind.com", "case 2: index 1");
+    check(gw_prefs_get_nth_split(semi, sizeof(semi) - 1,
+                                 "wayback_live", 2, buf, sizeof(buf)) == 1,
+          "case 2: index 2");
+    check_str(buf, "c.net", "case 2: index 2");
+    check(gw_prefs_get_nth_split(semi, sizeof(semi) - 1,
+                                 "wayback_live", 3, buf, sizeof(buf)) == 0,
+          "case 2: index 3 returns 0");
+
+    /* Case 3: a ; line and a later plain line — every entry in file order.
+     * First occurrence: frogfind.com;*.frogfind.com (entries 0,1).
+     * Second occurrence: howsmyssl.com;c.net (entries 2,3). */
+    check(gw_prefs_get_nth_split(mixed, sizeof(mixed) - 1,
+                                 "wayback_live", 0, buf, sizeof(buf)) == 1,
+          "case 3: index 0");
+    check_str(buf, "frogfind.com", "case 3: index 0");
+    check(gw_prefs_get_nth_split(mixed, sizeof(mixed) - 1,
+                                 "wayback_live", 1, buf, sizeof(buf)) == 1,
+          "case 3: index 1");
+    check_str(buf, "*.frogfind.com", "case 3: index 1");
+    check(gw_prefs_get_nth_split(mixed, sizeof(mixed) - 1,
+                                 "wayback_live", 2, buf, sizeof(buf)) == 1,
+          "case 3: index 2");
+    check_str(buf, "howsmyssl.com", "case 3: index 2");
+    check(gw_prefs_get_nth_split(mixed, sizeof(mixed) - 1,
+                                 "wayback_live", 3, buf, sizeof(buf)) == 1,
+          "case 3: index 3");
+    check_str(buf, "c.net", "case 3: index 3");
+    check(gw_prefs_get_nth_split(mixed, sizeof(mixed) - 1,
+                                 "wayback_live", 4, buf, sizeof(buf)) == 0,
+          "case 3: index 4 returns 0");
+
+    /* Case 4: spaces around entries are trimmed. */
+    check(gw_prefs_get_nth_split(spaces, sizeof(spaces) - 1,
+                                 "wayback_live", 0, buf, sizeof(buf)) == 1,
+          "case 4: index 0");
+    check_str(buf, "a.com", "case 4: index 0");
+    check(gw_prefs_get_nth_split(spaces, sizeof(spaces) - 1,
+                                 "wayback_live", 1, buf, sizeof(buf)) == 1,
+          "case 4: index 1");
+    check_str(buf, "*.b.com", "case 4: index 1");
+    check(gw_prefs_get_nth_split(spaces, sizeof(spaces) - 1,
+                                 "wayback_live", 2, buf, sizeof(buf)) == 1,
+          "case 4: index 2");
+    check_str(buf, "c.net", "case 4: index 2");
+
+    /* Case 5: empty entry in the middle does not end the walk. */
+    check(gw_prefs_get_nth_split(empty_mid, sizeof(empty_mid) - 1,
+                                 "wayback_live", 0, buf, sizeof(buf)) == 1,
+          "case 5: index 0");
+    check_str(buf, "a.com", "case 5: index 0");
+    check(gw_prefs_get_nth_split(empty_mid, sizeof(empty_mid) - 1,
+                                 "wayback_live", 1, buf, sizeof(buf)) == 1,
+          "case 5: index 1 (past empty)");
+    check_str(buf, "c.net", "case 5: index 1 (past empty)");
+    check(gw_prefs_get_nth_split(empty_mid, sizeof(empty_mid) - 1,
+                                 "wayback_live", 2, buf, sizeof(buf)) == 0,
+          "case 5: index 2 returns 0");
+
+    /* Case 6: trailing ; does not produce an empty final entry. */
+    check(gw_prefs_get_nth_split(trailing, sizeof(trailing) - 1,
+                                 "wayback_live", 0, buf, sizeof(buf)) == 1,
+          "case 6: index 0");
+    check_str(buf, "a.com", "case 6: index 0");
+    check(gw_prefs_get_nth_split(trailing, sizeof(trailing) - 1,
+                                 "wayback_live", 2, buf, sizeof(buf)) == 1,
+          "case 6: index 2");
+    check_str(buf, "c.net", "case 6: index 2");
+    check(gw_prefs_get_nth_split(trailing, sizeof(trailing) - 1,
+                                 "wayback_live", 3, buf, sizeof(buf)) == 0,
+          "case 6: index 3 returns 0");
+
+    /* Case 7: a commented line stays commented. */
+    check(gw_prefs_get_nth_split(commented, sizeof(commented) - 1,
+                                 "wayback_live", 0, buf, sizeof(buf)) == 1,
+          "case 7: comment is skipped");
+    check_str(buf, "frogfind.com", "case 7: comment is skipped");
+
+    /* Case 8: empty value contributes nothing, does not end the walk. */
+    check(gw_prefs_get_nth_split(empty_val, sizeof(empty_val) - 1,
+                                 "wayback_live", 0, buf, sizeof(buf)) == 1,
+          "case 8: past empty value");
+    check_str(buf, "frogfind.com", "case 8: past empty value");
+
+    /* Case 9: key matching is case-insensitive. */
+    check(gw_prefs_get_nth_split(upper, sizeof(upper) - 1,
+                                 "wayback_live", 0, buf, sizeof(buf)) == 1,
+          "case 9: case-insensitive key");
+    check_str(buf, "frogfind.com", "case 9: case-insensitive key");
+
+    /* Case 10: entry longer than cap is truncated, NUL-terminated. */
+    {
+        char small[8];
+        static const char long_entry[] =
+            "wayback_live = this.is.a.very.long.hostname.example.com\n";
+        check(gw_prefs_get_nth_split(long_entry, sizeof(long_entry) - 1,
+                                     "wayback_live", 0, small, sizeof(small)) == 1,
+              "case 10: entry fits in small buffer");
+        check_str(small, "this.is", "case 10: truncated to cap - 1");
+    }
+}
+
+/*
+ * The writer dropping stale duplicates.
+ *
+ * §7 test cases 11–16. Setting a key that appears three times leaves
+ * exactly one line; other keys are untouched; comments are left alone.
+ */
+static void test_prefs_set_drop(void)
+{
+    static const char before[] =
+        "http_port = 8765\n"
+        "wayback_live = a.com\n"
+        "wayback_live = b.com\n"
+        "wayback_live = c.net\n"
+        "local_password: hunter2\n";
+    static const char single[] =
+        "http_port = 8765\n"
+        "wayback_live = a.com\n";
+    char out[512];
+    size_t n;
+    char buf[128];
+
+    printf("prefs set drop\n");
+
+    /* Case 11: a key present three times, set once — exactly one line. */
+    n = gw_prefs_set(before, sizeof(before) - 1,
+                     "wayback_live", "new.com", out, sizeof(out));
+    check(n > 0, "case 11: set succeeds");
+    {
+        /* Count how many wayback_live lines are in the output. */
+        int count = 0;
+        size_t off = 0;
+        while (off < n) {
+            /* Find the next line. */
+            size_t le = off;
+            while (le < n && out[le] != '\n' && out[le] != '\r') le++;
+            /* Check if this line starts with wayback_live. */
+            size_t i = off;
+            while (i < le && (out[i] == ' ' || out[i] == '\t')) i++;
+            if (i < le && out[i] != '#' && out[i] != ';') {
+                size_t ke = i;
+                while (ke < le && out[ke] != '=' && out[ke] != ':') ke++;
+                if (ke < le) {
+                    size_t kend = ke;
+                    while (kend > i && (out[kend - 1] == ' ' ||
+                                        out[kend - 1] == '\t')) kend--;
+                    if (kend - i == 12 &&
+                        gw_strnicmp(out + i, "wayback_live", 12) == 0)
+                        count++;
+                }
+            }
+            off = (le < n && out[le] == '\r' && le + 1 < n &&
+                   out[le + 1] == '\n') ? le + 2 : (le < n ? le + 1 : le);
+        }
+        check(count == 1, "case 11: exactly one wayback_live line remains");
+    }
+
+    /* Case 12: other keys are untouched, in their original order. */
+    check(gw_prefs_get(out, n, "http_port", buf, sizeof(buf)) &&
+          strcmp(buf, "8765") == 0, "case 12: http_port survives");
+    check(gw_prefs_get(out, n, "local_password", buf, sizeof(buf)) &&
+          strcmp(buf, "hunter2") == 0, "case 12: local_password survives");
+
+    /* Case 13: a commented line is left alone. */
+    {
+        static const char with_c[] =
+            "http_port = 8765\n"
+            "# wayback_live = old\n"
+            "wayback_live = a.com\n";
+        n = gw_prefs_set(with_c, sizeof(with_c) - 1,
+                         "wayback_live", "new.com", out, sizeof(out));
+        check(memmem(out, n, "# wayback_live = old", 19) != NULL,
+              "case 13: comment is left alone");
+    }
+
+    /* Case 14: a key present once, set — unchanged behaviour (regression). */
+    {
+        n = gw_prefs_set(single, sizeof(single) - 1,
+                         "wayback_live", "new.com", out, sizeof(out));
+        check(n > 0, "case 14: set on single key succeeds");
+        check(gw_prefs_get(out, n, "wayback_live", buf, sizeof(buf)) &&
+              strcmp(buf, "new.com") == 0, "case 14: value is updated");
+    }
+
+    /* Case 15: a key absent, set — appended (regression). */
+    {
+        n = gw_prefs_set(single, sizeof(single) - 1,
+                         "new_key", "value", out, sizeof(out));
+        check(n > 0, "case 15: append succeeds");
+        check(gw_prefs_get(out, n, "new_key", buf, sizeof(buf)) &&
+              strcmp(buf, "value") == 0, "case 15: appended value reads back");
+    }
+
+    /* Case 16: after case 11, read it back — index 0 is the new value,
+     * index 1 returns 0. */
+    {
+        n = gw_prefs_set(before, sizeof(before) - 1,
+                         "wayback_live", "new.com", out, sizeof(out));
+        check(gw_prefs_get_nth_split(out, n,
+                                     "wayback_live", 0, buf, sizeof(buf)) == 1,
+              "case 16: index 0 is the new value");
+        check_str(buf, "new.com", "case 16: index 0 is the new value");
+        check(gw_prefs_get_nth_split(out, n,
+                                     "wayback_live", 1, buf, sizeof(buf)) == 0,
+              "case 16: index 1 returns 0");
+    }
+}
+
+/*
+ * The two consumers agreeing: proxy and PAC file use the same splitter.
+ *
+ * §7 test cases 17–19. A host on the list is fetched live by the proxy
+ * and routed direct by the generated PAC script.
+ */
+static void test_pac_splitter_agree(void)
+{
+    static const char text[] =
+        "wayback_live = frogfind.com;*.frogfind.com;c.net\n";
+    char buf[128];
+
+    printf("pac splitter agree\n");
+
+    /* Case 17: read through the new accessor — the pattern sequence is the
+     * same as what GW_WaybackHostIsLive would match and what PAC builds from. */
+    {
+        int i;
+        for (i = 0; i < 128; i++) {
+            if (!gw_prefs_get_nth_split(text, sizeof(text) - 1,
+                                        "wayback_live", i, buf, sizeof(buf)))
+                break;
+        }
+    }
+
+    /* Case 18: a ;-separated list — the PAC script names every entry. */
+    {
+        static const char text2[] =
+            "wayback_live = a.com;b.com;c.net\n";
+        int i;
+        char hosts[128][64];
+        int count = 0;
+
+        for (i = 0; i < 128; i++) {
+            if (!gw_prefs_get_nth_split(text2, sizeof(text2) - 1,
+                                        "wayback_live", i, hosts[count],
+                                        sizeof(hosts[0])))
+                break;
+            count++;
+        }
+        check(count == 3, "case 18: three entries extracted");
+        check_str(hosts[0], "a.com", "case 18: first");
+        check_str(hosts[1], "b.com", "case 18: second");
+        check_str(hosts[2], "c.net", "case 18: third");
+    }
+
+    /* Case 19: the same list in repeated-key form — byte-identical output.
+     * Compare a ;-separated value with the same entries in repeated-key form. */
+    {
+        static const char semi_form[] =
+            "wayback_live = a.com;b.com;c.net\n";
+        static const char repeated[] =
+            "wayback_live = a.com\n"
+            "wayback_live = b.com\n"
+            "wayback_live = c.net\n";
+        int i;
+        char hosts1[128][64], hosts2[128][64];
+        int count1 = 0, count2 = 0;
+
+        for (i = 0; i < 128; i++) {
+            if (!gw_prefs_get_nth_split(semi_form, sizeof(semi_form) - 1,
+                                        "wayback_live", i, hosts1[count1],
+                                        sizeof(hosts1[0])))
+                break;
+            count1++;
+        }
+        for (i = 0; i < 128; i++) {
+            if (!gw_prefs_get_nth_split(repeated, sizeof(repeated) - 1,
+                                        "wayback_live", i, hosts2[count2],
+                                        sizeof(hosts2[0])))
+                break;
+            count2++;
+        }
+        check(count1 == count2, "case 19: same number of entries");
+        check(count1 == 3, "case 19: three entries from each form");
+        {
+            int match = 1;
+            for (i = 0; i < count1; i++) {
+                if (strcmp(hosts1[i], hosts2[i]) != 0) { match = 0; break; }
+            }
+            check(match, "case 19: byte-identical output from both forms");
+        }
+    }
+}
+
 /* ------------------------------------------------------------------ */
+
+/* Exercise the editor-to-file-to-consumer path, including deleting all sites. */
+static void test_whitelist_edit(void)
+{
+    char value[256] = " ; frogfind.com \r\n *.example.com ;;\t68k.news \n; ";
+    char prefs[1024], entry[128];
+    const char *old = "wayback_live = stale.com\nother = keep\nwayback_live = deleted.com\n";
+    size_t len;
+    printf("whitelist editing\n");
+    gw_prefs_normalize_list(value);
+    check_str(value, "frogfind.com;*.example.com;68k.news", "normalize pasted host list");
+    len = gw_prefs_set(old, strlen(old), "wayback_live", value, prefs, sizeof(prefs));
+    check(len > 0, "save edited whitelist");
+    check(gw_prefs_get_nth_split(prefs, len, "wayback_live", 2, entry, sizeof(entry)), "reload added site");
+    check_str(entry, "68k.news", "added site survives reload");
+    check(!gw_prefs_get_nth_split(prefs, len, "wayback_live", 3, entry, sizeof(entry)), "deleted sites stay deleted");
+    strcpy(value, " ; \r\n ; \t");
+    gw_prefs_normalize_list(value);
+    check_str(value, "", "empty editor list has no leading separator");
+    len = gw_prefs_set(old, strlen(old), "wayback_live", value, prefs, sizeof(prefs));
+    check(len > 0, "save empty whitelist");
+    check(!gw_prefs_get_nth_split(prefs, len, "wayback_live", 0, entry, sizeof(entry)), "all whitelist entries removed");
+    check(gw_prefs_get(prefs, len, "other", entry, sizeof(entry)), "other preferences survive");
+    check_str(entry, "keep", "other value unchanged");
+    strcpy(value, "a;b");
+    gw_prefs_normalize_list(value);
+    check_str(value, "a;b", "normalization is idempotent");
+}
 
 int main(void)
 {
@@ -1381,6 +1856,11 @@ int main(void)
     test_x509write();
     test_host_match();
     test_prefs_list();
+    test_prefs_splitter();
+    test_whitelist_edit();
+    test_prefs_set_drop();
+    test_pac_splitter_agree();
+    test_wayback_api();
     test_pac();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);
