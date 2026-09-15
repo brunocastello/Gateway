@@ -111,6 +111,33 @@ compute_key_block_ssl3(br_ssl_engine_context *cc,
 		sizeof cc->session.master_secret, "key expansion", 2, seed);
 }
 
+/*
+ * Gateway: SSL 3.0 export key expansion (RFC 6101 section 6.2.2),
+ * matching OpenSSL 1.0.1e ssl3_change_cipher_state(): the key block
+ * carries raw write keys, and the final bulk key is the whole MD5 of
+ * raw key + nonces (16 bytes carrying 40 bits of secret for RC4_40).
+ * client_key selects whose write key this is (client keys mix
+ * ClientHello.random first, server keys ServerHello.random first).
+ * Only suite 0x0003 needs this; other suites use block keys directly.
+ */
+static void
+ssl3_export_expand(br_ssl_engine_context *cc,
+	const unsigned char *raw, size_t raw_len, int client_key,
+	unsigned char expanded[16])
+{
+	const unsigned char *er1 =
+		client_key ? cc->client_random : cc->server_random;
+	const unsigned char *er2 =
+		client_key ? cc->server_random : cc->client_random;
+	br_md5_context md5;
+
+	br_md5_init(&md5);
+	br_md5_update(&md5, raw, raw_len);
+	br_md5_update(&md5, er1, sizeof cc->client_random);
+	br_md5_update(&md5, er2, sizeof cc->server_random);
+	br_md5_out(&md5, expanded);
+}
+
 void
 br_ssl_engine_switch_rc4_in(br_ssl_engine_context *cc,
 	int is_client, int prf_id, int mac_id,
@@ -123,6 +150,7 @@ br_ssl_engine_switch_rc4_in(br_ssl_engine_context *cc,
 	unsigned char *mac_key;
 	unsigned char *rc4_key;
 	const br_hash_class *rc4_hash;
+	unsigned char expkey[16];
 
 	compute_key_block_ssl3(cc, kb, kb_len);
 
@@ -140,6 +168,15 @@ br_ssl_engine_switch_rc4_in(br_ssl_engine_context *cc,
 	} else {
 		mac_key = kb;
 		rc4_key = kb + 2 * mac_key_len;
+	}
+
+	if (cc->session.cipher_suite == 0x0003) {
+		/* Export suite: expand the raw block key (see above).
+		 * Reading peer keys here, so client_key = !is_client. */
+		ssl3_export_expand(cc, rc4_key, rc4_key_len,
+			!is_client, expkey);
+		rc4_key = expkey;
+		rc4_key_len = 16;
 	}
 
 	cc->in.rc4.vtable = &br_sslrec_in_rc4_vtable;
@@ -163,6 +200,7 @@ br_ssl_engine_switch_rc4_out(br_ssl_engine_context *cc,
 	unsigned char *mac_key;
 	unsigned char *rc4_key;
 	const br_hash_class *rc4_hash;
+	unsigned char expkey[16];
 
 	compute_key_block_ssl3(cc, kb, kb_len);
 
@@ -180,6 +218,15 @@ br_ssl_engine_switch_rc4_out(br_ssl_engine_context *cc,
 	} else {
 		mac_key = kb + mac_key_len;
 		rc4_key = kb + 2 * mac_key_len + rc4_key_len;
+	}
+
+	if (cc->session.cipher_suite == 0x0003) {
+		/* Export suite: expand the raw block key (see above).
+		 * Writing own keys here, so client_key = is_client. */
+		ssl3_export_expand(cc, rc4_key, rc4_key_len,
+			is_client, expkey);
+		rc4_key = expkey;
+		rc4_key_len = 16;
 	}
 
 	cc->out.rc4.vtable = &br_sslrec_out_rc4_vtable;
