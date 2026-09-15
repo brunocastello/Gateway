@@ -38,7 +38,7 @@ data 'MENU' (200, "Preferences panes", purgeable) {
 };
 
 /* follow_redirects. The values written to the prefs file are "auto",
- * "always" and "never", in this order; src/main.cpp holds that list. */
+ * "always" and "never", in this order; gw_settings.cpp holds that list. */
 data 'MENU' (201, "Follow redirects", purgeable) {
     $"00C9"                            /* menu ID 201                       */
     $"0000 0000"
@@ -75,75 +75,75 @@ data 'DITL' (209, "Preferences chrome", purgeable) { $"FFFF" };
  * Disabled user items provide geometry only, never a Dialog Manager editor.
  */
 data 'DITL' (210, "Modules layout", purgeable) {
-    $"0003"
-    $"00000000 0044 001E 0055 01A4 8000" /* http_enabled */
-    $"00000000 005D 001E 006E 01A4 8000" /* mail_enabled */
-    $"00000000 0076 001E 0087 01A4 8000" /* wayback_enabled */
-    $"00000000 009C 00D2 00AF 010A 8000" /* max_sessions */
+    $"0002"
+    $"00000000 0037 0014 0048 01AE 8000" /* http_enabled */
+    $"00000000 0050 0014 0061 01AE 8000" /* mail_enabled */
+    $"00000000 0069 0014 007A 01AE 8000" /* wayback_enabled */
 };
 
 data 'DITL' (211, "Web proxy layout", purgeable) {
-    $"0005"
-    $"00000000 0044 00D2 0057 010A 8000" /* http_port */
-    $"00000000 006A 001E 007B 01A4 8000" /* rewrite_https */
-    $"00000000 0091 001E 00A2 01A4 8000" /* connect_mitm */
-    $"00000000 00BE 00D2 00CF 0140 8000" /* follow_redirects */
-    $"00000000 00DE 00D2 00F1 010A 8000" /* max_body_mb */
-    $"00000000 010A 00D2 011D 010A 8000" /* max_connects */
+    $"0006"
+    $"00000000 0037 00C8 004A 0100 8000" /* http_port */
+    $"00000000 005D 0014 006E 01AE 8000" /* rewrite_https */
+    $"00000000 0084 0014 0095 01AE 8000" /* connect_mitm */
+    $"00000000 00B1 00C8 00C2 0136 8000" /* follow_redirects */
+    $"00000000 00D1 00C8 00E4 0100 8000" /* max_body_mb */
+    $"00000000 00FD 00C8 0110 0100 8000" /* max_connects */
+    $"00000000 012F 00C8 0142 0100 8000" /* max_sessions */
 };
 
 data 'DITL' (212, "Wayback layout", purgeable) {
     $"0004"
-    $"00000000 0044 00D2 0057 010A 8000" /* wayback_port */
-    $"00000000 0070 00D2 0083 0122 8000" /* wayback_date */
-    $"00000000 009C 00D2 00AF 010A 8000" /* wayback_tolerance */
-    $"00000000 00C8 00D2 00DB 010A 8000" /* wayback_connects */
-    $"00000000 00F7 001E 0108 01A4 8000" /* wayback_api */
+    $"00000000 0037 00C8 004A 0100 8000" /* wayback_port */
+    $"00000000 0063 00C8 0076 0118 8000" /* wayback_date */
+    $"00000000 008F 00C8 00A2 0100 8000" /* wayback_tolerance */
+    $"00000000 00BB 00C8 00CE 0100 8000" /* wayback_connects */
+    $"00000000 00EA 0014 00FB 01AE 8000" /* wayback_api */
 };
 
 data 'DITL' (213, "Wayback sites layout", purgeable) {
     $"0005"
-    $"00000000 0044 001E 0055 01A4 8000" /* wayback_geocities */
-    $"00000000 005D 001E 006E 01A4 8000" /* wayback_cache */
-    $"00000000 0076 001E 0087 01A4 8000" /* wayback_settings */
-    $"00000000 008F 001E 00A0 01A4 8000" /* wayback_ct_encoding */
-    $"00000000 00A8 001E 00B9 01A4 8000" /* wayback_quick_images */
-    $"00000000 00DE 001E 0134 019D 8000" /* wayback_live */
+    $"00000000 0037 0014 0048 01AE 8000" /* wayback_geocities */
+    $"00000000 0050 0014 0061 01AE 8000" /* wayback_cache */
+    $"00000000 0069 0014 007A 01AE 8000" /* wayback_settings */
+    $"00000000 0082 0014 0093 01AE 8000" /* wayback_ct_encoding */
+    $"00000000 009B 0014 00AC 01AE 8000" /* wayback_quick_images */
+    $"00000000 00DD 0014 0133 01A9 8000" /* wayback_live */
 };
 
 data 'DITL' (214, "Mail layout", purgeable) {
     $"0005"
-    $"00000000 0044 00D2 0055 0140 8000" /* provider */
-    $"00000000 006A 00D2 007D 01AC 8000" /* oauth_user */
-    $"00000000 0083 00D2 0096 01AC 8000" /* local_password */
-    $"00000000 00B5 00D2 00C8 010A 8000" /* imap_port */
-    $"00000000 00CE 00D2 00E1 010A 8000" /* pop_port */
-    $"00000000 00E7 00D2 00FA 010A 8000" /* smtp_port */
+    $"00000000 0037 00C8 0048 0136 8000" /* provider */
+    $"00000000 005D 00C8 0070 01B6 8000" /* oauth_user */
+    $"00000000 0076 00C8 0089 01B6 8000" /* local_password */
+    $"00000000 00A8 00C8 00BB 0100 8000" /* imap_port */
+    $"00000000 00C1 00C8 00D4 0100 8000" /* pop_port */
+    $"00000000 00DA 00C8 00ED 0100 8000" /* smtp_port */
 };
 
 data 'DITL' (215, "Mail upstream layout", purgeable) {
     $"0006"
-    $"00000000 0044 00D2 0057 01AC 8000" /* imap_host */
-    $"00000000 005D 00D2 0070 010A 8000" /* imap_upstream_port */
-    $"00000000 0076 00D2 0089 01AC 8000" /* pop_host */
-    $"00000000 008F 00D2 00A2 010A 8000" /* pop_upstream_port */
-    $"00000000 00A8 00D2 00BB 01AC 8000" /* smtp_host */
-    $"00000000 00C1 00D2 00D4 010A 8000" /* smtp_upstream_port */
-    $"00000000 00EC 001E 00FD 01A4 8000" /* smtp_starttls */
+    $"00000000 0037 00C8 004A 01B6 8000" /* imap_host */
+    $"00000000 0050 00C8 0063 0100 8000" /* imap_upstream_port */
+    $"00000000 0069 00C8 007C 01B6 8000" /* pop_host */
+    $"00000000 0082 00C8 0095 0100 8000" /* pop_upstream_port */
+    $"00000000 009B 00C8 00AE 01B6 8000" /* smtp_host */
+    $"00000000 00B4 00C8 00C7 0100 8000" /* smtp_upstream_port */
+    $"00000000 00DF 0014 00F0 01AE 8000" /* smtp_starttls */
 };
 
 data 'DITL' (216, "OAuth layout", purgeable) {
     $"0005"
-    $"00000000 0044 00D2 0057 01AC 8000" /* oauth_host */
-    $"00000000 005D 00D2 0070 01AC 8000" /* oauth_path */
-    $"00000000 0076 00D2 0089 01AC 8000" /* oauth_scope */
-    $"00000000 008F 00D2 00A2 01AC 8000" /* oauth_client_id */
-    $"00000000 00A8 00D2 00BB 01AC 8000" /* oauth_client_secret */
-    $"00000000 00C1 00D2 00D4 01AC 8000" /* refresh_token */
+    $"00000000 0037 00C8 004A 01B6 8000" /* oauth_host */
+    $"00000000 0050 00C8 0063 01B6 8000" /* oauth_path */
+    $"00000000 0069 00C8 007C 01B6 8000" /* oauth_scope */
+    $"00000000 0082 00C8 0095 01B6 8000" /* oauth_client_id */
+    $"00000000 009B 00C8 00AE 01B6 8000" /* oauth_client_secret */
+    $"00000000 00B4 00C8 00C7 01B6 8000" /* refresh_token */
 };
 
 data 'DITL' (217, "Log layout", purgeable) {
     $"0001"
-    $"00000000 0044 001E 0055 01A4 8000" /* show_window */
-    $"00000000 0084 001E 0095 01A4 8000" /* log_file */
+    $"00000000 0037 0014 0048 01AE 8000" /* show_window */
+    $"00000000 0075 0014 0086 01B8 8000" /* log_file */
 };

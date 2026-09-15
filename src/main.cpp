@@ -48,8 +48,8 @@ const short kFileMenuID  = 129;
 const short kAboutItem = 1;
 const short kHideItem  = 1;
 const short kStopItem  = 2;
-const short kSettingsItem = 3;
-const short kQuitItem  = 5;  /* 4 is the separator */
+const short kSettingsItem = 4;  /* 3 is the separator */
+const short kQuitItem  = 6;  /* 5 is the separator */
 
 /*
  * Finder flags, from Finder.h. Written as literals so this file does not take
@@ -326,6 +326,8 @@ private:
             ToPascal("Hide Window/H", title);
             AppendMenu(mFileMenu, title);
             ToPascal("Stop Gateway/S", title);
+            AppendMenu(mFileMenu, title);
+            ToPascal("(-", title);
             AppendMenu(mFileMenu, title);
             ToPascal("Settings...", title);
             AppendMenu(mFileMenu, title);

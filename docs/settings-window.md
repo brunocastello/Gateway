@@ -1,5 +1,24 @@
 # Gateway — Settings window specification
 
+## Current visual refinements
+
+The current implementation in `src/ui/gw_settings.cpp` and DITL 210–217
+supersedes the older font, alignment, and session-scope guidance below:
+
+- Checkbox titles and Revert/Cancel/Save use Charcoal 12; descriptions and
+  entry text remain Geneva 9.
+- Row labels start at the checkbox square's left edge (x = 20), with entry
+  controls in a common column. Outer margins are reduced by one third.
+- Appearance Manager frames draw the pane border and the window's inner rim.
+- Whitelist has its own heading, extra vertical spacing, and a scrollbar
+  sharing the text area's right border and vertical bounds.
+- Concurrent sessions belongs to Web proxy: Web and Wayback share the HTTP
+  session pool. Mail has a separate fixed pool of four sessions. This is not
+  an application-wide session ceiling.
+- File has a separator immediately before Settings and another before Quit.
+
+## Original build sheet
+
 This is a build sheet for the Mac OS 9 Settings window: what it contains, what
 every control is bound to, and what the geometry has to be. It contains no code
 and does not describe the current implementation; build it from here.

@@ -34,13 +34,13 @@ const Field kFields[] = {
     { 0, Check, "http_enabled", "Web proxy", "1", "" },
     { 0, Check, "mail_enabled", "Mail", "1", "" },
     { 0, Check, "wayback_enabled", "Wayback proxy", "1", "" },
-    { 0, Number, "max_sessions", "Concurrent sessions:", "12", "Each session costs about 110 KB." },
     { 1, Number, "http_port", "Port:", "8765", "" },
     { 1, Check, "rewrite_https", "Rewrite https:// links to http://", "1", "" },
     { 1, Check, "connect_mitm", "Terminate TLS for typed https:// URLs", "0", "" },
     { 1, Redirect, "follow_redirects", "Follow redirects:", "auto", "" },
     { 1, Number, "max_body_mb", "Largest response (MB):", "0", "0 for no limit." },
     { 1, Number, "max_connects", "Connections opening at once:", "8", "" },
+    { 1, Number, "max_sessions", "Concurrent sessions:", "12", "Shared by Web proxy and Wayback; mail has its own limit." },
     { 2, Number, "wayback_port", "Port:", "8888", "0 disables the archive listener." },
     { 2, Date, "wayback_date", "Era (YYYYMMDD):", "20011231", "Also accepts YYYY or YYYYMM." },
     { 2, Number, "wayback_tolerance", "Days newer allowed:", "730", "0 accepts any date." },
@@ -51,7 +51,7 @@ const Field kFields[] = {
     { 3, Check, "wayback_settings", "Serve the browser settings page", "1", "" },
     { 3, Check, "wayback_ct_encoding", "Strip charset from Content-Type", "1", "" },
     { 3, Check, "wayback_quick_images", "Quick images (compatibility setting)", "1", "" },
-    { 3, List, "wayback_live", "Whitelist - fetched live, not archived:", "", "" },
+    { 3, List, "wayback_live", "Whitelist", "", "" },
     { 4, Provider, "provider", "Provider:", "outlook", "" },
     { 4, Text, "oauth_user", "Address:", "", "" },
     { 4, Text, "local_password", "Password for the mail client:", "", "" },
@@ -105,6 +105,18 @@ void Font(ControlHandle c, short font = kControlFontSmallSystemFont)
     ControlFontStyleRec style = {};
     style.flags = kControlUseFontMask;
     style.font = font;
+    if (font == kControlFontBigSystemFont) {
+        Str255 name;
+        short charcoal = 0;
+        Pascal("Charcoal", name);
+        GetFNum(name, &charcoal);
+        if (charcoal) {
+            style.flags |= kControlUseSizeMask | kControlUseFaceMask;
+            style.font = charcoal;
+            style.size = 12;
+            style.style = 0;
+        }
+    }
     SetControlFontStyle(c, &style);
 }
 
@@ -188,13 +200,17 @@ class Preferences {
 public:
     DialogPtr dialog = nullptr;
     WindowPtr window = nullptr;
-    ControlHandle group = nullptr, selector = nullptr, save = nullptr;
+    ControlHandle selector = nullptr, save = nullptr;
     ControlHandle cancel = nullptr, revert = nullptr, scroll = nullptr;
     MenuHandle menus[3] = {};
     Item items[kFieldCount] = {};
     short pane = 0, focus = -1, listIndex = -1;
     const char *notice = "Stop and start Gateway after changing listeners.";
     Rect bounds = { 0, 0, 400, 460 };
+    // The old 16px outer / 30px control margins are reduced by one third.
+    Rect paneFrame = { 42, 11, 354, 449 };
+    static const short kRowLeft = 20;
+    static const short kCheckTextLeft = 38;
 
     ControlHandle Control(const Rect &rect, const char *label, short proc,
                           short minimum = 0, short maximum = 1,
@@ -233,19 +249,19 @@ public:
             if (!menus[n]) return false;
             InsertMenu(menus[n], -1);
         }
-        Rect r = { 17, 118, 37, 300 };
+        Rect r = { 11, 111, 31, 293 };
         selector = Control(r, "", kControlPopupButtonProc, 200, 0,
                            kControlFontBigSystemFont);
-        r = { 48, 16, 344, 444 };
-        group = Control(r, kPaneNames[0], kControlGroupBoxTextTitleProc,
-                        0, 1, kControlFontSmallBoldSystemFont);
-        r = { 365, 208, 385, 278 };
-        revert = Control(r, "Revert", kControlPushButtonProc);
-        r = { 365, 288, 385, 358 };
-        cancel = Control(r, "Cancel", kControlPushButtonProc);
-        r = { 365, 368, 385, 438 };
-        save = Control(r, "Save", kControlPushButtonProc);
-        if (!selector || !group || !revert || !cancel || !save) return false;
+        r = { 370, 219, 390, 289 };
+        revert = Control(r, "Revert", kControlPushButtonProc, 0, 1,
+                         kControlFontBigSystemFont);
+        r = { 370, 299, 390, 369 };
+        cancel = Control(r, "Cancel", kControlPushButtonProc, 0, 1,
+                         kControlFontBigSystemFont);
+        r = { 370, 379, 390, 449 };
+        save = Control(r, "Save", kControlPushButtonProc, 0, 1,
+                       kControlFontBigSystemFont);
+        if (!selector || !revert || !cancel || !save) return false;
         Boolean yes = true;
         SetControlData(save, kControlEntireControl, kControlPushButtonDefaultTag,
                        sizeof(yes), &yes);
@@ -275,7 +291,9 @@ public:
                     maximum = 0;
                 }
                 item.control = Control(box, f.kind == Check ? f.label : "",
-                                       proc, minimum, maximum);
+                                       proc, minimum, maximum,
+                                       f.kind == Check ? kControlFontBigSystemFont :
+                                                         kControlFontSmallSystemFont);
                 if (!item.control) return false;
                 if (Editable(f)) {
                     Size actual;
@@ -287,7 +305,9 @@ public:
                 if (f.kind == List) {
                     listIndex = i;
                     r = item.box;
-                    r.left = r.right + 1;
+                    // Share the editor's right-hand frame pixel with the scrollbar.
+                    // Both controls use the same outer top and bottom edges.
+                    r.left = r.right - 1;
                     r.right = r.left + 16;
                     scroll = Control(r, "", kControlScrollBarProc);
                     if (!scroll) return false;
@@ -295,7 +315,7 @@ public:
             }
         }
         LoadValues(items);
-        ShowControl(selector); ShowControl(group);
+        ShowControl(selector);
         ShowControl(save); ShowControl(cancel); ShowControl(revert);
         SwitchPane(0);
         ShowWindow(window); SelectWindow(window);
@@ -309,8 +329,6 @@ public:
         for (int i = 0; i < kFieldCount; ++i) HideControl(items[i].control);
         HideControl(scroll);
         pane = next;
-        Str255 title; Pascal(kPaneNames[pane], title);
-        SetControlTitle(group, title);
         SetControlValue(selector, pane + 1);
         for (int i = 0; i < kFieldCount; ++i)
             if (kFields[i].pane == pane) ShowControl(items[i].control);
@@ -337,9 +355,26 @@ public:
     {
         EraseRect(&bounds);
         TextFont(0); TextSize(0);
-        Line(20, 31, "Settings for:");
+        Line(13, 25, "Settings for:");
         TextFont(3); TextSize(9);
         DrawControls(window);
+        // Control titles use Charcoal; labels and descriptions remain Geneva 9.
+        TextFont(3); TextSize(9); TextFace(0);
+        // Draw the Platinum frames explicitly on every update. A group-box
+        // control can be obscured by sibling controls in the root hierarchy.
+        Rect rim = bounds;
+        InsetRect(&rim, 3, 3);
+        DrawThemePrimaryGroup(&rim, kThemeStateActive);
+        DrawThemePrimaryGroup(&paneFrame, kThemeStateActive);
+        Str255 heading;
+        Pascal(kPaneNames[pane], heading);
+        TextFace(bold);
+        Rect headingGround = { static_cast<short>(paneFrame.top - 6), kRowLeft - 3,
+                               static_cast<short>(paneFrame.top + 7),
+                               static_cast<short>(kRowLeft + StringWidth(heading) + 3) };
+        EraseRect(&headingGround);
+        Line(kRowLeft, paneFrame.top + 3, kPaneNames[pane]);
+        TextFace(0);
         for (int i = 0; i < kFieldCount; ++i) {
             const Field &f = kFields[i];
             if (f.pane != pane) continue;
@@ -349,41 +384,44 @@ public:
                 if (f.kind == List) {
                     TextFace(bold); Line(box.left, box.top - 10, f.label); TextFace(0);
                 } else {
-                    MoveTo(box.left - 6 - StringWidth(label), box.top + 12);
+                    MoveTo(kRowLeft, box.top + 12);
                     DrawString(label);
                 }
             }
-            if (f.hint[0]) Line(box.left, box.bottom + 13, f.hint);
+            if (f.hint[0]) Line(kRowLeft, box.bottom + 13, f.hint);
         }
         switch (pane) {
         case 1:
-            Line(48, 134, "For browsers without modern TLS support.");
-            Line(48, 173, "Requires the Gateway CA in the browser. Choose one mode.");
+            Line(kCheckTextLeft, 121, "For browsers without modern TLS support.");
+            Line(kCheckTextLeft, 160, "Requires the Gateway CA in the browser. Choose one mode.");
             break;
-        case 2: Line(48, 276, "Off requests the configured era directly."); break;
+        case 2: Line(kCheckTextLeft, 263, "Off requests the configured era directly."); break;
         case 3:
-            Line(48, 196, "Quick images is accepted for compatibility; it has no effect.");
-            Line(30, 323, "Separate sites with ; or new lines. Plain names include subdomains.");
-            Line(30, 336, "Maximum 2000 characters. Remove a site here to archive it again.");
+            Line(kCheckTextLeft, 183, "Accepted for compatibility; it has no effect.");
+            Line(kRowLeft, 329, "Separate sites with ; or new lines. Plain names include subdomains.");
+            Line(kRowLeft, 342, "Maximum 2000 characters. Remove a site to archive it again.");
             break;
-        case 4: Line(210, 162, "Checked locally; never sent upstream."); break;
+        case 4: Line(kRowLeft, 149, "Checked locally; never sent upstream."); break;
         case 5:
-            Line(48, 265, "Port 465 uses TLS immediately; other ports default to STARTTLS.");
-            Line(30, 307, "Empty host fields use the selected provider's defaults.");
+            Line(kCheckTextLeft, 252, "Port 465 uses TLS immediately; other ports default to STARTTLS.");
+            Line(kRowLeft, 294, "Empty host fields use the selected provider's defaults.");
             break;
         case 6:
-            Line(30, 241, "Obtain the refresh token outside Gateway, then paste it here.");
-            Line(30, 258, "Long values scroll horizontally. Tokens may rotate while running.");
+            Line(kRowLeft, 228, "Obtain the refresh token outside Gateway, then paste it here.");
+            Line(kRowLeft, 245, "Long values scroll horizontally. Tokens may rotate while running.");
             break;
         case 7:
-            Line(48, 101, "Off launches without a window, menu bar or Application menu entry.");
-            Line(48, 117, "To stop a faceless Gateway, send it a Quit Apple event.");
-            Line(48, 165, "The window keeps 200 lines; the file keeps everything.");
-            Line(48, 189, "System Folder : Application Support : Gateway :");
-            Line(48, 203, "Gateway Log.txt");
+            // QuickTime-style option blocks: Charcoal labels, with small
+            // explanatory text indented to the checkbox title, not the square.
+            Line(kCheckTextLeft, 82, "Off launches without a window, menu bar or Application");
+            Line(kCheckTextLeft, 95, "menu entry. Send a Quit Apple event to stop Gateway.");
+            Line(kCheckTextLeft, 144, "The window keeps the last 200 lines.");
+            Line(kCheckTextLeft, 157, "The log file keeps everything.");
+            Line(kCheckTextLeft, 180, "System Folder : Application Support : Gateway :");
+            Line(kCheckTextLeft, 193, "Gateway Log.txt");
             break;
         }
-        Line(20, 357, notice);
+        Line(13, 365, notice);
     }
 
     void SyncScroll()
