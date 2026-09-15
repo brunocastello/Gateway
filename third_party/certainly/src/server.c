@@ -48,6 +48,8 @@ struct MacTLS_Server {
     size_t                 chain_len;
 
     unsigned char          iobuf[CERTAINLY_IOBUF_SIZE];
+    /* One-shot/limited hexdump throttle for GW_DEBUG_IO builds. Kept
+     * unconditionally so the struct layout never depends on the flag. */
     int                    logged_raw;
 };
 
@@ -140,6 +142,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
 
     st = br_ssl_engine_current_state(&s->sc.eng);
 
+#ifdef GW_DEBUG_IO
     if (!s->logged_raw) {
         size_t avail = 0;
         const unsigned char *pbuf = NULL;
@@ -164,6 +167,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
             gw_log("  ClientHello pre-filter avail %u: %s", (unsigned)avail, raw);
         }
     }
+#endif
 
     if (st == BR_SSL_CLOSED) {
         int err = br_ssl_engine_last_error(&s->sc.eng);
@@ -195,6 +199,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
                     err, s->sc.client_max_version, s->sc.client_suites_num, suites,
                     s->sc.eng.session.cipher_suite, s->sc.eng.session.version);
                 }
+#ifdef GW_DEBUG_IO
                 if (s->sc.client_suites_num == 0 && s->sc.eng.hbuf_in && s->sc.eng.hlen_in >= 6) {
                     char raw[193];
                     size_t dump = s->sc.eng.hlen_in > 64 ? 64 : s->sc.eng.hlen_in;
@@ -206,6 +211,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
                     }
                     gw_log("  ClientHello raw %u bytes: %s", (unsigned)s->sc.eng.hlen_in, raw);
                 }
+#endif
             }
         }
         return s->state;
@@ -238,6 +244,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
         if (len > 0) {
             n = ct_transport_recv(s->transport, buf, len);
             if (n > 0) {
+#ifdef GW_DEBUG_IO
                 if (s->logged_raw < 10 && n >= 4) {
                     size_t dump = (size_t)n > 96 ? 96 : (size_t)n;
                     size_t off = 0;
@@ -255,6 +262,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
                         off += chunk;
                     }
                 }
+#endif
                 br_ssl_engine_recvrec_ack(&s->sc.eng, (size_t)n);
             } else if (n < 0) {
                 if (ct_transport_peer_closed(s->transport)) {
@@ -270,6 +278,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
     }
 
     st = br_ssl_engine_current_state(&s->sc.eng);
+#ifdef GW_DEBUG_IO
     if (!s->logged_raw) {
         if (s->sc.eng.hbuf_in && s->sc.eng.hlen_in >= 4) {
             char raw[385];
@@ -302,6 +311,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
                 s->sc.client_max_version, s->sc.client_suites_num, (unsigned)s->sc.eng.hlen_in, (unsigned)s->sc.eng.ixa, (unsigned)s->sc.eng.ixb, st);
         }
     }
+#endif
     if (st & (BR_SSL_SENDAPP | BR_SSL_RECVAPP))
         s->state = kMacTLS_Connected;
     else if (st & (BR_SSL_SENDREC | BR_SSL_RECVREC)) {

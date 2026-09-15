@@ -47,6 +47,17 @@ INCS   = -Isrc -Isrc/portable -I$(CERT)/include -I$(CERT)/src \
 #   make -f Makefile.win32 OPT="-O0"
 OPT ?= -Os
 
+# Per-record handshake hexdumps (RECV raw, ClientHello bytes) in the
+# Certainly MITM server. Off by default: a release build stays quiet
+# apart from one-line handshake pass/fail notes. Enable for debugging
+# vintage handshakes, e.g.:
+#
+#   make -f Makefile.win32 GW_DEBUG_IO=1
+GW_DEBUG_IO ?= 0
+ifeq ($(GW_DEBUG_IO),1)
+DEFS += -DGW_DEBUG_IO
+endif
+
 CFLAGS = $(DEFS) $(INCS) $(OPT) -ffunction-sections -fdata-sections \
          -Wall -Wextra -Wno-unused-parameter
 
