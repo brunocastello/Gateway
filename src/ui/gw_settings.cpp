@@ -77,8 +77,7 @@ const Field kFields[] = {
     { 3, Check, "wayback_quick_images", "Quick images (compatibility setting)", "1",
       "Accepted for compatibility; it has no effect." },
     { 3, List, "wayback_live", "Whitelist", "",
-      "Separate sites with ; or new lines. Plain names include subdomains.\n"
-      "Maximum 2000 characters. Remove a site to archive it again." },
+      "Use semicolons (;) to separate entries. Maximum 2000 characters." },
     { 4, Provider, "provider", "Provider:", "outlook", "" },
     { 4, Text, "oauth_user", "Address:", "", "" },
     { 4, Text, "local_password", "Password for the mail client:", "",

@@ -96,8 +96,7 @@ static const Field kFields[] = {
     { 3, Check, "wayback_quick_images", "&Quick images (compatibility setting)", "1",
       "Accepted for compatibility; it has no effect." },
     { 3, List, "wayback_live", "&Whitelist:", "",
-      "One site per line, or separated with ; -- plain names include subdomains.\n"
-      "Maximum 2000 characters. Remove a site to archive it again." },
+      "Use semicolons (;) to separate entries. Maximum 2000 characters." },
     { 4, Provider, "provider", "Provider:", "outlook", "" },
     { 4, Text, "oauth_user", "Address:", "", "" },
     { 4, Text, "local_password", "Password for the mail client:", "",
@@ -133,9 +132,10 @@ static const char *const kRedirectNames[] = { "Automatic", "Always", "Never" };
 static const char *const kProviders[] = { "outlook", "gmail", "custom" };
 static const char *const kProviderNames[] = { "Outlook", "Gmail", "Custom" };
 
-/* The display form of the whitelist is one entry per line, so it is longer
- * than the semicolon form the file keeps and the 2000 character ceiling
- * counts. */
+/* The whitelist is shown the way the file keeps it and the way Internet
+ * Explorer's proxy exception list is written: semicolons between entries,
+ * wrapped by the edit control. The 2000 character ceiling counts that form,
+ * so what is on screen is what is measured. */
 #define VALUE_CAP 4096
 #define LIST_LIMIT 2000
 #define MAX_HINT_LINES 2
@@ -402,9 +402,6 @@ static void load_values(void)
         it->overflow = 0;
 
         if (f->kind == List) {
-            /* Joined the way the file keeps it, so the 2000 character ceiling
-             * means the same thing on both platforms; shown one per line,
-             * which is what a multi-line edit is for. */
             size_t used;
             for (n = 0; GWConfig_GetNthSplit(f->key, n, entry, sizeof(entry)); ++n) {
                 size_t len = strlen(entry);
@@ -413,7 +410,7 @@ static void load_values(void)
                     it->overflow = 1;
                     break;
                 }
-                if (used) strcat(value, "\r\n");
+                if (used) strcat(value, ";");
                 strcat(value, entry);
             }
         } else if (f->kind == Check || f->kind == Number || f->kind == Date) {
