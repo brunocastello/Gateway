@@ -125,17 +125,16 @@ const int kListLimit = 2000;
  *   captions      Geneva 9, 17 pixels below the row and 17 above the next one
  */
 const short kWindowWidth   = 460;
-const short kFrameInset    = 4;    // the dialog border drawn by DrawFrame
-const short kMargin        = 12;   // border to the group frame
-const short kSelectorTop   = kFrameInset + 12;                // 16
+const short kMargin        = 12;   // window edge to the group frame
+const short kSelectorTop   = 12;
 const short kSelectorHeight = 20;
-const short kGroupTop      = kFrameInset + 21;                // the selector's middle
-const short kGroupLeft     = kFrameInset + kMargin;           // 16
-const short kGroupRight    = kWindowWidth - kFrameInset - kMargin;  // 444
-const short kRowLeft       = kGroupLeft + 16;                 // 32
-const short kCheckTextLeft = kRowLeft + 16;                   // 48
-const short kFieldLeft     = 248;                             // editable column
-const short kFieldRight    = kGroupRight - 16;                // 428
+const short kGroupTop      = 21;   // the selector's middle line
+const short kGroupLeft     = kMargin;                         // 12
+const short kGroupRight    = kWindowWidth - kMargin;          // 448
+const short kRowLeft       = kGroupLeft + 16;                 // 28
+const short kCheckTextLeft = kRowLeft + 16;                   // 44
+const short kFieldLeft     = 244;                             // editable column
+const short kFieldRight    = kGroupRight - 16;                // 432
 const short kGroupPadTop   = 23;   // group line to the first row
 const short kGroupPadBottom = 14;  // last ink to the group line
 const short kIntroBase     = kGroupTop + 32;                  // first intro baseline
@@ -147,10 +146,6 @@ const short kCaptionDrop   = 17;   // check box or list bottom to its caption
  * is ten pixels deeper than a check box glyph. */
 const short kCaptionBelowLabel = 20;
 const short kCaptionLift   = 17;   // last caption baseline to the next row
-/* The border ramp, outermost pixel first: light towards the top left, shadow
- * towards the bottom right, closed by black. */
-const unsigned short kBorderLit[4]   = { 0xC5C5, 0xC5C5, 0x8E8E, 0x0000 };
-const unsigned short kBorderShade[4] = { 0xC5C5, 0xC5C5, 0xFFFF, 0x0000 };
 const short kGapAfterCheck = 6;
 const short kGapAfterField = 11;
 const short kCheckHeight   = 16;   // control rect; the glyph is inset 2
@@ -449,8 +444,7 @@ public:
             }
             paneBottom[p] = static_cast<short>(ink + kGroupPadBottom);
             paneHeight[p] = static_cast<short>(paneBottom[p] + kButtonGap +
-                                               kButtonHeight + kMarginBottom +
-                                               kFrameInset);
+                                               kButtonHeight + kMarginBottom);
             if (paneHeight[p] > tallest) tallest = paneHeight[p];
         }
     }
@@ -487,13 +481,16 @@ public:
         if (!layout || HandToHand(&layout) != noErr) return false;
         Str255 title;
         Pascal("Gateway Preferences", title);
-        // The theme-savvy movable modal defproc. The classic movableDBoxProc
-        // draws a Platinum title bar over a flat one-pixel border; only 1043
-        // draws the recessed dialog frame the rest of Mac OS 9 wears.
+        // A document window with a close box, the same defproc About Gateway
+        // uses. The Mac OS 9 windows this copies -- QuickTime Settings, the
+        // Internet control panel -- are document windows too, which is where
+        // the recessed Platinum frame and the title bar's close and collapse
+        // boxes come from; neither dialog defproc draws them.
+        // Invisible until the first pane has sized it; the close box is on.
         dialog = NewColorDialog(nullptr, &position, title, false,
-                                kWindowMovableModalDialogProc,
+                                noGrowDocProc,
                                 reinterpret_cast<WindowPtr>(-1L),
-                                false, 0, layout);
+                                true, 0, layout);
         if (!dialog) { DisposeHandle(layout); return false; }
         window = GetDialogWindow(dialog);
         SetPort(window);
@@ -626,9 +623,18 @@ public:
     void InvalList()
     {
         if (listIndex < 0 || kFields[listIndex].pane != pane) return;
-        Rect ring = listFrame;
+        Rect ring = ListRing();
         InsetRect(&ring, -4, -4);
         InvalRect(&ring);
+    }
+
+    /* The whitelist and its scroll bar are one field: the focus ring goes
+     * round both, not down the seam between them. */
+    Rect ListRing() const
+    {
+        Rect ring = listFrame;
+        ring.right = scrollFrame.right;
+        return ring;
     }
 
     void Focus(short i)
@@ -668,31 +674,6 @@ public:
         RGBColor c; c.red = c.green = c.blue = level; RGBForeColor(&c);
     }
 
-    /*
-     * The dialog's raised border. Mac OS 9's movable modal defproc leaves only
-     * a two-pixel band outside the content region -- white towards the top
-     * left, grey towards the bottom right -- so the rest of the Platinum ramp
-     * is drawn here, inside it. Read from the outside in, the result is the
-     * same 255/197/197/142 bevel closed by a black line that the QuickTime
-     * Settings window wears, with the pane sitting in the well it makes.
-     */
-    void DrawFrame()
-    {
-        short right = static_cast<short>(bounds.right - 1);
-        short foot = static_cast<short>(bounds.bottom - 1);
-        for (short n = 0; n < kFrameInset; ++n) {
-            Pen(kBorderLit[n]);
-            MoveTo(n, n); LineTo(static_cast<short>(right - n), n);
-            MoveTo(n, n); LineTo(n, static_cast<short>(foot - n));
-            Pen(kBorderShade[n]);
-            MoveTo(n, static_cast<short>(foot - n));
-            LineTo(static_cast<short>(right - n), static_cast<short>(foot - n));
-            MoveTo(static_cast<short>(right - n), n);
-            LineTo(static_cast<short>(right - n), static_cast<short>(foot - n));
-        }
-        Pen(0x0000);
-    }
-
     void DrawList()
     {
         Item &item = items[listIndex];
@@ -713,14 +694,16 @@ public:
         LineTo(scrollFrame.right, listFrame.bottom);
         Pen(0x0000);
         TEUpdate(&(*item.text)->viewRect, item.text);
-        if (focus == listIndex) DrawThemeFocusRect(&listFrame, true);
+        if (focus == listIndex) {
+            Rect ring = ListRing();
+            DrawThemeFocusRect(&ring, true);
+        }
     }
 
     void Draw()
     {
         EraseRect(&bounds);
-        DrawFrame();
-        // The pane's own frame, with its selector replacing the title.
+        // The pane's frame, with its selector replacing the title.
         DrawThemePrimaryGroup(&paneFrame, kThemeStateActive);
         // The group's top line runs behind the selector; clear it first.
         Rect selectorGround = selectorFrame;
@@ -875,6 +858,10 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
             WindowPtr hitWindow;
             short part = FindWindow(event.where, &hitWindow);
             if (hitWindow != p->window) { SysBeep(1); continue; }
+            if (part == inGoAway) {
+                if (TrackGoAway(p->window, event.where)) done = true;
+                continue;
+            }
             if (part == inDrag) {
                 Rect limit = qd.screenBits.bounds; InsetRect(&limit, 4, 4);
                 DragWindow(p->window, event.where, &limit);
