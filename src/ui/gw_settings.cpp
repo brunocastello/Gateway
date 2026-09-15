@@ -1,9 +1,6 @@
 /* Classic Appearance Manager preferences. Universal Interfaces stay private
  * to this translation unit; main.cpp continues to use Multiversal. */
 #include <Appearance.h>
-#include <Aliases.h>
-#include <AppleEvents.h>
-#include <Folders.h>
 #include <ControlDefinitions.h>
 #include <Controls.h>
 #include <Dialogs.h>
@@ -30,16 +27,39 @@ enum Kind { Check, Number, Date, Text, Redirect, Provider, List };
 struct Field {
     short pane;
     Kind kind;
-    const char *key, *label, *fallback, *hint;
+    const char *key, *label, *fallback, *hint;  // hint lines are split on '\n'
 };
-/* Binding order matches the slots in DITL 210-217. */
+const short kPaneCount = 8;
+
+/* The pane names, in the order of MENU 200. */
+const char *const kPanes[kPaneCount] = {
+    "Modules", "Web proxy", "Wayback", "Wayback sites",
+    "Mail", "Mail upstream", "OAuth", "Log"
+};
+
+/* Standing text at the top of a pane, above its first row. */
+const char *const kIntro[kPaneCount] = {
+    "Stop and start Gateway after changing listeners.",
+    "",
+    "",
+    "",
+    "",
+    "Empty host fields use the selected provider's defaults.",
+    "Obtain the refresh token outside Gateway, then paste it here.\n"
+    "Long values scroll horizontally. Tokens may rotate while running.",
+    "",
+};
+
+/* Rows are laid out in this order, pane by pane. */
 const Field kFields[] = {
     { 0, Check, "http_enabled", "Web proxy", "1", "Browse modern sites through the web proxy." },
     { 0, Check, "mail_enabled", "Mail", "1", "Connect a mail client to IMAP, POP and SMTP." },
     { 0, Check, "wayback_enabled", "Wayback proxy", "1", "Browse archived pages from the Wayback Machine." },
     { 1, Number, "http_port", "Port:", "8765", "" },
-    { 1, Check, "rewrite_https", "Rewrite https:// links to http://", "1", "" },
-    { 1, Check, "connect_mitm", "Terminate TLS for typed https:// URLs", "0", "" },
+    { 1, Check, "rewrite_https", "Rewrite https:// links to http://", "1",
+      "For browsers without modern TLS support." },
+    { 1, Check, "connect_mitm", "Terminate TLS for typed https:// URLs", "0",
+      "Requires the Gateway CA in the browser. Choose one mode." },
     { 1, Redirect, "follow_redirects", "Follow redirects:", "auto", "Automatic follows HTTPS redirects." },
     { 1, Number, "max_body_mb", "Largest response (MB):", "0", "0 for no limit." },
     { 1, Number, "max_connects", "Connections opening at once:", "8", "" },
@@ -48,16 +68,21 @@ const Field kFields[] = {
     { 2, Date, "wayback_date", "Era (YYYYMMDD):", "20011231", "Also accepts YYYY or YYYYMM." },
     { 2, Number, "wayback_tolerance", "Days newer allowed:", "730", "0 accepts any date." },
     { 2, Number, "wayback_connects", "Connections opening at once:", "1", "The archive refuses bursts." },
-    { 2, Check, "wayback_api", "Find the nearest available snapshot", "1", "" },
+    { 2, Check, "wayback_api", "Find the nearest available snapshot", "1",
+      "Off requests the configured era directly." },
     { 3, Check, "wayback_geocities", "Send geocities.com to oocities.org", "1", "" },
     { 3, Check, "wayback_cache", "Let the browser keep snapshots", "1", "" },
     { 3, Check, "wayback_settings", "Serve the browser settings page", "1", "" },
     { 3, Check, "wayback_ct_encoding", "Strip charset from Content-Type", "1", "" },
-    { 3, Check, "wayback_quick_images", "Quick images (compatibility setting)", "1", "" },
-    { 3, List, "wayback_live", "Whitelist", "", "" },
+    { 3, Check, "wayback_quick_images", "Quick images (compatibility setting)", "1",
+      "Accepted for compatibility; it has no effect." },
+    { 3, List, "wayback_live", "Whitelist", "",
+      "Separate sites with ; or new lines. Plain names include subdomains.\n"
+      "Maximum 2000 characters. Remove a site to archive it again." },
     { 4, Provider, "provider", "Provider:", "outlook", "" },
     { 4, Text, "oauth_user", "Address:", "", "" },
-    { 4, Text, "local_password", "Password for the mail client:", "", "" },
+    { 4, Text, "local_password", "Password for the mail client:", "",
+      "Checked locally; never sent upstream." },
     { 4, Number, "imap_port", "IMAP port:", "1993", "" },
     { 4, Number, "pop_port", "POP port:", "1995", "" },
     { 4, Number, "smtp_port", "SMTP port:", "1587", "" },
@@ -67,15 +92,20 @@ const Field kFields[] = {
     { 5, Number, "pop_upstream_port", "POP port:", "995", "" },
     { 5, Text, "smtp_host", "SMTP host:", "", "" },
     { 5, Number, "smtp_upstream_port", "SMTP port:", "587", "" },
-    { 5, Check, "smtp_starttls", "Use STARTTLS on the SMTP port", "1", "" },
+    { 5, Check, "smtp_starttls", "Use STARTTLS on the SMTP port", "1",
+      "Port 465 uses TLS immediately; other ports default to STARTTLS." },
     { 6, Text, "oauth_host", "Token host:", "", "" },
     { 6, Text, "oauth_path", "Token path:", "", "" },
     { 6, Text, "oauth_scope", "Scope:", "", "" },
     { 6, Text, "oauth_client_id", "Client ID:", "", "" },
     { 6, Text, "oauth_client_secret", "Client secret:", "", "" },
     { 6, Text, "refresh_token", "Refresh token:", "", "" },
-    { 7, Check, "show_window", "Show the log window at launch", "1", "" },
-    { 7, Check, "log_file", "Also write the log to a file", "0", "" },
+    { 7, Check, "show_window", "Show the log window at launch", "1",
+      "Off launches without a window, menu bar or Application\n"
+      "menu entry. Send a Quit Apple event to stop Gateway." },
+    { 7, Check, "log_file", "Also write the log to a file", "0",
+      "The window keeps the last 200 lines.\n"
+      "The log file keeps everything." },
 };
 const int kFieldCount = sizeof(kFields) / sizeof(kFields[0]);
 const char *const kRedirects[] = { "auto", "always", "never" };
@@ -83,20 +113,77 @@ const char *const kProviders[] = { "outlook", "gmail", "custom" };
 const int kValueCapacity = 2048;
 const int kListLimit = 2000;
 
+/*
+ * Window metrics, in window-local pixels, taken off the Mac OS 9 QuickTime
+ * Settings window. Everything below is derived: no pane carries a hand-placed
+ * coordinate, so a pane is as tall as its rows and no taller.
+ *
+ *   selector      the pane pop-up straddles the group frame's top line
+ *   group         a primary group 12 pixels in from each window edge
+ *   rows          a check box glyph, a 22-pixel field frame or a 20-pixel
+ *                 pop-up, all starting at the same y
+ *   captions      Geneva 9, 17 pixels below the row and 17 above the next one
+ */
+const short kWindowWidth   = 460;
+const short kMargin        = 12;   // window edge to the group frame
+const short kSelectorTop   = 12;
+const short kSelectorHeight = 20;
+const short kGroupTop      = 21;   // the selector's middle line
+const short kGroupLeft     = kMargin;
+const short kGroupRight    = kWindowWidth - kMargin;          // 448
+const short kRowLeft       = kGroupLeft + 16;                 // 28
+const short kCheckTextLeft = kRowLeft + 16;                   // 44
+const short kFieldLeft     = 244;                             // editable column
+const short kFieldRight    = kGroupRight - 16;                // 432
+const short kGroupPadTop   = 23;   // group line to the first row
+const short kGroupPadBottom = 14;  // last ink to the group line
+const short kIntroBase     = kGroupTop + 32;                  // first intro baseline
+const short kCaptionPitch  = 13;
+const short kCaptionDrop   = 17;   // row bottom to the first caption baseline
+const short kCaptionLift   = 17;   // last caption baseline to the next row
+const short kGapAfterCheck = 6;
+const short kGapAfterField = 11;
+const short kCheckHeight   = 16;   // control rect; the glyph is inset 2
+const short kFieldHeight   = 22;   // the framed field
+const short kPopupHeight   = 20;
+const short kListHeight    = 86;
+const short kListLabelDrop = 17;   // the list's label sits above its frame
+const short kFieldAscent   = 14;   // field frame top to its text baseline
+const short kPopupAscent   = 13;
+const short kButtonGap     = 10;   // group frame to the buttons
+const short kButtonHeight  = 20;
+const short kButtonWidth   = 70;
+const short kButtonSpacing = 10;
+const short kMarginBottom  = 12;
+
 struct Item {
-    ControlHandle control;
-    TEHandle text;                 // Owned by the Appearance edit control.
-    Rect box;                      // Outer field box from its DITL slot.
+    ControlHandle control;         // null for the whitelist, which owns its TE
+    TEHandle text;
+    Rect box;                      // check box: the control rect
+                                   // field and list: the framed rectangle
+    short labelBase;               // Charcoal baseline, 0 when the control draws it
+    short hintBase;                // Geneva baseline of the first caption line
     char original[kValueCapacity];
     bool overflow;                 // Never silently save a truncated value.
 };
 
-void Pascal(const char *s, Str255 p)
+void Pascal(const char *s, size_t n, Str255 p)
 {
-    size_t n = std::strlen(s);
     if (n > 255) n = 255;
     p[0] = static_cast<unsigned char>(n);
     std::memcpy(p + 1, s, n);
+}
+
+void Pascal(const char *s, Str255 p)
+{
+    Pascal(s, std::strlen(s), p);
+}
+
+short Lines(const char *s)
+{
+    short n = s[0] ? 1 : 0;
+    for (; *s; ++s) if (*s == '\n') ++n;
+    return n;
 }
 
 void Font(ControlHandle c, short font = kControlFontSmallSystemFont)
@@ -124,9 +211,23 @@ bool Editable(const Field &f)
     return f.kind == Text || f.kind == Number || f.kind == Date || f.kind == List;
 }
 
+/* Every field but the whitelist lives in an Appearance edit-text control. */
+bool Framed(const Field &f)
+{
+    return f.kind == Text || f.kind == Number || f.kind == Date;
+}
+
 void ReadValue(const Item &item, const Field &field, char *value)
 {
-    if (Editable(field)) {
+    if (field.kind == List) {
+        Size n = item.text ? (*item.text)->teLength : 0;
+        if (n < 0 || n >= kValueCapacity) n = kValueCapacity - 1;
+        if (n > 0) {
+            CharsHandle chars = TEGetText(item.text);
+            std::memcpy(value, *chars, n);
+        }
+        value[n] = 0;
+    } else if (Editable(field)) {
         Size n = 0;
         GetControlData(item.control, kControlEntireControl,
                        kControlEditTextTextTag, kValueCapacity - 1, value, &n);
@@ -172,12 +273,19 @@ void LoadValues(Item *items)
             std::strncpy(value, current, sizeof(value) - 1);
         }
         std::strcpy(item.original, value);
-        if (Editable(f)) {
+        if (f.kind == List) {
+            if (item.text) {
+                TESetText(value, std::strlen(value), item.text);
+                (*item.text)->destRect = (*item.text)->viewRect;
+                TECalText(item.text);
+                TESetSelect(0, 0, item.text);
+            }
+        } else if (Editable(f)) {
             SetControlData(item.control, kControlEntireControl,
                            kControlEditTextTextTag, std::strlen(value), value);
-            // Single-line controls scroll horizontally. Only the whitelist wraps.
+            // The framed fields are single-line and scroll horizontally.
             if (item.text) {
-                (*item.text)->crOnly = f.kind == List ? 0 : -1;
+                (*item.text)->crOnly = -1;
                 TECalText(item.text);
                 TEAutoView(true, item.text);
                 TESetSelect(0, 0, item.text);
@@ -204,13 +312,14 @@ public:
     MenuHandle menus[3] = {};
     Item items[kFieldCount] = {};
     short pane = 0, focus = -1, listIndex = -1;
-    const char *notice = "";
-    Rect bounds = { 0, 0, 400, 460 };
-    // The old 16px outer / 30px control margins are reduced by one third.
-    Rect paneFrame = { 32, 11, 354, 449 };
-    Rect logLink = { 169, 38, 184, 220 };
-    static const short kRowLeft = 20;
-    static const short kCheckTextLeft = 38;
+    short paneHeight[kPaneCount] = {};   // window height, per pane
+    short paneBottom[kPaneCount] = {};   // group frame bottom, per pane
+    short tallest = 0;
+    Rect bounds = { 0, 0, 0, kWindowWidth };
+    Rect paneFrame = { kGroupTop, kGroupLeft, 0, kGroupRight };
+    Rect listFrame = {};
+    Rect scrollFrame = {};
+    Rect selectorFrame = {};
 
     ControlHandle Control(const Rect &rect, const char *label, short proc,
                           short minimum = 0, short maximum = 1,
@@ -224,24 +333,136 @@ public:
         return c;
     }
 
+    void LabelFont()
+    {
+        Str255 name;
+        short charcoal = 0;
+        Pascal("Charcoal", name); GetFNum(name, &charcoal);
+        TextFont(charcoal); TextSize(12); TextFace(0);
+    }
+
+    void HintFont()
+    {
+        TextFont(3); TextSize(9); TextFace(0);
+    }
+
+    /* Walk every pane once and record where each row, caption and frame goes. */
+    void Layout()
+    {
+        for (short p = 0; p < kPaneCount; ++p) {
+            short y = kGroupTop + kGroupPadTop;
+            short ink = y;
+            if (kIntro[p][0]) {
+                short last = kIntroBase + kCaptionPitch * (Lines(kIntro[p]) - 1);
+                y = last + kCaptionLift;
+                ink = last;
+            }
+            bool first = true;
+            Kind previous = Check;
+            for (int i = 0; i < kFieldCount; ++i) {
+                const Field &f = kFields[i];
+                if (f.pane != p) continue;
+                Item &item = items[i];
+                if (!first)
+                    y += (previous == Check ? kGapAfterCheck : kGapAfterField);
+                first = false;
+                previous = f.kind;
+                item.labelBase = 0;
+                item.hintBase = 0;
+                short bottom;      // the row's last drawn line
+                switch (f.kind) {
+                case Check:
+                    item.box.top = y; item.box.left = kRowLeft;
+                    item.box.bottom = static_cast<short>(y + kCheckHeight);
+                    item.box.right = static_cast<short>(kGroupRight - 6);
+                    bottom = static_cast<short>(y + kCheckHeight - 2);
+                    break;
+                case List:
+                    item.labelBase = static_cast<short>(y + 11);
+                    y = static_cast<short>(y + kListLabelDrop);
+                    item.box.top = y; item.box.left = static_cast<short>(kRowLeft - 3);
+                    item.box.bottom = static_cast<short>(y + kListHeight);
+                    item.box.right = static_cast<short>(kFieldRight - 15);
+                    bottom = item.box.bottom;
+                    break;
+                case Redirect:
+                case Provider:
+                    item.labelBase = static_cast<short>(y + kPopupAscent);
+                    item.box.top = y; item.box.left = static_cast<short>(kFieldLeft - 3);
+                    item.box.bottom = static_cast<short>(y + kPopupHeight);
+                    item.box.right = static_cast<short>(kFieldRight + 3);
+                    bottom = item.box.bottom;
+                    break;
+                default:
+                    item.labelBase = static_cast<short>(y + kFieldAscent);
+                    item.box.top = y; item.box.left = static_cast<short>(kFieldLeft - 3);
+                    item.box.bottom = static_cast<short>(y + kFieldHeight);
+                    item.box.right = static_cast<short>(kFieldRight + 3);
+                    bottom = item.box.bottom;
+                    break;
+                }
+                if (f.hint[0]) {
+                    item.hintBase = static_cast<short>(bottom + kCaptionDrop);
+                    short last = static_cast<short>(item.hintBase +
+                                 kCaptionPitch * (Lines(f.hint) - 1));
+                    y = static_cast<short>(last + kCaptionLift);
+                    ink = last;
+                } else {
+                    y = item.box.bottom;
+                    ink = bottom;
+                }
+            }
+            paneBottom[p] = static_cast<short>(ink + kGroupPadBottom);
+            paneHeight[p] = static_cast<short>(paneBottom[p] + kButtonGap +
+                                               kButtonHeight + kMarginBottom);
+            if (paneHeight[p] > tallest) tallest = paneHeight[p];
+        }
+    }
+
+    /* As wide as the longest pane name, plus the pop-up's own furniture. */
+    short SelectorWidth()
+    {
+        short widest = 0;
+        LabelFont();
+        for (short n = 0; n < kPaneCount; ++n) {
+            Str255 p;
+            Pascal(kPanes[n], p);
+            short w = StringWidth(p);
+            if (w > widest) widest = w;
+        }
+        return static_cast<short>(widest + 34);
+    }
+
     bool Open()
     {
+        Layout();
+        bounds.bottom = tallest;
         Rect screen = qd.screenBits.bounds;
         Rect position = bounds;
-        OffsetRect(&position, (screen.right - 460) / 2,
-                   screen.bottom > 460 ? (screen.bottom - 400) / 2 : 40);
+        // Placed for the tallest pane so that resizing never walks the window
+        // off the screen; the title bar has to clear the menu bar as well.
+        short left = static_cast<short>(screen.left +
+                                        (screen.right - screen.left - kWindowWidth) / 2);
+        short top = static_cast<short>(screen.top +
+                                       (screen.bottom - screen.top - tallest) / 2);
+        if (top < screen.top + 46) top = static_cast<short>(screen.top + 46);
+        OffsetRect(&position, left, top);
         Handle layout = GetResource('DITL', 209);
         if (!layout || HandToHand(&layout) != noErr) return false;
         Str255 title;
         Pascal("Gateway Preferences", title);
+        // The theme-savvy movable modal defproc. The classic movableDBoxProc
+        // draws a Platinum title bar over a flat one-pixel border; only 1043
+        // draws the recessed dialog frame the rest of Mac OS 9 wears.
         dialog = NewColorDialog(nullptr, &position, title, false,
-                                movableDBoxProc, reinterpret_cast<WindowPtr>(-1L),
+                                kWindowMovableModalDialogProc,
+                                reinterpret_cast<WindowPtr>(-1L),
                                 false, 0, layout);
         if (!dialog) { DisposeHandle(layout); return false; }
         window = GetDialogWindow(dialog);
         SetPort(window);
         SetThemeWindowBackground(window, kThemeBrushDialogBackgroundActive, false);
-        TextFont(3); TextSize(9);
+        HintFont();
         ControlHandle root;
         if (CreateRootControl(window, &root) != noErr) return false;
         for (short n = 0; n < 3; ++n) {
@@ -249,70 +470,76 @@ public:
             if (!menus[n]) return false;
             InsertMenu(menus[n], -1);
         }
-        Rect r = { 22, 20, 42, 202 };
+        Rect r;
+        r.top = kSelectorTop; r.left = kRowLeft;
+        r.bottom = kSelectorTop + kSelectorHeight;
+        r.right = static_cast<short>(kRowLeft + SelectorWidth());
+        selectorFrame = r;
         selector = Control(r, "", kControlPopupButtonProc | kControlPopupFixedWidthVariant, 200, 0,
                            kControlFontBigSystemFont);
-        r = { 370, 219, 390, 289 };
-        revert = Control(r, "Revert", kControlPushButtonProc, 0, 1,
-                         kControlFontBigSystemFont);
-        r = { 370, 299, 390, 369 };
-        cancel = Control(r, "Cancel", kControlPushButtonProc, 0, 1,
-                         kControlFontBigSystemFont);
-        r = { 370, 379, 390, 449 };
-        save = Control(r, "Save", kControlPushButtonProc, 0, 1,
-                       kControlFontBigSystemFont);
+        r.top = 0; r.bottom = kButtonHeight;
+        r.right = kGroupRight; r.left = static_cast<short>(kGroupRight - kButtonWidth);
+        save = Control(r, "Save", kControlPushButtonProc, 0, 1, kControlFontBigSystemFont);
+        OffsetRect(&r, static_cast<short>(-(kButtonWidth + kButtonSpacing)), 0);
+        cancel = Control(r, "Cancel", kControlPushButtonProc, 0, 1, kControlFontBigSystemFont);
+        OffsetRect(&r, static_cast<short>(-(kButtonWidth + kButtonSpacing)), 0);
+        revert = Control(r, "Revert", kControlPushButtonProc, 0, 1, kControlFontBigSystemFont);
         if (!selector || !revert || !cancel || !save) return false;
         Boolean yes = true;
         SetControlData(save, kControlEntireControl, kControlPushButtonDefaultTag,
                        sizeof(yes), &yes);
         SetControlValue(selector, 1);
-        short slot = 1;
-        for (short p = 0; p < 8; ++p) {
-            Handle ditl = GetResource('DITL', 210 + p);
-            if (!ditl) return false;
-            AppendDITL(dialog, ditl, overlayDITL);
-            ReleaseResource(ditl);
-            for (int i = 0; i < kFieldCount; ++i) {
-                const Field &f = kFields[i];
-                if (f.pane != p) continue;
-                Item &item = items[i];
-                short type; Handle unused;
-                GetDialogItem(dialog, slot++, &type, &unused, &item.box);
-                Rect box = item.box;
-                short proc = kControlCheckBoxAutoToggleProc;
-                short minimum = 0, maximum = 1;
-                if (Editable(f)) {
-                    // The native edit CDEF frames outside its text rectangle.
-                    InsetRect(&box, 3, 3);
-                    proc = kControlEditTextProc;
-                } else if (f.kind == Redirect || f.kind == Provider) {
-                    proc = kControlPopupButtonProc | kControlPopupFixedWidthVariant;
-                    minimum = f.kind == Redirect ? 201 : 202;
-                    maximum = 0;
-                }
-                item.control = Control(box, f.kind == Check ? f.label : "",
-                                       proc, minimum, maximum,
-                                       !Editable(f) ? kControlFontBigSystemFont :
-                                                         kControlFontSmallSystemFont);
-                if (!item.control) return false;
-                if (Editable(f)) {
-                    Size actual;
-                    if (GetControlData(item.control, kControlEntireControl,
-                                       kControlEditTextTEHandleTag,
-                                       sizeof(item.text), &item.text, &actual) != noErr ||
-                        !item.text) return false;
-                }
-                if (f.kind == List) {
-                    listIndex = i;
-                    r = item.box;
-                    // Share the editor's right-hand frame pixel with the scrollbar.
-                    // Both controls use the same outer top and bottom edges.
-                    --r.top; // Match the edit CDEF's top frame pixel on OS 9.
-                    r.left = r.right - 1;
-                    r.right = r.left + 16;
-                    scroll = Control(r, "", kControlScrollBarProc);
-                    if (!scroll) return false;
-                }
+        for (int i = 0; i < kFieldCount; ++i) {
+            const Field &f = kFields[i];
+            Item &item = items[i];
+            if (f.kind == List) {
+                listIndex = i;
+                listFrame = item.box;
+                // The whitelist is a plain TextEdit record. The Appearance
+                // edit-text CDEF is single-line: wrapping the TE it owns is
+                // what crashed this pane as soon as a line was typed.
+                LabelFont();
+                Rect view = item.box;
+                InsetRect(&view, 3, 3);
+                item.text = TENew(&view, &view);
+                if (!item.text) return false;
+                (*item.text)->crOnly = 0;          // wrap on the view's width
+                // TESelView only scrolls while automatic viewing is on, and
+                // typing has to keep the caret in sight.
+                TEAutoView(true, item.text);
+                HintFont();
+                // One pixel below the frame's top line and sharing its right
+                // edge, so the two read as a single recessed well.
+                scrollFrame.top = static_cast<short>(listFrame.top + 1);
+                scrollFrame.bottom = listFrame.bottom;
+                scrollFrame.left = static_cast<short>(listFrame.right - 1);
+                scrollFrame.right = static_cast<short>(listFrame.right + 15);
+                scroll = Control(scrollFrame, "", kControlScrollBarProc);
+                if (!scroll) return false;
+                continue;
+            }
+            Rect box = item.box;
+            short proc = kControlCheckBoxAutoToggleProc;
+            short minimum = 0, maximum = 1;
+            if (Framed(f)) {
+                // The native edit CDEF frames outside its text rectangle.
+                InsetRect(&box, 3, 3);
+                proc = kControlEditTextProc;
+            } else if (f.kind == Redirect || f.kind == Provider) {
+                proc = kControlPopupButtonProc | kControlPopupFixedWidthVariant;
+                minimum = f.kind == Redirect ? 201 : 202;
+                maximum = 0;
+            }
+            item.control = Control(box, f.kind == Check ? f.label : "",
+                                   proc, minimum, maximum,
+                                   kControlFontBigSystemFont);
+            if (!item.control) return false;
+            if (Framed(f)) {
+                Size actual;
+                if (GetControlData(item.control, kControlEntireControl,
+                                   kControlEditTextTEHandleTag,
+                                   sizeof(item.text), &item.text, &actual) != noErr ||
+                    !item.text) return false;
             }
         }
         LoadValues(items);
@@ -326,45 +553,110 @@ public:
     void SwitchPane(short next)
     {
         ClearKeyboardFocus(window);
+        if (focus == listIndex && listIndex >= 0 && items[listIndex].text)
+            TEDeactivate(items[listIndex].text);
         focus = -1;
-        for (int i = 0; i < kFieldCount; ++i) HideControl(items[i].control);
+        for (int i = 0; i < kFieldCount; ++i)
+            if (items[i].control) HideControl(items[i].control);
         HideControl(scroll);
         pane = next;
         SetControlValue(selector, pane + 1);
+        Resize();
         for (int i = 0; i < kFieldCount; ++i)
-            if (kFields[i].pane == pane) ShowControl(items[i].control);
-        if (pane == 3) {
+            if (kFields[i].pane == pane && items[i].control) ShowControl(items[i].control);
+        if (listIndex >= 0 && kFields[listIndex].pane == pane) {
             ShowControl(scroll); SyncScroll();
-            if (items[listIndex].overflow)
-                notice = "List exceeds 2000 characters. Edit the preferences file first.";
         }
         InvalRect(&bounds);
     }
 
+    /* The window is exactly as tall as the pane on show. */
+    void Resize()
+    {
+        paneFrame.bottom = paneBottom[pane];
+        short height = paneHeight[pane];
+        short top = static_cast<short>(paneFrame.bottom + kButtonGap);
+        if (height != bounds.bottom) {
+            bounds.bottom = height;
+            SizeWindow(window, kWindowWidth, height, true);
+        }
+        MoveControl(revert, static_cast<short>(kGroupRight - 3 * kButtonWidth - 2 * kButtonSpacing), top);
+        MoveControl(cancel, static_cast<short>(kGroupRight - 2 * kButtonWidth - kButtonSpacing), top);
+        MoveControl(save, static_cast<short>(kGroupRight - kButtonWidth), top);
+    }
+
+    /* The whitelist's focus ring is drawn outside its frame, so redraw with
+     * room for it whenever focus arrives at or leaves the list. */
+    void InvalList()
+    {
+        if (listIndex < 0 || kFields[listIndex].pane != pane) return;
+        Rect ring = listFrame;
+        InsetRect(&ring, -4, -4);
+        InvalRect(&ring);
+    }
+
     void Focus(short i)
     {
+        if (focus == listIndex && listIndex >= 0 && items[listIndex].text)
+            TEDeactivate(items[listIndex].text);
         focus = i;
-        SetKeyboardFocus(window, items[i].control, kControlEditTextPart);
+        if (i == listIndex) {
+            ClearKeyboardFocus(window);
+            TEActivate(items[i].text);
+        } else {
+            SetKeyboardFocus(window, items[i].control, kControlEditTextPart);
+        }
+        InvalList();
     }
 
-    void Line(short x, short y, const char *text)
+    void Line(short x, short y, const char *text, size_t n)
     {
-        Str255 p; Pascal(text, p); MoveTo(x, y); DrawString(p);
+        Str255 p; Pascal(text, n, p); MoveTo(x, y); DrawString(p);
     }
 
-    void CaptionFont()
+    /* Caption text, one DrawString per line so the leading is exact. */
+    void Caption(short x, short base, const char *text)
     {
-        Str255 name;
-        short charcoal = 0;
-        Pascal("Charcoal", name); GetFNum(name, &charcoal);
-        TextFont(charcoal); TextSize(12); TextFace(0);
+        while (*text) {
+            const char *stop = std::strchr(text, '\n');
+            size_t n = stop ? static_cast<size_t>(stop - text) : std::strlen(text);
+            Line(x, base, text, n);
+            base = static_cast<short>(base + kCaptionPitch);
+            if (!stop) break;
+            text = stop + 1;
+        }
     }
 
-    void Description(short left, short top, const char *text, short height = 26)
+    void Pen(unsigned short level)
     {
-        TextFont(3); TextSize(9); TextFace(0);
-        Rect rect = { top, left, static_cast<short>(top + height), 440 };
-        TETextBox(text, std::strlen(text), &rect, teJustLeft);
+        RGBColor c; c.red = c.green = c.blue = level; RGBForeColor(&c);
+    }
+
+    void DrawList()
+    {
+        Item &item = items[listIndex];
+        RGBColor saved;
+        GetBackColor(&saved);
+        RGBColor white = { 0xFFFF, 0xFFFF, 0xFFFF };
+        RGBBackColor(&white);
+        Rect interior = listFrame;
+        InsetRect(&interior, 1, 1);
+        Pen(0xFFFF); PaintRect(&interior);
+        Pen(0x0000); FrameRect(&listFrame);
+        // A recessed well: shadow above and left, highlight below. The shadow
+        // runs on over the scroll bar so the two share one top edge.
+        Pen(0x7D7D);
+        MoveTo(static_cast<short>(listFrame.left - 1), static_cast<short>(listFrame.top - 1));
+        LineTo(static_cast<short>(scrollFrame.right - 1), static_cast<short>(listFrame.top - 1));
+        MoveTo(static_cast<short>(listFrame.left - 1), static_cast<short>(listFrame.top - 1));
+        LineTo(static_cast<short>(listFrame.left - 1), static_cast<short>(listFrame.bottom - 1));
+        Pen(0xFFFF);
+        MoveTo(listFrame.left, listFrame.bottom);
+        LineTo(scrollFrame.right, listFrame.bottom);
+        Pen(0x0000);
+        TEUpdate(&(*item.text)->viewRect, item.text);
+        RGBBackColor(&saved);
+        if (focus == listIndex) DrawThemeFocusRect(&listFrame, true);
     }
 
     void Draw()
@@ -373,107 +665,31 @@ public:
         // The Window Manager owns the native outer window frame. Only the
         // pane is framed here, with its selector replacing the title.
         DrawThemePrimaryGroup(&paneFrame, kThemeStateActive);
-        Rect selectorGround = { 20, 17, 44, 205 };
+        // The group's top line runs behind the selector; clear it first.
+        Rect selectorGround = selectorFrame;
+        InsetRect(&selectorGround, -3, -3);
         EraseRect(&selectorGround);
         DrawControls(window);
+        if (kIntro[pane][0]) {
+            HintFont();
+            Caption(kRowLeft, kIntroBase, kIntro[pane]);
+        }
         for (int i = 0; i < kFieldCount; ++i) {
             const Field &f = kFields[i];
             if (f.pane != pane) continue;
-            const Rect &box = items[i].box;
-            if (f.kind != Check) {
-                CaptionFont();
-                Line(f.kind == List ? box.left : kRowLeft,
-                     f.kind == List ? box.top - 10 : box.top + 12, f.label);
+            const Item &item = items[i];
+            if (item.labelBase) {
+                LabelFont();
+                Line(kRowLeft, item.labelBase, f.label, std::strlen(f.label));
             }
-            if (f.hint[0])
-                Description(f.kind == Check ? kCheckTextLeft : box.left,
-                            box.bottom + 4, f.hint);
-        }
-        TextFont(3); TextSize(9); TextFace(0);
-        switch (pane) {
-        case 0:
-            Line(kRowLeft, 55, "Stop and start Gateway after changing listeners.");
-            break;
-        case 1:
-            Line(kCheckTextLeft, 114, "For browsers without modern TLS support.");
-            Line(kCheckTextLeft, 151, "Requires the Gateway CA in the browser. Choose one mode.");
-            break;
-        case 2: Line(kCheckTextLeft, 239, "Off requests the configured era directly."); break;
-        case 3:
-            Line(kCheckTextLeft, 167, "Accepted for compatibility; it has no effect.");
-            Line(kRowLeft, 309, "Separate sites with ; or new lines. Plain names include subdomains.");
-            Line(kRowLeft, 322, "Maximum 2000 characters. Remove a site to archive it again.");
-            break;
-        case 4:
-            Description(244, 120, "Checked locally; never sent upstream.");
-            break;
-        case 5:
-            Line(kRowLeft, 55, "Empty host fields use the selected provider's defaults.");
-            Line(kCheckTextLeft, 243, "Port 465 uses TLS immediately; other ports default to STARTTLS.");
-            break;
-        case 6:
-            Line(kRowLeft, 55, "Obtain the refresh token outside Gateway, then paste it here.");
-            Line(kRowLeft, 68, "Long values scroll horizontally. Tokens may rotate while running.");
-            break;
-        case 7:
-            Line(kCheckTextLeft, 82, "Off launches without a window, menu bar or Application");
-            Line(kCheckTextLeft, 95, "menu entry. Send a Quit Apple event to stop Gateway.");
-            Line(kCheckTextLeft, 144, "The window keeps the last 200 lines.");
-            Line(kCheckTextLeft, 157, "The log file keeps everything.");
-            {
-                RGBColor previous, blue = { 0, 0, 0xCCCC };
-                GetForeColor(&previous); RGBForeColor(&blue); TextFace(underline);
-                Str255 label; Pascal("Open log folder in Finder", label);
-                logLink.right = logLink.left + StringWidth(label);
-                Line(logLink.left, 180, "Open log folder in Finder");
-                TextFace(0); RGBForeColor(&previous);
+            if (item.hintBase) {
+                HintFont();
+                Caption(f.kind == Check ? kCheckTextLeft : kRowLeft,
+                        item.hintBase, f.hint);
             }
-            break;
         }
-        if (notice[0]) Line(13, 365, notice);
-    }
-
-    void OpenLogFolder()
-    {
-        // Open the same folder GWPlat_OpenLog uses, even before file logging
-        // has been enabled. The no-reply event keeps the cooperative loop free.
-        short volume;
-        long directory, createdDirectory;
-        Str255 name; Pascal("Gateway", name);
-        FSSpec folder;
-        OSErr err = FindFolder(kOnSystemDisk, kApplicationSupportFolderType,
-                              kCreateFolder, &volume, &directory);
-        if (err == noErr) {
-            err = DirCreate(volume, directory, name, &createdDirectory);
-            if (err == dupFNErr) err = noErr;
-        }
-        if (err == noErr) err = FSMakeFSSpec(volume, directory, name, &folder);
-        AliasHandle alias = nullptr;
-        if (err == noErr) err = NewAliasMinimal(&folder, &alias);
-        AEAddressDesc target = { typeNull, nullptr };
-        AppleEvent event = { typeNull, nullptr }, reply = { typeNull, nullptr };
-        AEDescList objects = { typeNull, nullptr };
-        OSType finder = 'MACS';
-        if (err == noErr) err = AECreateDesc(typeApplSignature, &finder, sizeof(finder), &target);
-        if (err == noErr) err = AECreateAppleEvent(kCoreEventClass, kAEOpenDocuments,
-                &target, kAutoGenerateReturnID, kAnyTransactionID, &event);
-        if (err == noErr) err = AECreateList(nullptr, 0, false, &objects);
-        if (err == noErr) {
-            HLock(reinterpret_cast<Handle>(alias));
-            err = AEPutPtr(&objects, 0, typeAlias, *alias,
-                          GetHandleSize(reinterpret_cast<Handle>(alias)));
-            HUnlock(reinterpret_cast<Handle>(alias));
-        }
-        if (err == noErr) err = AEPutParamDesc(&event, keyDirectObject, &objects);
-        if (err == noErr) err = AESend(&event, &reply, kAENoReply | kAECanSwitchLayer,
-                                     kAENormalPriority, kAEDefaultTimeout, nullptr, nullptr);
-        AEDisposeDesc(&objects); AEDisposeDesc(&event);
-        AEDisposeDesc(&reply); AEDisposeDesc(&target);
-        if (alias) DisposeHandle(reinterpret_cast<Handle>(alias));
-        if (err != noErr) {
-            notice = "Could not open the log folder in Finder.";
-            SysBeep(1); InvalRect(&bounds);
-        }
+        if (listIndex >= 0 && kFields[listIndex].pane == pane) DrawList();
+        HintFont();
     }
 
     void SyncScroll()
@@ -541,9 +757,6 @@ public:
             }
             if (!valid) {
                 SwitchPane(f.pane); Focus(i); SysBeep(1);
-                notice = items[i].overflow ? "List exceeds 2000 characters. Edit the preferences file first." :
-                         "Check the selected value before saving.";
-                InvalRect(&bounds);
                 return false;
             }
         }
@@ -554,8 +767,7 @@ public:
             if (!std::strcmp(value, items[i].original)) continue;
             if (kFields[i].kind == List) gw_prefs_normalize_list(value);
             if (!GWConfig_Set(kFields[i].key, value)) {
-                notice = "Could not write preferences. Check the disk and try Save again.";
-                SysBeep(1); InvalRect(&bounds);
+                SysBeep(1);
                 return false;
             }
             std::strcpy(items[i].original, value);
@@ -566,6 +778,7 @@ public:
 
     ~Preferences()
     {
+        if (listIndex >= 0 && items[listIndex].text) TEDispose(items[listIndex].text);
         // Controls and their TextEdit records belong to the dialog window.
         if (dialog) DisposeDialog(dialog);
         for (short i = 0; i < 3; ++i) if (menus[i]) {
@@ -595,6 +808,8 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
         GW_Poll();
         SetPort(p->window);
         IdleControls(p->window);
+        if (p->focus >= 0 && p->focus == p->listIndex)
+            TEIdle(p->items[p->listIndex].text);
         if (event.what == updateEvt && reinterpret_cast<WindowPtr>(event.message) == p->window) {
             BeginUpdate(p->window); p->Draw(); EndUpdate(p->window);
         } else if (event.what == mouseDown) {
@@ -608,18 +823,25 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
             }
             if (part != inContent) continue;
             Point point = event.where; GlobalToLocal(&point);
-            if (p->pane == 7 && PtInRect(point, &p->logLink)) {
-                p->OpenLogFolder();
-                continue;
-            }
             bool edited = false;
             for (short i = 0; i < kFieldCount; ++i) {
                 if (kFields[i].pane != p->pane || !Editable(kFields[i])) continue;
-                if (!PtInRect(point, &p->items[i].box)) continue;
+                Rect hitBox = p->items[i].box;
+                // The whitelist shares its right-hand frame pixel with the
+                // scroll bar; leave that column to the scroll bar.
+                if (kFields[i].kind == List) InsetRect(&hitBox, 1, 1);
+                if (!PtInRect(point, &hitBox)) continue;
                 p->Focus(i);
-                // Track the click as well as changing focus: this places the caret.
-                HandleControlClick(p->items[i].control, point, event.modifiers, nullptr);
-                if (kFields[i].kind == List) p->SyncScroll();
+                if (kFields[i].kind == List) {
+                    RGBColor saved, white = { 0xFFFF, 0xFFFF, 0xFFFF };
+                    GetBackColor(&saved); RGBBackColor(&white);
+                    TEClick(point, (event.modifiers & shiftKey) != 0, p->items[i].text);
+                    RGBBackColor(&saved);
+                    p->SyncScroll();
+                } else {
+                    // Track the click as well as changing focus: this places the caret.
+                    HandleControlClick(p->items[i].control, point, event.modifiers, nullptr);
+                }
                 edited = true;
                 break;
             }
@@ -640,20 +862,19 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
             if (!HandleControlClick(hit, point, event.modifiers, nullptr)) continue;
             if (hit == p->selector) {
                 short selected = GetControlValue(hit) - 1;
-                if (selected >= 0 && selected < 8) p->SwitchPane(selected);
+                if (selected >= 0 && selected < kPaneCount) p->SwitchPane(selected);
             } else if (hit == p->cancel) done = true;
             else if (hit == p->save) done = p->Save();
             else if (hit == p->revert) {
-                ClearKeyboardFocus(p->window); p->focus = -1;
-                LoadValues(p->items); p->SyncScroll();
-                p->notice = "Preferences reloaded from disk.";
-                InvalRect(&p->bounds);
+                LoadValues(p->items);
+                p->SwitchPane(p->pane);
             }
         } else if (event.what == keyDown || event.what == autoKey) {
             char ch = event.message & charCodeMask;
             bool command = (event.modifiers & cmdKey) != 0;
+            bool inList = p->focus >= 0 && p->focus == p->listIndex;
             if (ch == 27 || (command && ch == '.')) { done = true; continue; }
-            if (ch == '\r' || ch == 3) { done = p->Save(); continue; }
+            if (ch == 3 || (ch == '\r' && !inList)) { done = p->Save(); continue; }
             if (ch == '\t') {
                 int step = event.modifiers & shiftKey ? -1 : 1;
                 int start = p->focus >= 0 ? p->focus : (step > 0 ? kFieldCount - 1 : 0);
@@ -669,6 +890,8 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
             Item &item = p->items[p->focus];
             const Field &field = kFields[p->focus];
             TEHandle te = item.text;
+            RGBColor savedBack = {}, white = { 0xFFFF, 0xFFFF, 0xFFFF };
+            if (inList) { GetBackColor(&savedBack); RGBBackColor(&white); }
             int limit = field.kind == List ? kListLimit : kValueCapacity - 1;
             int remaining = limit - ((*te)->teLength - ((*te)->selEnd - (*te)->selStart));
             if (command) {
@@ -679,7 +902,11 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
                     if (ch == 'x') TEDelete(te);
                 } else if (ch == 'v') {
                     Handle scrap = NewHandle(0);
-                    if (!scrap) { SysBeep(1); continue; }
+                    if (!scrap) {
+                        SysBeep(1);
+                        if (inList) RGBBackColor(&savedBack);
+                        continue;
+                    }
                     SInt32 offset = 0;
                     long count = GetScrap(scrap, 'TEXT', &offset);
                     bool valid = count >= 0 && count <= remaining;
@@ -697,22 +924,54 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
                         HUnlock(scrap);
                     }
                     DisposeHandle(scrap);
-                    if (!valid) { SysBeep(1); continue; }
+                    if (!valid) {
+                        SysBeep(1);
+                        if (inList) RGBBackColor(&savedBack);
+                        continue;
+                    }
                 }
             } else {
                 bool numeric = field.kind == Number || field.kind == Date;
                 unsigned char key = static_cast<unsigned char>(ch);
                 bool navigation = key == 8 || (key >= 28 && key <= 31) || key == 127;
-                if (!navigation && (remaining <= 0 ||
-                    (numeric && (ch < '0' || ch > '9')) || key < 32)) {
-                    SysBeep(1); continue;
+                bool newline = inList && key == 13;
+                if (!navigation && (remaining <= 0 || (!newline &&
+                    ((numeric && (ch < '0' || ch > '9')) || key < 32)))) {
+                    SysBeep(1);
+                    if (inList) RGBBackColor(&savedBack);
+                    continue;
                 }
-                HandleControlKey(item.control, (event.message & keyCodeMask) >> 8,
-                                 key, event.modifiers);
+                if (inList) {
+                    if (key == 30 || key == 31) {
+                        // Scrolling must not be undone by TESelView below.
+                        p->Scroll(static_cast<short>(key == 30 ? -(*te)->lineHeight
+                                                               : (*te)->lineHeight));
+                        RGBBackColor(&savedBack);
+                        continue;
+                    }
+                    if (key == 28 || key == 29) {
+                        // Classic TextEdit leaves the arrow keys to the caller.
+                        short at = key == 28 ? (*te)->selStart : (*te)->selEnd;
+                        if ((*te)->selStart == (*te)->selEnd) {
+                            if (key == 28 && at > 0) --at;
+                            if (key == 29 && at < (*te)->teLength) ++at;
+                        }
+                        TESetSelect(at, at, te);
+                    } else {
+                        TEKey(ch, te);
+                    }
+                } else {
+                    HandleControlKey(item.control, (event.message & keyCodeMask) >> 8,
+                                     key, event.modifiers);
+                }
             }
             TESelView(te);
-            Draw1Control(item.control);
-            if (field.kind == List) p->SyncScroll();
+            if (inList) {
+                p->SyncScroll();
+                RGBBackColor(&savedBack);
+            } else {
+                Draw1Control(item.control);
+            }
         } else {
             if (serviceEvent(context, &event)) done = true;
         }
