@@ -1,6 +1,9 @@
 /* Classic Appearance Manager preferences. Universal Interfaces stay private
  * to this translation unit; main.cpp continues to use Multiversal. */
 #include <Appearance.h>
+#include <Aliases.h>
+#include <AppleEvents.h>
+#include <Folders.h>
 #include <ControlDefinitions.h>
 #include <Controls.h>
 #include <Dialogs.h>
@@ -31,13 +34,13 @@ struct Field {
 };
 /* Binding order matches the slots in DITL 210-217. */
 const Field kFields[] = {
-    { 0, Check, "http_enabled", "Web proxy", "1", "" },
-    { 0, Check, "mail_enabled", "Mail", "1", "" },
-    { 0, Check, "wayback_enabled", "Wayback proxy", "1", "" },
+    { 0, Check, "http_enabled", "Web proxy", "1", "Browse modern sites through the web proxy." },
+    { 0, Check, "mail_enabled", "Mail", "1", "Connect a mail client to IMAP, POP and SMTP." },
+    { 0, Check, "wayback_enabled", "Wayback proxy", "1", "Browse archived pages from the Wayback Machine." },
     { 1, Number, "http_port", "Port:", "8765", "" },
     { 1, Check, "rewrite_https", "Rewrite https:// links to http://", "1", "" },
     { 1, Check, "connect_mitm", "Terminate TLS for typed https:// URLs", "0", "" },
-    { 1, Redirect, "follow_redirects", "Follow redirects:", "auto", "" },
+    { 1, Redirect, "follow_redirects", "Follow redirects:", "auto", "Automatic follows HTTPS redirects." },
     { 1, Number, "max_body_mb", "Largest response (MB):", "0", "0 for no limit." },
     { 1, Number, "max_connects", "Connections opening at once:", "8", "" },
     { 1, Number, "max_sessions", "Concurrent sessions:", "12", "Shared by Web proxy and Wayback; mail has its own limit." },
@@ -75,10 +78,6 @@ const Field kFields[] = {
     { 7, Check, "log_file", "Also write the log to a file", "0", "" },
 };
 const int kFieldCount = sizeof(kFields) / sizeof(kFields[0]);
-const char *const kPaneNames[] = {
-    "Modules", "Web proxy", "Wayback", "Wayback sites", "Mail",
-    "Mail upstream", "OAuth", "Log"
-};
 const char *const kRedirects[] = { "auto", "always", "never" };
 const char *const kProviders[] = { "outlook", "gmail", "custom" };
 const int kValueCapacity = 2048;
@@ -205,10 +204,11 @@ public:
     MenuHandle menus[3] = {};
     Item items[kFieldCount] = {};
     short pane = 0, focus = -1, listIndex = -1;
-    const char *notice = "Stop and start Gateway after changing listeners.";
+    const char *notice = "";
     Rect bounds = { 0, 0, 400, 460 };
     // The old 16px outer / 30px control margins are reduced by one third.
-    Rect paneFrame = { 42, 11, 354, 449 };
+    Rect paneFrame = { 32, 11, 354, 449 };
+    Rect logLink = { 169, 38, 184, 220 };
     static const short kRowLeft = 20;
     static const short kCheckTextLeft = 38;
 
@@ -249,8 +249,8 @@ public:
             if (!menus[n]) return false;
             InsertMenu(menus[n], -1);
         }
-        Rect r = { 11, 111, 31, 293 };
-        selector = Control(r, "", kControlPopupButtonProc, 200, 0,
+        Rect r = { 22, 20, 42, 202 };
+        selector = Control(r, "", kControlPopupButtonProc | kControlPopupFixedWidthVariant, 200, 0,
                            kControlFontBigSystemFont);
         r = { 370, 219, 390, 289 };
         revert = Control(r, "Revert", kControlPushButtonProc, 0, 1,
@@ -286,13 +286,13 @@ public:
                     InsetRect(&box, 3, 3);
                     proc = kControlEditTextProc;
                 } else if (f.kind == Redirect || f.kind == Provider) {
-                    proc = kControlPopupButtonProc;
+                    proc = kControlPopupButtonProc | kControlPopupFixedWidthVariant;
                     minimum = f.kind == Redirect ? 201 : 202;
                     maximum = 0;
                 }
                 item.control = Control(box, f.kind == Check ? f.label : "",
                                        proc, minimum, maximum,
-                                       f.kind == Check ? kControlFontBigSystemFont :
+                                       !Editable(f) ? kControlFontBigSystemFont :
                                                          kControlFontSmallSystemFont);
                 if (!item.control) return false;
                 if (Editable(f)) {
@@ -307,6 +307,7 @@ public:
                     r = item.box;
                     // Share the editor's right-hand frame pixel with the scrollbar.
                     // Both controls use the same outer top and bottom edges.
+                    --r.top; // Match the edit CDEF's top frame pixel on OS 9.
                     r.left = r.right - 1;
                     r.right = r.left + 16;
                     scroll = Control(r, "", kControlScrollBarProc);
@@ -351,77 +352,128 @@ public:
         Str255 p; Pascal(text, p); MoveTo(x, y); DrawString(p);
     }
 
+    void CaptionFont()
+    {
+        Str255 name;
+        short charcoal = 0;
+        Pascal("Charcoal", name); GetFNum(name, &charcoal);
+        TextFont(charcoal); TextSize(12); TextFace(0);
+    }
+
+    void Description(short left, short top, const char *text, short height = 26)
+    {
+        TextFont(3); TextSize(9); TextFace(0);
+        Rect rect = { top, left, static_cast<short>(top + height), 440 };
+        TETextBox(text, std::strlen(text), &rect, teJustLeft);
+    }
+
     void Draw()
     {
         EraseRect(&bounds);
-        TextFont(0); TextSize(0);
-        Line(13, 25, "Settings for:");
-        TextFont(3); TextSize(9);
-        DrawControls(window);
-        // Control titles use Charcoal; labels and descriptions remain Geneva 9.
-        TextFont(3); TextSize(9); TextFace(0);
-        // Draw the Platinum frames explicitly on every update. A group-box
-        // control can be obscured by sibling controls in the root hierarchy.
-        Rect rim = bounds;
-        InsetRect(&rim, 3, 3);
-        DrawThemePrimaryGroup(&rim, kThemeStateActive);
+        // The Window Manager owns the native outer window frame. Only the
+        // pane is framed here, with its selector replacing the title.
         DrawThemePrimaryGroup(&paneFrame, kThemeStateActive);
-        Str255 heading;
-        Pascal(kPaneNames[pane], heading);
-        TextFace(bold);
-        Rect headingGround = { static_cast<short>(paneFrame.top - 6), kRowLeft - 3,
-                               static_cast<short>(paneFrame.top + 7),
-                               static_cast<short>(kRowLeft + StringWidth(heading) + 3) };
-        EraseRect(&headingGround);
-        Line(kRowLeft, paneFrame.top + 3, kPaneNames[pane]);
-        TextFace(0);
+        Rect selectorGround = { 20, 17, 44, 205 };
+        EraseRect(&selectorGround);
+        DrawControls(window);
         for (int i = 0; i < kFieldCount; ++i) {
             const Field &f = kFields[i];
             if (f.pane != pane) continue;
             const Rect &box = items[i].box;
             if (f.kind != Check) {
-                Str255 label; Pascal(f.label, label);
-                if (f.kind == List) {
-                    TextFace(bold); Line(box.left, box.top - 10, f.label); TextFace(0);
-                } else {
-                    MoveTo(kRowLeft, box.top + 12);
-                    DrawString(label);
-                }
+                CaptionFont();
+                Line(f.kind == List ? box.left : kRowLeft,
+                     f.kind == List ? box.top - 10 : box.top + 12, f.label);
             }
-            if (f.hint[0]) Line(kRowLeft, box.bottom + 13, f.hint);
+            if (f.hint[0])
+                Description(f.kind == Check ? kCheckTextLeft : box.left,
+                            box.bottom + 4, f.hint);
         }
+        TextFont(3); TextSize(9); TextFace(0);
         switch (pane) {
+        case 0:
+            Line(kRowLeft, 55, "Stop and start Gateway after changing listeners.");
+            break;
         case 1:
-            Line(kCheckTextLeft, 121, "For browsers without modern TLS support.");
-            Line(kCheckTextLeft, 160, "Requires the Gateway CA in the browser. Choose one mode.");
+            Line(kCheckTextLeft, 114, "For browsers without modern TLS support.");
+            Line(kCheckTextLeft, 151, "Requires the Gateway CA in the browser. Choose one mode.");
             break;
-        case 2: Line(kCheckTextLeft, 263, "Off requests the configured era directly."); break;
+        case 2: Line(kCheckTextLeft, 239, "Off requests the configured era directly."); break;
         case 3:
-            Line(kCheckTextLeft, 183, "Accepted for compatibility; it has no effect.");
-            Line(kRowLeft, 329, "Separate sites with ; or new lines. Plain names include subdomains.");
-            Line(kRowLeft, 342, "Maximum 2000 characters. Remove a site to archive it again.");
+            Line(kCheckTextLeft, 167, "Accepted for compatibility; it has no effect.");
+            Line(kRowLeft, 309, "Separate sites with ; or new lines. Plain names include subdomains.");
+            Line(kRowLeft, 322, "Maximum 2000 characters. Remove a site to archive it again.");
             break;
-        case 4: Line(kRowLeft, 149, "Checked locally; never sent upstream."); break;
+        case 4:
+            Description(244, 120, "Checked locally; never sent upstream.");
+            break;
         case 5:
-            Line(kCheckTextLeft, 252, "Port 465 uses TLS immediately; other ports default to STARTTLS.");
-            Line(kRowLeft, 294, "Empty host fields use the selected provider's defaults.");
+            Line(kRowLeft, 55, "Empty host fields use the selected provider's defaults.");
+            Line(kCheckTextLeft, 243, "Port 465 uses TLS immediately; other ports default to STARTTLS.");
             break;
         case 6:
-            Line(kRowLeft, 228, "Obtain the refresh token outside Gateway, then paste it here.");
-            Line(kRowLeft, 245, "Long values scroll horizontally. Tokens may rotate while running.");
+            Line(kRowLeft, 55, "Obtain the refresh token outside Gateway, then paste it here.");
+            Line(kRowLeft, 68, "Long values scroll horizontally. Tokens may rotate while running.");
             break;
         case 7:
-            // QuickTime-style option blocks: Charcoal labels, with small
-            // explanatory text indented to the checkbox title, not the square.
             Line(kCheckTextLeft, 82, "Off launches without a window, menu bar or Application");
             Line(kCheckTextLeft, 95, "menu entry. Send a Quit Apple event to stop Gateway.");
             Line(kCheckTextLeft, 144, "The window keeps the last 200 lines.");
             Line(kCheckTextLeft, 157, "The log file keeps everything.");
-            Line(kCheckTextLeft, 180, "System Folder : Application Support : Gateway :");
-            Line(kCheckTextLeft, 193, "Gateway Log.txt");
+            {
+                RGBColor previous, blue = { 0, 0, 0xCCCC };
+                GetForeColor(&previous); RGBForeColor(&blue); TextFace(underline);
+                Str255 label; Pascal("Open log folder in Finder", label);
+                logLink.right = logLink.left + StringWidth(label);
+                Line(logLink.left, 180, "Open log folder in Finder");
+                TextFace(0); RGBForeColor(&previous);
+            }
             break;
         }
-        Line(13, 365, notice);
+        if (notice[0]) Line(13, 365, notice);
+    }
+
+    void OpenLogFolder()
+    {
+        // Open the same folder GWPlat_OpenLog uses, even before file logging
+        // has been enabled. The no-reply event keeps the cooperative loop free.
+        short volume;
+        long directory, createdDirectory;
+        Str255 name; Pascal("Gateway", name);
+        FSSpec folder;
+        OSErr err = FindFolder(kOnSystemDisk, kApplicationSupportFolderType,
+                              kCreateFolder, &volume, &directory);
+        if (err == noErr) {
+            err = DirCreate(volume, directory, name, &createdDirectory);
+            if (err == dupFNErr) err = noErr;
+        }
+        if (err == noErr) err = FSMakeFSSpec(volume, directory, name, &folder);
+        AliasHandle alias = nullptr;
+        if (err == noErr) err = NewAliasMinimal(&folder, &alias);
+        AEAddressDesc target = { typeNull, nullptr };
+        AppleEvent event = { typeNull, nullptr }, reply = { typeNull, nullptr };
+        AEDescList objects = { typeNull, nullptr };
+        OSType finder = 'MACS';
+        if (err == noErr) err = AECreateDesc(typeApplSignature, &finder, sizeof(finder), &target);
+        if (err == noErr) err = AECreateAppleEvent(kCoreEventClass, kAEOpenDocuments,
+                &target, kAutoGenerateReturnID, kAnyTransactionID, &event);
+        if (err == noErr) err = AECreateList(nullptr, 0, false, &objects);
+        if (err == noErr) {
+            HLock(reinterpret_cast<Handle>(alias));
+            err = AEPutPtr(&objects, 0, typeAlias, *alias,
+                          GetHandleSize(reinterpret_cast<Handle>(alias)));
+            HUnlock(reinterpret_cast<Handle>(alias));
+        }
+        if (err == noErr) err = AEPutParamDesc(&event, keyDirectObject, &objects);
+        if (err == noErr) err = AESend(&event, &reply, kAENoReply | kAECanSwitchLayer,
+                                     kAENormalPriority, kAEDefaultTimeout, nullptr, nullptr);
+        AEDisposeDesc(&objects); AEDisposeDesc(&event);
+        AEDisposeDesc(&reply); AEDisposeDesc(&target);
+        if (alias) DisposeHandle(reinterpret_cast<Handle>(alias));
+        if (err != noErr) {
+            notice = "Could not open the log folder in Finder.";
+            SysBeep(1); InvalRect(&bounds);
+        }
     }
 
     void SyncScroll()
@@ -556,6 +608,10 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
             }
             if (part != inContent) continue;
             Point point = event.where; GlobalToLocal(&point);
+            if (p->pane == 7 && PtInRect(point, &p->logLink)) {
+                p->OpenLogFolder();
+                continue;
+            }
             bool edited = false;
             for (short i = 0; i < kFieldCount; ++i) {
                 if (kFields[i].pane != p->pane || !Editable(kFields[i])) continue;

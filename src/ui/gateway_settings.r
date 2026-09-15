@@ -76,70 +76,70 @@ data 'DITL' (209, "Preferences chrome", purgeable) { $"FFFF" };
  */
 data 'DITL' (210, "Modules layout", purgeable) {
     $"0002"
-    $"00000000 0037 0014 0048 01AE 8000" /* http_enabled */
-    $"00000000 0050 0014 0061 01AE 8000" /* mail_enabled */
-    $"00000000 0069 0014 007A 01AE 8000" /* wayback_enabled */
+    $"00000000 004C 0014 005D 01AE 8000" /* http_enabled */
+    $"00000000 007A 0014 008B 01AE 8000" /* mail_enabled */
+    $"00000000 00A8 0014 00B9 01AE 8000" /* wayback_enabled */
 };
 
 data 'DITL' (211, "Web proxy layout", purgeable) {
     $"0006"
-    $"00000000 0037 00C8 004A 0100 8000" /* http_port */
-    $"00000000 005D 0014 006E 01AE 8000" /* rewrite_https */
-    $"00000000 0084 0014 0095 01AE 8000" /* connect_mitm */
-    $"00000000 00B1 00C8 00C2 0136 8000" /* follow_redirects */
-    $"00000000 00D1 00C8 00E4 0100 8000" /* max_body_mb */
-    $"00000000 00FD 00C8 0110 0100 8000" /* max_connects */
-    $"00000000 012F 00C8 0142 0100 8000" /* max_sessions */
+    $"00000000 0037 00F4 004A 0162 8000" /* http_port */
+    $"00000000 0054 0014 0065 01AE 8000" /* rewrite_https */
+    $"00000000 0079 0014 008A 01AE 8000" /* connect_mitm */
+    $"00000000 009E 00F4 00AF 0162 8000" /* follow_redirects */
+    $"00000000 00C3 00F4 00D6 0162 8000" /* max_body_mb */
+    $"00000000 00EA 00F4 00FD 0162 8000" /* max_connects */
+    $"00000000 0100 00F4 0113 0162 8000" /* max_sessions */
 };
 
 data 'DITL' (212, "Wayback layout", purgeable) {
     $"0004"
-    $"00000000 0037 00C8 004A 0100 8000" /* wayback_port */
-    $"00000000 0063 00C8 0076 0118 8000" /* wayback_date */
-    $"00000000 008F 00C8 00A2 0100 8000" /* wayback_tolerance */
-    $"00000000 00BB 00C8 00CE 0100 8000" /* wayback_connects */
-    $"00000000 00EA 0014 00FB 01AE 8000" /* wayback_api */
+    $"00000000 0037 00F4 004A 0162 8000" /* wayback_port */
+    $"00000000 005E 00F4 0071 0162 8000" /* wayback_date */
+    $"00000000 0085 00F4 0098 0162 8000" /* wayback_tolerance */
+    $"00000000 00AC 00F4 00BF 0162 8000" /* wayback_connects */
+    $"00000000 00D3 0014 00E4 01AE 8000" /* wayback_api */
 };
 
 data 'DITL' (213, "Wayback sites layout", purgeable) {
     $"0005"
     $"00000000 0037 0014 0048 01AE 8000" /* wayback_geocities */
-    $"00000000 0050 0014 0061 01AE 8000" /* wayback_cache */
-    $"00000000 0069 0014 007A 01AE 8000" /* wayback_settings */
-    $"00000000 0082 0014 0093 01AE 8000" /* wayback_ct_encoding */
-    $"00000000 009B 0014 00AC 01AE 8000" /* wayback_quick_images */
-    $"00000000 00DD 0014 0133 01A9 8000" /* wayback_live */
+    $"00000000 004C 0014 005D 01AE 8000" /* wayback_cache */
+    $"00000000 0061 0014 0072 01AE 8000" /* wayback_settings */
+    $"00000000 0076 0014 0087 01AE 8000" /* wayback_ct_encoding */
+    $"00000000 008B 0014 009C 01AE 8000" /* wayback_quick_images */
+    $"00000000 00D3 0014 0129 01A9 8000" /* wayback_live */
 };
 
 data 'DITL' (214, "Mail layout", purgeable) {
     $"0005"
-    $"00000000 0037 00C8 0048 0136 8000" /* provider */
-    $"00000000 005D 00C8 0070 01B6 8000" /* oauth_user */
-    $"00000000 0076 00C8 0089 01B6 8000" /* local_password */
-    $"00000000 00A8 00C8 00BB 0100 8000" /* imap_port */
-    $"00000000 00C1 00C8 00D4 0100 8000" /* pop_port */
-    $"00000000 00DA 00C8 00ED 0100 8000" /* smtp_port */
+    $"00000000 0037 00F4 0048 0162 8000" /* provider */
+    $"00000000 004B 00F4 005E 0162 8000" /* oauth_user */
+    $"00000000 0061 00F4 0074 0162 8000" /* local_password */
+    $"00000000 0095 00F4 00A8 0162 8000" /* imap_port */
+    $"00000000 00AB 00F4 00BE 0162 8000" /* pop_port */
+    $"00000000 00C1 00F4 00D4 0162 8000" /* smtp_port */
 };
 
 data 'DITL' (215, "Mail upstream layout", purgeable) {
     $"0006"
-    $"00000000 0037 00C8 004A 01B6 8000" /* imap_host */
-    $"00000000 0050 00C8 0063 0100 8000" /* imap_upstream_port */
-    $"00000000 0069 00C8 007C 01B6 8000" /* pop_host */
-    $"00000000 0082 00C8 0095 0100 8000" /* pop_upstream_port */
-    $"00000000 009B 00C8 00AE 01B6 8000" /* smtp_host */
-    $"00000000 00B4 00C8 00C7 0100 8000" /* smtp_upstream_port */
-    $"00000000 00DF 0014 00F0 01AE 8000" /* smtp_starttls */
+    $"00000000 004C 00F4 005F 0162 8000" /* imap_host */
+    $"00000000 0062 00F4 0075 0162 8000" /* imap_upstream_port */
+    $"00000000 0078 00F4 008B 0162 8000" /* pop_host */
+    $"00000000 008E 00F4 00A1 0162 8000" /* pop_upstream_port */
+    $"00000000 00A4 00F4 00B7 0162 8000" /* smtp_host */
+    $"00000000 00BA 00F4 00CD 0162 8000" /* smtp_upstream_port */
+    $"00000000 00D7 0014 00E8 01AE 8000" /* smtp_starttls */
 };
 
 data 'DITL' (216, "OAuth layout", purgeable) {
     $"0005"
-    $"00000000 0037 00C8 004A 01B6 8000" /* oauth_host */
-    $"00000000 0050 00C8 0063 01B6 8000" /* oauth_path */
-    $"00000000 0069 00C8 007C 01B6 8000" /* oauth_scope */
-    $"00000000 0082 00C8 0095 01B6 8000" /* oauth_client_id */
-    $"00000000 009B 00C8 00AE 01B6 8000" /* oauth_client_secret */
-    $"00000000 00B4 00C8 00C7 01B6 8000" /* refresh_token */
+    $"00000000 005A 00F4 006D 0162 8000" /* oauth_host */
+    $"00000000 0070 00F4 0083 0162 8000" /* oauth_path */
+    $"00000000 0086 00F4 0099 0162 8000" /* oauth_scope */
+    $"00000000 009C 00F4 00AF 0162 8000" /* oauth_client_id */
+    $"00000000 00B2 00F4 00C5 0162 8000" /* oauth_client_secret */
+    $"00000000 00C8 00F4 00DB 0162 8000" /* refresh_token */
 };
 
 data 'DITL' (217, "Log layout", purgeable) {

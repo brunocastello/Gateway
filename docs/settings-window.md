@@ -5,13 +5,23 @@
 The current implementation in `src/ui/gw_settings.cpp` and DITL 210–217
 supersedes the older font, alignment, and session-scope guidance below:
 
-- Checkbox titles and Revert/Cancel/Save use Charcoal 12; descriptions and
-  entry text remain Geneva 9.
-- Row labels start at the checkbox square's left edge (x = 20), with entry
-  controls in a common column. Outer margins are reduced by one third.
-- Appearance Manager frames draw the pane border and the window's inner rim.
-- Whitelist has its own heading, extra vertical spacing, and a scrollbar
-  sharing the text area's right border and vertical bounds.
+- Checkbox titles, field captions, dropdown contents and Revert/Cancel/Save
+  use Charcoal 12; descriptions and entry text remain Geneva 9.
+- Row labels start at the checkbox square's left edge (x = 20). Single-line
+  fields and dropdowns share x = 244 and a width of 110 pixels. Ordinary
+  field rows have a 3-pixel gap, half the previous 6-pixel gap.
+- The pane selector sits in the panel's top border, replacing its title;
+  there is no separate “Settings for:” label. The Window Manager draws the
+  native outer frame; no second outer frame is drawn in the content area.
+- Descriptions beneath fields start at the field column and wrap. Module
+  descriptions follow each checkbox, with the listener restart note above.
+- Whitelist has a Charcoal heading and a scrollbar sharing the text area's
+  right edge; the scrollbar extends one pixel higher to match its frame.
+  The descriptions sit close to the area, with extra space below them.
+- Mail upstream and OAuth instructions sit above their fields. OAuth secrets
+  are displayed as stored; an empty secret is not invented or substituted.
+- The Log panel's underlined link sends Finder an open-folder Apple event
+  for Application Support : Gateway, the same directory used by logging.
 - Concurrent sessions belongs to Web proxy: Web and Wayback share the HTTP
   session pool. Mail has a separate fixed pool of four sessions. This is not
   an application-wide session ceiling.
