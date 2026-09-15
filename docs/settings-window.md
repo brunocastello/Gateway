@@ -5,7 +5,7 @@
 The current implementation in `src/ui/gw_settings.cpp` and DITL 210–217
 supersedes the older font, alignment, and session-scope guidance below:
 
-- Checkbox titles, field captions, dropdown contents and Revert/Cancel/Save
+- Checkbox titles, field captions, dropdown contents and Undo/Cancel/Save
   use Charcoal 12; descriptions and entry text remain Geneva 9.
 - Row labels start at the checkbox square's left edge (x = 20). Single-line
   fields and dropdowns share x = 244 and a width of 110 pixels. Ordinary
@@ -167,11 +167,12 @@ is available, left-aligned with the **field's** left edge — not the pane's.
 * Top left: the caption **`Settings for:`** and, to its right, the pane pop-up.
   *The caption is currently missing and must be added.*
 * Each pane sits inside a group box whose title is the pane's name.
-* Bottom right, in this order left to right: **Revert**, **Cancel**, **Save**.
-  Save is the default button and takes the ring. *Revert is currently missing
-  and must be added.*
-* Fixed size. Pick it from the tallest pane (Wayback) and leave the others with
-  space at the bottom; the reference does the same.
+* Bottom right, in this order left to right: **Undo**, **Cancel**, **Save**.
+  Save is the default button and takes the ring.
+* The window is as tall as the pane on show and resizes as panes change; the
+  Mac build computes every pane's height in `src/ui/gw_settings.cpp` rather
+  than storing coordinates. Place it for the tallest pane so resizing never
+  walks it off the screen.
 
 ### 2.6 How big, and why Wayback is two panes
 
@@ -220,7 +221,7 @@ estimates. If a pane overruns, the fix is another split, not a taller window.
 
 * **Save** writes every field on every pane, closes the window, and makes the
   core re-read its settings. It is not "save this pane".
-* **Revert** re-reads the preferences file and refills every field on every
+* **Undo** re-reads the preferences file and refills every field on every
   pane. The window stays open.
 * **Cancel** closes without writing.
 * **Return / Enter** is Save. **Escape** and **Command-.** are Cancel.
@@ -806,13 +807,13 @@ been missed are the ones below the interface, and they fail silently.
 - [ ] Label baselines sit on their field's text baseline.
 - [ ] Small system font everywhere except `Settings for:` and its pop-up.
 - [ ] The `Settings for:` caption exists.
-- [ ] **Revert** exists, beside Cancel and Save.
+- [ ] **Undo** exists, beside Cancel and Save.
 - [ ] A click into a field both focuses it and places the caret.
 - [ ] Scope, Client ID and Refresh token do not wrap; the allow-list does.
 - [ ] The allow-list scroll bar shares the text area's top and height, and
       scrolls.
 - [ ] Save writes every pane, not the visible one.
-- [ ] Revert refills every pane from the file.
+- [ ] Undo refills every pane from the file.
 
 **End to end**
 

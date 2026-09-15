@@ -516,7 +516,7 @@ public:
         OffsetRect(&r, static_cast<short>(-(kButtonWidth + kButtonSpacing)), 0);
         cancel = Control(r, "Cancel", kControlPushButtonProc, 0, 1, kControlFontBigSystemFont);
         OffsetRect(&r, static_cast<short>(-(kButtonWidth + kButtonSpacing)), 0);
-        revert = Control(r, "Revert", kControlPushButtonProc, 0, 1, kControlFontBigSystemFont);
+        revert = Control(r, "Undo", kControlPushButtonProc, 0, 1, kControlFontBigSystemFont);
         if (!selector || !revert || !cancel || !save) return false;
         Boolean yes = true;
         SetControlData(save, kControlEntireControl, kControlPushButtonDefaultTag,
@@ -629,11 +629,15 @@ public:
     }
 
     /* The whitelist and its scroll bar are one field: the focus ring goes
-     * round both, not down the seam between them. */
+     * round both, not down the seam between them. The well's highlight runs
+     * along its bottom and right edges, and a light pixel between the frame
+     * and the ring reads as a gap where the shadow above and to the left
+     * reads as part of the frame, so the ring closes up by one there. */
     Rect ListRing() const
     {
         Rect ring = listFrame;
-        ring.right = scrollFrame.right;
+        ring.right = static_cast<short>(scrollFrame.right - 1);
+        ring.bottom = static_cast<short>(listFrame.bottom - 1);
         return ring;
     }
 
