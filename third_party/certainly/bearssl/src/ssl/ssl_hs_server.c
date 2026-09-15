@@ -1,5 +1,5 @@
 /* Automatically generated code; do not modify directly. */
-/* Gateway: the two hash gates below carry PATCHES.md §22 (hash_skip). They
+/* Gateway: the two hash gates below carry PATCHES.md ?22 (hash_skip). They
  * are not in ssl_hs_server.t0, so regenerating this file drops them and
  * every handshake through a converted SSLv2 hello then fails its Finished. */
 
@@ -71,7 +71,6 @@ void br_ssl_hs_server_run(void *t0ctx);
 
 
 #include <stddef.h>
-#include <string.h>
 
 #include "inner.h"
 
@@ -109,6 +108,7 @@ do_rsa_decrypt(br_ssl_server_context *ctx, int prf_id,
 	 */
 	x = (*ctx->policy_vtable)->do_keyx(ctx->policy_vtable, epms, &len);
 
+
 	/*
 	 * Set the first two bytes to the maximum supported client
 	 * protocol version. These bytes are used for version rollback
@@ -130,6 +130,7 @@ do_rsa_decrypt(br_ssl_server_context *ctx, int prf_id,
 	 * Compute master secret.
 	 */
 	br_ssl_engine_compute_master(&ctx->eng, prf_id, epms, 48);
+
 
 	/*
 	 * Clear the pre-master secret from RAM: it is normally a buffer
@@ -1269,6 +1270,12 @@ br_ssl_hs_server_run(void *t0ctx)
 	unsigned char tmp[48];
 	br_tls_prf_seed_chunk seed;
 
+	if (ENG->session.version == BR_SSL30) {
+		/* Gateway: the SSL 3.0 bridge verifies the real 36-byte
+		 * Finished in C and rewrites/expands around 12 zero bytes;
+		 * expect zeros here to match. */
+		memset(ENG->pad, 0, 12);
+	} else {
 	br_tls_prf_impl prf = br_ssl_engine_get_PRF(ENG, prf_id);
 	seed.data = tmp;
 	if (ENG->session.version >= BR_TLS12) {
@@ -1282,6 +1289,7 @@ br_ssl_hs_server_run(void *t0ctx)
 		sizeof ENG->session.master_secret,
 		from_client ? "client finished" : "server finished",
 		1, &seed);
+	}
 
 				}
 				break;
@@ -1586,12 +1594,15 @@ br_ssl_hs_server_run(void *t0ctx)
 		}
 		memcpy((unsigned char *)ENG + addr, ENG->hbuf_in, clen);
 		if (ENG->record_type_in == BR_SSL_HANDSHAKE) {
-			/* Gateway §22: skip re-hashed rewritten V2 hello. */
+			/* Gateway ?22: skip re-hashed rewritten V2 hello. */
 			if (ENG->hash_skip >= clen) {
 				ENG->hash_skip -= clen;
 			} else {
 				br_multihash_update(&ENG->mhash,
 					ENG->hbuf_in + ENG->hash_skip,
+					clen - ENG->hash_skip);
+				/* Gateway: side transcript mirrors the hash feed. */
+				gw_hs_append(ENG, ENG->hbuf_in + ENG->hash_skip,
 					clen - ENG->hash_skip);
 				ENG->hash_skip = 0;
 			}
@@ -1612,11 +1623,13 @@ br_ssl_hs_server_run(void *t0ctx)
 
 		x = *ENG->hbuf_in ++;
 		if (ENG->record_type_in == BR_SSL_HANDSHAKE) {
-			/* Gateway §22: skip re-hashed rewritten V2 hello. */
+			/* Gateway ?22: skip re-hashed rewritten V2 hello. */
 			if (ENG->hash_skip > 0) {
 				ENG->hash_skip --;
 			} else {
 				br_multihash_update(&ENG->mhash, &x, 1);
+				/* Gateway: side transcript mirrors the hash feed. */
+				gw_hs_append(ENG, &x, 1);
 			}
 		}
 		T0_PUSH(x);
@@ -1933,6 +1946,8 @@ br_ssl_hs_server_run(void *t0ctx)
 		memcpy(ENG->hbuf_out, (unsigned char *)ENG + addr, clen);
 		if (ENG->record_type_out == BR_SSL_HANDSHAKE) {
 			br_multihash_update(&ENG->mhash, ENG->hbuf_out, clen);
+			/* Gateway: side transcript mirrors the hash feed. */
+			gw_hs_append(ENG, ENG->hbuf_out, clen);
 		}
 		T0_PUSH(addr + (uint32_t)clen);
 		T0_PUSH(len - (uint32_t)clen);
@@ -1947,11 +1962,13 @@ br_ssl_hs_server_run(void *t0ctx)
 
 	unsigned char x;
 
-	x = (unsigned char)T0_POP();
-	if (ENG->hlen_out > 0) {
-		if (ENG->record_type_out == BR_SSL_HANDSHAKE) {
-			br_multihash_update(&ENG->mhash, &x, 1);
-		}
+		x = (unsigned char)T0_POP();
+		if (ENG->hlen_out > 0) {
+			if (ENG->record_type_out == BR_SSL_HANDSHAKE) {
+				br_multihash_update(&ENG->mhash, &x, 1);
+				/* Gateway: side transcript mirrors the hash feed. */
+				gw_hs_append(ENG, &x, 1);
+			}
 		*ENG->hbuf_out ++ = x;
 		ENG->hlen_out --;
 		T0_PUSHi(-1);

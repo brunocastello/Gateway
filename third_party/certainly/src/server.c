@@ -207,6 +207,14 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
     if (st & BR_SSL_SENDREC) {
         buf = br_ssl_engine_sendrec_buf(&s->sc.eng, &len);
         if (len > 0) {
+            /* Outbound record headers (mirrors the RECV raw lines). */
+            if (len >= 5) {
+                gw_log("  SEND rec %02x %02x%02x len %u",
+                    buf[0], buf[1], buf[2],
+                    (unsigned)(((unsigned)buf[3] << 8) | buf[4]));
+            } else {
+                gw_log("  SEND rec %u bytes (short)", (unsigned)len);
+            }
             n = ct_transport_send(s->transport, buf, len);
             if (n > 0) {
                 br_ssl_engine_sendrec_ack(&s->sc.eng, (size_t)n);

@@ -2372,6 +2372,16 @@ void br_ssl_engine_switch_rc4_out(br_ssl_engine_context *cc,
 	size_t rc4_key_len, size_t mac_key_len);
 
 /*
+ * Gateway: append raw handshake bytes to the SSL 3.0 side transcript
+ * (hs_transcript). Call with exactly the bytes fed to the transcript
+ * hash; silently latches hs_transcript_full instead of overflowing.
+ * Used by the handshake read/write gates and the record-layer
+ * rewrites, which all mirror the multihash feed conditions.
+ */
+void gw_hs_append(br_ssl_engine_context *cc,
+	const unsigned char *data, size_t len);
+
+/*
  * Calls to T0-generated code.
  */
 void br_ssl_hs_client_init_main(void *ctx);

@@ -1,12 +1,11 @@
 /*
- * ssl_rec_rc4.c — RC4 record layer for SSL3 (export 40 and 128).
+ * ssl_rec_rc4.c ? RC4 record layer for SSL3 (export 40 and 128).
  * Uses rc4_crypt_state + ssl3 MAC (concat MD5/SHA1) with sequence.
  */
 
 #include "ssl3/ssl3.h"
 #include "inner.h"
 #include <string.h>
-
 static void
 rc4_init_state(unsigned char *S, unsigned *i, unsigned *j,
 	const void *key, size_t key_len)

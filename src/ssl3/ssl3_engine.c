@@ -1,5 +1,5 @@
 /*
- * ssl3_engine.c — SSL 3.0 record layer and handshake processing.
+ * ssl3_engine.c ? SSL 3.0 record layer and handshake processing.
  */
 
 #include "ssl3.h"
@@ -86,6 +86,13 @@ ssl3_server_init(br_ssl_server_context *sc)
 		return;
 
 	br_ssl_engine_set_versions(cc, SSL3_VERSION, SSL3_VERSION);
+	/*
+	 * prf10 serves SSL 3.0 only on this engine: versions are pinned
+	 * above, so TLS 1.0/1.1 (which need the split-secret P_MD5-XOR-
+	 * P_SHA1 PRF, not the SSL 3.0 A/BB/CCC construction) can never
+	 * negotiate here. Do not widen the version range without
+	 * revisiting ssl3_prf()'s label dispatch.
+	 */
 	br_ssl_engine_set_prf10(cc, (br_tls_prf_impl)ssl3_prf);
 	br_ssl_engine_set_default_des_cbc(cc);
 	br_ssl_engine_set_suites(cc, ssl3_suites_with_export,
