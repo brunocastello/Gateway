@@ -802,6 +802,31 @@ extern const br_sslrec_in_ccm_class br_sslrec_in_ccm_vtable;
  */
 extern const br_sslrec_out_ccm_class br_sslrec_out_ccm_vtable;
 
+/* RC4 for SSL3 */
+typedef struct br_sslrec_in_rc4_class_ br_sslrec_in_rc4_class;
+struct br_sslrec_in_rc4_class_ {
+	br_sslrec_in_class inner;
+	void (*init)(const br_sslrec_in_rc4_class **ctx, const void *key, size_t key_len, const br_hash_class *hash, const void *mac_key, size_t mac_len);
+};
+typedef struct br_sslrec_out_rc4_class_ br_sslrec_out_rc4_class;
+struct br_sslrec_out_rc4_class_ {
+	br_sslrec_out_class inner;
+	void (*init)(const br_sslrec_out_rc4_class **ctx, const void *key, size_t key_len, const br_hash_class *hash, const void *mac_key, size_t mac_len);
+};
+typedef struct {
+	const void *vtable;
+	uint64_t seq;
+	unsigned char S[256];
+	unsigned i, j;
+	const br_hash_class *hash;
+	unsigned char mac_key[48];
+	size_t mac_len;
+} br_sslrec_rc4_context;
+typedef br_sslrec_rc4_context br_sslrec_in_rc4_context;
+typedef br_sslrec_rc4_context br_sslrec_out_rc4_context;
+extern const br_sslrec_in_rc4_class br_sslrec_in_rc4_vtable;
+extern const br_sslrec_out_rc4_class br_sslrec_out_rc4_vtable;
+
 /* ===================================================================== */
 
 /**
@@ -912,21 +937,23 @@ typedef struct {
 	/*
 	 * Record handler contexts.
 	 */
-	union {
-		const br_sslrec_in_class *vtable;
-		br_sslrec_in_cbc_context cbc;
-		br_sslrec_gcm_context gcm;
-		br_sslrec_chapol_context chapol;
-		br_sslrec_ccm_context ccm;
-	} in;
-	union {
-		const br_sslrec_out_class *vtable;
-		br_sslrec_out_clear_context clear;
-		br_sslrec_out_cbc_context cbc;
-		br_sslrec_gcm_context gcm;
-		br_sslrec_chapol_context chapol;
-		br_sslrec_ccm_context ccm;
-	} out;
+  union {
+    const br_sslrec_in_class *vtable;
+    br_sslrec_in_cbc_context cbc;
+    br_sslrec_gcm_context gcm;
+    br_sslrec_chapol_context chapol;
+    br_sslrec_ccm_context ccm;
+    br_sslrec_in_rc4_context rc4;
+  } in;
+  union {
+    const br_sslrec_out_class *vtable;
+    br_sslrec_out_clear_context clear;
+    br_sslrec_out_cbc_context cbc;
+    br_sslrec_gcm_context gcm;
+    br_sslrec_chapol_context chapol;
+    br_sslrec_ccm_context ccm;
+    br_sslrec_out_rc4_context rc4;
+  } out;
 
 	/*
 	 * The "application data" flag. Value:
@@ -1029,6 +1056,22 @@ typedef struct {
 	 * in normal operation; cleared by br_ssl_engine_hs_reset().
 	 */
 	size_t hash_skip;
+
+	/*
+	 * Raw handshake transcript for SSL 3.0 (Gateway RC4 suites).
+	 * BearSSL's multihash cannot serve here: SSL 3.0 Finished hashes
+	 * the raw handshake messages (with CLNT/SRVR senders), while the
+	 * frozen T0 bytecode only retains digests, and record-layer
+	 * rewrites (SSLv2 conversion, SSL3 CKE prefix) mean the parsed
+	 * bytes differ from the hashed ones. This buffer collects exactly
+	 * the bytes fed to the transcript hash on both directions (see
+	 * gw_hs_append call sites); hs_transcript_full latches on
+	 * overflow, disabling the SSL 3.0 Finished bypass (fail closed).
+	 * Cleared by br_ssl_engine_hs_reset(). Unused by TLS connections.
+	 */
+	unsigned char hs_transcript[4096];
+	size_t hs_transcript_len;
+	unsigned char hs_transcript_full;
 
 	/*
 	 * The 'action' value communicates OOB information between the

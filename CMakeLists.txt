@@ -96,6 +96,7 @@ add_library(bearssl STATIC ${BEARSSL_SOURCES})
 target_include_directories(bearssl
     PUBLIC  ${CERTAINLY_DIR}/bearssl/inc
     PRIVATE ${CERTAINLY_DIR}/bearssl/src
+                 ${CMAKE_SOURCE_DIR}/src
 )
 
 # --------------------------------------------------------------------
@@ -169,8 +170,13 @@ add_library(gw_net STATIC
     src/proxy/gw_httpproxy.c
     src/proxy/gw_mail.c
     src/proxy/gw_token.c
+    src/ssl3/ssl3_prf.c
+    src/ssl3/ssl3_mac.c
+    src/ssl3/ssl3_rc4.c
+    src/ssl3/ssl3_rc2.c
+    src/ssl3/ssl3_engine.c
 )
-target_include_directories(gw_net BEFORE PRIVATE ${GW_UNIV_INC})
+target_include_directories(gw_net BEFORE PRIVATE ${GW_UNIV_INC} src/ssl3)
 target_include_directories(gw_net PUBLIC src)
 # gw_ca.c generates the local authority's key and signs with it, so this one
 # library needs BearSSL's headers and Certainly's entropy pool. Both are
