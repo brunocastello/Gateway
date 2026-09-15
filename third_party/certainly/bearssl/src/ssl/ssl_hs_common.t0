@@ -434,7 +434,14 @@ cc: read8-native ( -- x ) {
 
 		x = *ENG->hbuf_in ++;
 		if (ENG->record_type_in == BR_SSL_HANDSHAKE) {
-			br_multihash_update(&ENG->mhash, &x, 1);
+			/* Gateway §22: skip re-hashed rewritten V2 hello. */
+			if (ENG->hash_skip > 0) {
+				ENG->hash_skip --;
+			} else {
+				br_multihash_update(&ENG->mhash, &x, 1);
+				/* Gateway: side transcript mirrors the hash feed. */
+				gw_hs_append(ENG, &x, 1);
+			}
 		}
 		T0_PUSH(x);
 		ENG->hlen_in --;
@@ -463,7 +470,18 @@ cc: read-chunk-native ( addr len -- addr len ) {
 		}
 		memcpy((unsigned char *)ENG + addr, ENG->hbuf_in, clen);
 		if (ENG->record_type_in == BR_SSL_HANDSHAKE) {
-			br_multihash_update(&ENG->mhash, ENG->hbuf_in, clen);
+			/* Gateway §22: skip re-hashed rewritten V2 hello. */
+			if (ENG->hash_skip >= clen) {
+				ENG->hash_skip -= clen;
+			} else {
+				br_multihash_update(&ENG->mhash,
+					ENG->hbuf_in + ENG->hash_skip,
+					clen - ENG->hash_skip);
+				/* Gateway: side transcript mirrors the hash feed. */
+				gw_hs_append(ENG, ENG->hbuf_in + ENG->hash_skip,
+					clen - ENG->hash_skip);
+				ENG->hash_skip = 0;
+			}
 		}
 		T0_PUSH(addr + (uint32_t)clen);
 		T0_PUSH(len - (uint32_t)clen);
@@ -607,6 +625,8 @@ cc: write8-native ( x -- bool ) {
 	if (ENG->hlen_out > 0) {
 		if (ENG->record_type_out == BR_SSL_HANDSHAKE) {
 			br_multihash_update(&ENG->mhash, &x, 1);
+			/* Gateway: side transcript mirrors the hash feed. */
+			gw_hs_append(ENG, &x, 1);
 		}
 		*ENG->hbuf_out ++ = x;
 		ENG->hlen_out --;
@@ -646,6 +666,8 @@ cc: write-blob-chunk ( addr len -- addr len ) {
 		memcpy(ENG->hbuf_out, (unsigned char *)ENG + addr, clen);
 		if (ENG->record_type_out == BR_SSL_HANDSHAKE) {
 			br_multihash_update(&ENG->mhash, ENG->hbuf_out, clen);
+			/* Gateway: side transcript mirrors the hash feed. */
+			gw_hs_append(ENG, ENG->hbuf_out, clen);
 		}
 		T0_PUSH(addr + (uint32_t)clen);
 		T0_PUSH(len - (uint32_t)clen);
@@ -767,6 +789,7 @@ cc: mkrand ( addr len -- ) {
 \       7  AES-256/CCM
 \       8  AES-128/CCM8
 \       9  AES-256/CCM8
+\       10 RC4 (SSL 3.0 export and 128-bit, Gateway; 11-15 unassigned)
 \ -- MAC algorithm:
 \       0  none         (for suites with AEAD encryption)
 \       2  HMAC/SHA-1
@@ -833,19 +856,16 @@ hexb| C0AF 2904 | \ TLS_ECDHE_ECDSA_WITH_AES_256_CCM_8
 hexb| CCA8 1504 | \ TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
 hexb| CCA9 2504 | \ TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
 
-\ Gateway: SSL 3.0 RC4 suites. The T0 handshake bytecode compiled
-\ into ssl_hs_client.c / ssl_hs_server.c is frozen (no T0 toolchain
-\ here), so these suites deliberately borrow the AES-128-CBC dispatch
-\ slot (cipher type 1): switch-encryption routes them to the CBC
-\ switch functions, and br_ssl_engine_switch_cbc_in/out (ssl_engine.c)
-\ divert to the SSL 3.0 RC4 record layer by suite ID. The MAC nibble
-\ claims SHA-1 so the pre-TLS-1.2 suite filter keeps them; the real
-\ MAC (MD5 for 0x0003/0x0004, SHA-1 for 0x0005) and the key lengths
-\ likewise come from the suite ID in that same C hook, not from the
-\ translated words below.
-hexb| 0003 0122 | \ SSL3_RSA_EXPORT_RC4_40_MD5
-hexb| 0004 0122 | \ SSL3_RSA_RC4_128_MD5
-hexb| 0005 0122 | \ SSL3_RSA_RC4_128_SHA
+\ Gateway: SSL 3.0 RC4 suites. Cipher type 10 (first free value;
+\ 6-9 are CCM, 11-15 unassigned). MAC/PRF nibbles mirror the suite's
+\ hash (1 = MD5, 2 = SHA-1); the pre-TLS-1.2 suite filter below was
+\ extended to keep MD5 suites for the same reason these suites exist
+\ (SSL 3.0 clients without SHA-1-only suites). Key and MAC lengths
+\ come from the suite ID in switch-rc4-in/out (RC4_40 uses 5-byte
+\ keys, RC4_128 uses 16), since one cipher type covers both.
+hexb| 0003 0A11 | \ SSL3_RSA_EXPORT_RC4_40_MD5
+hexb| 0004 0A11 | \ SSL3_RSA_RC4_128_MD5
+hexb| 0005 0A22 | \ SSL3_RSA_RC4_128_SHA
 
 hexb| 0000 | \ List terminator.
 
@@ -983,9 +1003,20 @@ hexb| 0000 | \ List terminator.
 			then
 		endof
 
+		\ RC4 (SSL3 export suites, Gateway). Lengths come from the
+		\ suite ID in switch-rc4-in/out (dummy zeros here).
+		10 of 0 0
+			for-input if
+				switch-rc4-in
+			else
+				switch-rc4-out
+			then
+		endof
+
 		\ Now we only have AES/CCM suites (6 to 9). Since the
-		\ input is between 0 and 15, and we checked values 0 to 5,
-		\ we only need to reject values larger than 9.
+		\ input is between 0 and 15, and we checked values 0 to 5
+		\ and 10 above, we only need to reject values larger than 9
+		\ (11 to 15 are unassigned).
 		dup 9 > if
 			ERR_BAD_PARAM fail
 		then
@@ -1099,6 +1130,47 @@ cc: switch-aesccm-in ( is_client prf_id cipher_key_len tag_len -- ) {
 		ENG->iaes_ctrcbc, cipher_key_len, tag_len);
 }
 
+\ Switch the record layer to SSL 3.0 RC4 (Gateway). The T0 caller
+\ passes dummy lengths (see the `10 of` clause in switch-encryption);
+\ the real key and MAC lengths come from the negotiated suite ID.
+cc: switch-rc4-out ( is_client prf_id mac_id rc4_key_len mac_key_len -- ) {
+	int is_client, prf_id, mac_id;
+	size_t rc4_key_len, mac_key_len;
+	uint16_t cipher_suite;
+
+	mac_key_len = T0_POP();
+	rc4_key_len = T0_POP();
+	mac_id = T0_POP();
+	prf_id = T0_POP();
+	is_client = T0_POP();
+	cipher_suite = ENG->session.cipher_suite;
+	if (cipher_suite == 0x0003) { rc4_key_len = 5; mac_key_len = 16; }
+	else if (cipher_suite == 0x0004) { rc4_key_len = 16; mac_key_len = 16; }
+	else if (cipher_suite == 0x0005) { rc4_key_len = 16; mac_key_len = 20; }
+	else { rc4_key_len = 0; mac_key_len = 0; }
+	br_ssl_engine_switch_rc4_out(ENG, is_client, prf_id, mac_id,
+		rc4_key_len, mac_key_len);
+}
+
+cc: switch-rc4-in ( is_client prf_id mac_id rc4_key_len mac_key_len -- ) {
+	int is_client, prf_id, mac_id;
+	size_t rc4_key_len, mac_key_len;
+	uint16_t cipher_suite;
+
+	mac_key_len = T0_POP();
+	rc4_key_len = T0_POP();
+	mac_id = T0_POP();
+	prf_id = T0_POP();
+	is_client = T0_POP();
+	cipher_suite = ENG->session.cipher_suite;
+	if (cipher_suite == 0x0003) { rc4_key_len = 5; mac_key_len = 16; }
+	else if (cipher_suite == 0x0004) { rc4_key_len = 16; mac_key_len = 16; }
+	else if (cipher_suite == 0x0005) { rc4_key_len = 16; mac_key_len = 20; }
+	else { rc4_key_len = 0; mac_key_len = 0; }
+	br_ssl_engine_switch_rc4_in(ENG, is_client, prf_id, mac_id,
+		rc4_key_len, mac_key_len);
+}
+
 \ Write Finished message.
 : write-Finished ( from_client -- )
 	compute-Finished
@@ -1128,6 +1200,12 @@ cc: compute-Finished-inner ( from_client prf_id -- ) {
 	unsigned char tmp[48];
 	br_tls_prf_seed_chunk seed;
 
+	if (ENG->session.version == BR_SSL30) {
+		/* Gateway: the SSL 3.0 bridge verifies the real 36-byte
+		 * Finished in C and rewrites/expands around 12 zero bytes;
+		 * expect zeros here to match. */
+		memset(ENG->pad, 0, 12);
+	} else {
 	br_tls_prf_impl prf = br_ssl_engine_get_PRF(ENG, prf_id);
 	seed.data = tmp;
 	if (ENG->session.version >= BR_TLS12) {
@@ -1141,6 +1219,7 @@ cc: compute-Finished-inner ( from_client prf_id -- ) {
 		sizeof ENG->session.master_secret,
 		from_client ? "client finished" : "server finished",
 		1, &seed);
+	}
 }
 
 \ Receive ChangeCipherSpec and Finished from the peer.
