@@ -10,6 +10,7 @@
 #include <Menus.h>
 #include <Resources.h>
 #include <Scrap.h>
+#include <Sound.h>
 #include <TextEdit.h>
 #include <cstdio>
 #include <cstring>
@@ -585,7 +586,7 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
                 } else if (ch == 'v') {
                     Handle scrap = NewHandle(0);
                     if (!scrap) { SysBeep(1); continue; }
-                    long offset = 0;
+                    SInt32 offset = 0;
                     long count = GetScrap(scrap, 'TEXT', &offset);
                     bool valid = count >= 0 && count <= remaining;
                     if (valid) {
