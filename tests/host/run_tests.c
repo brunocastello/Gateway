@@ -1810,6 +1810,34 @@ static void test_pac_splitter_agree(void)
 
 /* ------------------------------------------------------------------ */
 
+/* Exercise the editor-to-file-to-consumer path, including deleting all sites. */
+static void test_whitelist_edit(void)
+{
+    char value[256] = " ; frogfind.com \r\n *.example.com ;;\t68k.news \n; ";
+    char prefs[1024], entry[128];
+    const char *old = "wayback_live = stale.com\nother = keep\nwayback_live = deleted.com\n";
+    size_t len;
+    printf("whitelist editing\n");
+    gw_prefs_normalize_list(value);
+    check_str(value, "frogfind.com;*.example.com;68k.news", "normalize pasted host list");
+    len = gw_prefs_set(old, strlen(old), "wayback_live", value, prefs, sizeof(prefs));
+    check(len > 0, "save edited whitelist");
+    check(gw_prefs_get_nth_split(prefs, len, "wayback_live", 2, entry, sizeof(entry)), "reload added site");
+    check_str(entry, "68k.news", "added site survives reload");
+    check(!gw_prefs_get_nth_split(prefs, len, "wayback_live", 3, entry, sizeof(entry)), "deleted sites stay deleted");
+    strcpy(value, " ; \r\n ; \t");
+    gw_prefs_normalize_list(value);
+    check_str(value, "", "empty editor list has no leading separator");
+    len = gw_prefs_set(old, strlen(old), "wayback_live", value, prefs, sizeof(prefs));
+    check(len > 0, "save empty whitelist");
+    check(!gw_prefs_get_nth_split(prefs, len, "wayback_live", 0, entry, sizeof(entry)), "all whitelist entries removed");
+    check(gw_prefs_get(prefs, len, "other", entry, sizeof(entry)), "other preferences survive");
+    check_str(entry, "keep", "other value unchanged");
+    strcpy(value, "a;b");
+    gw_prefs_normalize_list(value);
+    check_str(value, "a;b", "normalization is idempotent");
+}
+
 int main(void)
 {
     test_util();
@@ -1829,6 +1857,7 @@ int main(void)
     test_host_match();
     test_prefs_list();
     test_prefs_splitter();
+    test_whitelist_edit();
     test_prefs_set_drop();
     test_pac_splitter_agree();
     test_wayback_api();

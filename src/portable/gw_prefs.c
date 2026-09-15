@@ -280,3 +280,24 @@ size_t gw_prefs_set(const char *text, size_t len, const char *key,
     }
     return used;
 }
+
+/* UI input accepts pasted lines as well as semicolons. Compact in place:
+ * output never grows, and empty entries cannot create a leading separator. */
+void gw_prefs_normalize_list(char *value)
+{
+    char *read = value, *write = value;
+    int first = 1;
+    while (*read) {
+        char *begin = read, *end;
+        while (*read && *read != ';' && *read != '\r' && *read != '\n') ++read;
+        end = read;
+        if (*read) ++read;
+        while (begin < end && (*begin == ' ' || *begin == '\t')) ++begin;
+        while (end > begin && (end[-1] == ' ' || end[-1] == '\t')) --end;
+        if (begin == end) continue;
+        if (!first) *write++ = ';';
+        while (begin < end) *write++ = *begin++;
+        first = 0;
+    }
+    *write = '\0';
+}

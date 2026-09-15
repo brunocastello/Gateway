@@ -67,6 +67,10 @@ int gw_prefs_get_nth_split(const char *text, size_t len, const char *key,
 size_t gw_prefs_set(const char *text, size_t len, const char *key,
                     const char *value, char *out, size_t cap);
 
+/* Normalize an editable host list in place: trim entries, skip empty ones,
+ * and convert semicolons or CR/LF separators to a single semicolon. */
+void gw_prefs_normalize_list(char *value);
+
 #ifdef __cplusplus
 }
 #endif

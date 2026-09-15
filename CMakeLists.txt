@@ -188,6 +188,12 @@ target_compile_options(gw_net PRIVATE -Wall -Wno-unused-parameter)
 # main.cpp reaches the core through the plain-C src/gw_core.h.
 # --------------------------------------------------------------------
 
+# Appearance Manager controls use Apple's headers in this target only.
+add_library(gw_settings STATIC src/ui/gw_settings.cpp)
+target_include_directories(gw_settings BEFORE PRIVATE ${GW_UNIV_INC})
+target_include_directories(gw_settings PRIVATE src)
+target_compile_options(gw_settings PRIVATE -Wall -Wextra -Wno-unused-parameter)
+
 add_application(Gateway
     src/main.cpp
     src/ui/gateway.r
@@ -198,7 +204,7 @@ add_application(Gateway
 )
 
 target_include_directories(Gateway PRIVATE src)
-target_link_libraries(Gateway gw_net gw_portable certainly bearssl ${GW_OT_LIBS})
+target_link_libraries(Gateway gw_settings ${GW_UNIV_LIB}/libAppearanceLib.a gw_net gw_portable certainly bearssl ${GW_OT_LIBS})
 
 set_target_properties(Gateway PROPERTIES COMPILE_OPTIONS -ffunction-sections)
 set_target_properties(Gateway PROPERTIES LINK_FLAGS "-Wl,-gc-sections")
