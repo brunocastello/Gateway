@@ -2372,6 +2372,18 @@ void br_ssl_engine_switch_rc4_out(br_ssl_engine_context *cc,
 	size_t rc4_key_len, size_t mac_key_len);
 
 /*
+ * Gateway: true SSL 3.0 key derivation (RFC 6101 section 6), used by
+ * version-gated call sites in ssl_engine.c. Both take client_random
+ * first; the key block reorders internally (server first).
+ */
+void ssl3_master_secret(unsigned char out[48],
+	const void *pms, size_t pms_len,
+	const unsigned char cli[32], const unsigned char srv[32]);
+void ssl3_key_block(unsigned char *out, size_t len,
+	const void *secret, size_t secret_len,
+	const unsigned char cli[32], const unsigned char srv[32]);
+
+/*
  * Gateway: append raw handshake bytes to the SSL 3.0 side transcript
  * (hs_transcript). Call with exactly the bytes fed to the transcript
  * hash; silently latches hs_transcript_full instead of overflowing.

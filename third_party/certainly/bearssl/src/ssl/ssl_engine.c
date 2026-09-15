@@ -1814,6 +1814,17 @@ br_ssl_engine_compute_master(br_ssl_engine_context *cc,
 		{ cc->server_random, sizeof cc->server_random }
 	};
 
+	/*
+	 * Gateway: SSL 3.0 derives the master secret with its own
+	 * A/BB/CCC construction, not any PRF (see ssl3_master_secret).
+	 */
+	if (cc->session.version == BR_SSL30) {
+		ssl3_master_secret(cc->session.master_secret,
+			pms, pms_len,
+			cc->client_random, cc->server_random);
+		return;
+	}
+
 	iprf = br_ssl_engine_get_PRF(cc, prf_id);
 	iprf(cc->session.master_secret, sizeof cc->session.master_secret,
 		pms, pms_len, "master secret", 2, seed);
@@ -1831,6 +1842,15 @@ compute_key_block(br_ssl_engine_context *cc, int prf_id,
 		{ cc->server_random, sizeof cc->server_random },
 		{ cc->client_random, sizeof cc->client_random }
 	};
+
+	/* Gateway: same version gate as above, for the key block. */
+	if (cc->session.version == BR_SSL30) {
+		ssl3_key_block(kb, half_len << 1,
+			cc->session.master_secret,
+			sizeof cc->session.master_secret,
+			cc->client_random, cc->server_random);
+		return;
+	}
 
 	iprf = br_ssl_engine_get_PRF(cc, prf_id);
 	iprf(kb, half_len << 1,

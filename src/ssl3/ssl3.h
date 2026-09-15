@@ -1,20 +1,19 @@
 /*
  * ssl3.h — Public API for the minimal SSL 3.0 engine.
  *
- * This module implements the SSL 3.0 record layer, PRF, MAC, and
- * Finished message for vintage browsers (Netscape 3, IE 3/4) that
- * can only speak SSL 3.0. It uses BearSSL for SHA-1 and MD5
- * hash primitives. RC2-CBC and RC4 are implemented separately
- * in ssl3_rc2.c and ssl3_rc4.c.
+ * This module implements SSL 3.0 record-layer cryptography for vintage
+ * browsers (Netscape 3, IE 3/4) that can only speak SSL 3.0, on top of
+ * BearSSL hash primitives. RC4 record handling lives in BearSSL proper
+ * (br_sslrec_in/out_rc4); RC2-CBC and standalone RC4 primitives live in
+ * ssl3_rc2.c and ssl3_rc4.c.
  *
- * The SSL 3.0 MAC is concat-based (not HMAC):
- *   MAC_hash(secret, seq, type, len, data) =
- *     MD5(pad1 || hash(pad2 || seq || type || len || data))
- *     || SHA1(pad1 || hash(pad2 || seq || type || len || data))
+ * Key derivation follows RFC 6101 section 6 (A/BB/CCC letter pads),
+ * NOT the P_MD5-XOR-P_SHA1 PRF — that construction is TLS 1.0's.
  *
- * The SSL 3.0 PRF is:
- *   P_hash(secret, seed) = HASH(secret || seed) || HASH(secret || HASH(secret || seed)) || ...
- *   PRF = P_MD5 XOR P_SHA1
+ * The SSL 3.0 record MAC (RFC 6101 section 5.2.3.1) is:
+ *   MAC = HASH(secret || pad2 || HASH(secret || pad1
+ *          || seq || type || len || data))
+ * with 48-byte pads for MD5 and 40-byte pads for SHA-1.
  */
 
 #ifndef GW_SSL3_H
@@ -27,20 +26,26 @@
 #include "bearssl_prf.h"
 
 /*
- * SSL 3.0 PRF. Computes P_MD5(secret, label+seed) XOR P_SHA1(secret, label+seed).
+ * SSL 3.0 master secret (RFC 6101 section 6.1):
+ *   MD5(pms + SHA('A'   + pms + cli + srv)) +
+ *   MD5(pms + SHA('BB'  + pms + cli + srv)) +
+ *   MD5(pms + SHA('CCC' + pms + cli + srv))
  */
-void ssl3_prf(void *dst, size_t len,
-	const void *secret, size_t secret_len, const char *label,
-	size_t seed_num, const br_tls_prf_seed_chunk *seed);
+void ssl3_master_secret(unsigned char out[48],
+	const void *pms, size_t pms_len,
+	const unsigned char cli[32], const unsigned char srv[32]);
 
 /*
- * SSL 3.0 P_hash: HASH(secret || seed) || HASH(secret || HASH(secret || seed)) || ...
- * Used for key block derivation.
+ * SSL 3.0 key block (RFC 6101 section 6.2.2): iterated
+ *   MD5(secret + SHA(pad + secret + srv + cli))
+ * with pads 'A', 'BB', 'CCC', ... until len bytes are produced.
+ * Note the reversed random order versus the master secret; both
+ * functions take (cli, srv) and reorder internally, so call sites
+ * always pass client_random first.
  */
-void ssl3_phash(void *dst, size_t len,
-	const br_hash_class *dig, size_t hash_size,
+void ssl3_key_block(unsigned char *out, size_t len,
 	const void *secret, size_t secret_len,
-	const unsigned char *seed, size_t seed_len);
+	const unsigned char cli[32], const unsigned char srv[32]);
 
 /*
  * SSL 3.0 MAC (RFC 6101, section 5.2.3) with the negotiated hash:
@@ -56,14 +61,12 @@ void ssl3_mac(const br_hash_class *hash,
 	unsigned char *mac);
 
 /*
- * SSL 3.0 Finished message computation.
- */
-int ssl3_finished(const br_ssl_engine_context *cc,
-	int is_client, unsigned char *verify_data, size_t *verify_len);
-
-/*
  * Initialize the SSL 3.0 server context.
- * Sets version to 0x0300, installs the SSL 3.0 PRF.
+ * Widens the BearSSL full-RSA profile down to SSL 3.0 (versions
+ * 0x0300..TLS 1.2) and appends the SSL 3.0 export suites. The TLS
+ * PRFs stay installed: SSL 3.0 derivation is selected by version at
+ * the compute_master / compute_key_block call sites, never by
+ * replacing prf10 (which TLS 1.0/1.1 still need).
  * Must be called after br_ssl_server_init_full_rsa().
  */
 void ssl3_server_init(br_ssl_server_context *sc);

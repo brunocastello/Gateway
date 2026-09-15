@@ -90,11 +90,18 @@ MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
     s->chain[0].data     = (unsigned char *)leaf;
     s->chain[0].data_len = leaf_len;
     s->chain_len = 1;
-    if (ca != NULL && ca_len > 0) {
-        s->chain[1].data     = (unsigned char *)ca;
-        s->chain[1].data_len = ca_len;
-        s->chain_len = 2;
-    }
+    /*
+     * The authority certificate is deliberately never sent: Netscape
+     * 3.04 Gold (Export) aborts the handshake on any chain carrying
+     * it (verified by revert test), while every client in range
+     * completes with the leaf alone. A peer that trusts the authority
+     * already holds it locally, which is the only case where the chain
+     * could validate anyway (RFC 5246 section 7.4.2: a self-signed root
+     * may be omitted). (ca, ca_len) are kept for signature
+     * compatibility and ignored.
+     */
+    (void)ca;
+    (void)ca_len;
 
     br_ssl_server_init_full_rsa(&s->sc, s->chain, s->chain_len, sk);
     ssl3_server_init(&s->sc);
@@ -207,14 +214,6 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
     if (st & BR_SSL_SENDREC) {
         buf = br_ssl_engine_sendrec_buf(&s->sc.eng, &len);
         if (len > 0) {
-            /* Outbound record headers (mirrors the RECV raw lines). */
-            if (len >= 5) {
-                gw_log("  SEND rec %02x %02x%02x len %u",
-                    buf[0], buf[1], buf[2],
-                    (unsigned)(((unsigned)buf[3] << 8) | buf[4]));
-            } else {
-                gw_log("  SEND rec %u bytes (short)", (unsigned)len);
-            }
             n = ct_transport_send(s->transport, buf, len);
             if (n > 0) {
                 br_ssl_engine_sendrec_ack(&s->sc.eng, (size_t)n);

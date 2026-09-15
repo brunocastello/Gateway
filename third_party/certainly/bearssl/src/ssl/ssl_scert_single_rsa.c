@@ -49,6 +49,18 @@ sr_choose(const br_ssl_server_policy_class **pctx,
 	choices->chain_len = pc->chain_len;
 	for (u = 0; u < st_num; u ++) {
 		unsigned tt;
+		unsigned id = st[u][0];
+
+		/*
+		 * Gateway: SSL 3.0 RC4 suites negotiate below TLS 1.0
+		 * only; their record layer, MAC and key schedule do not
+		 * exist above it. Skip them anywhere else (fail closed
+		 * toward the next suite, eventually a clean alert 40).
+		 */
+		if ((id == 0x0003 || id == 0x0004 || id == 0x0005)
+			&& cc->eng.session.version != BR_SSL30) {
+			continue;
+		}
 
 		tt = st[u][1];
 		switch (tt >> 12) {
