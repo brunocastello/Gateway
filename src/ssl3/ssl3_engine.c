@@ -4,6 +4,7 @@
 
 #include "ssl3.h"
 #include "inner.h"
+#include "../gw_core.h"
 
 #include <string.h>
 
@@ -44,6 +45,16 @@ ssl3_server_init(br_ssl_server_context *sc)
 
 	cc = &sc->eng;
 	if (cc == NULL)
+		return;
+
+	/*
+	 * Gateway: opt-out, not unconditional. Widening the engine's floor
+	 * is what makes SSL 3.0 reachable at all, so the preference is
+	 * checked here rather than at each suite: with allow_sslv3 = 0 the
+	 * engine keeps the TLS 1.0 floor it had and none of the rest of
+	 * this file can be entered.
+	 */
+	if (!GW_AllowSSLv3())
 		return;
 
 	br_ssl_engine_set_versions(cc, SSL3_VERSION, BR_TLS12);

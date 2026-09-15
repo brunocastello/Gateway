@@ -83,6 +83,25 @@ int GW_ConnectMitm(void)
     return GWConfig_Num("connect_mitm", 0) != 0;
 }
 
+/*
+ * SSL 3.0 on the browser's side of a CONNECT.
+ *
+ * Only reachable through connect_mitm, which is off by default, and only ever
+ * chosen when the client offers nothing better: BearSSL's server takes the
+ * highest version in common, so a browser that can manage TLS 1.0 gets TLS
+ * 1.0. What this opens is the floor -- Netscape 3, IE 3 and IE 4 with no TLS
+ * at all, which until now could only be served by rewrite_https.
+ *
+ * On by default because serving those browsers is the point of the feature
+ * they sit behind, and because the alternative for them is no encryption at
+ * all rather than better encryption. Set allow_sslv3 = 0 to refuse it; the
+ * handshake then fails as it did before, and rewrite_https still works.
+ */
+int GW_AllowSSLv3(void)
+{
+    return GWConfig_Num("allow_sslv3", 1) != 0;
+}
+
 long GW_MaxBodyBytes(void)
 {
     /*

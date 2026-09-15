@@ -1008,3 +1008,82 @@ latent: `MacTLS_ServerRead()` and `MacTLS_ServerWrite()` consult the engine
 directly rather than `s->state`, and `GWStream_Pump()` will not move a stream
 back out of Ready, so nothing acted on it. Left in place it would have been
 waiting for the first caller that did.
+
+## §28 — SSL 3.0, for browsers that have no TLS at all
+
+Contributed by [roytam1](https://github.com/roytam1/Gateway/tree/myfix2), who
+verified it against Netscape 3.04 Gold (Export) and 16-bit Internet Explorer 5.
+
+BearSSL implements TLS 1.0 and up. `BR_SSL30` existed as a header constant with
+no implementation behind it, which is why `connect_mitm` could not serve
+Netscape 3, IE 3 or IE 4 — the only common ground with those browsers is
+SSL 3.0, and there was none to offer.
+
+The constraint that shapes the whole patch is that BearSSL's handshake logic is
+**not C**. `ssl_hs_client.c` and `ssl_hs_server.c` are generated from
+`ssl_hs_*.t0` by a Forth-like compiler that is not part of this tree, so the
+bytecode cannot be extended to parse a second wire format. Everything below
+therefore either lives in the `.t0` sources (regenerated) or reconciles the two
+formats at the record layer, before the bytecode looks at the bytes.
+
+**Key schedule and MAC.** SSL 3.0 derives its master secret and key block with
+an `A`/`BB`/`CCC` letter-pad construction (RFC 6101 §6), not a PRF, and its
+record MAC nests the secret with `0x36`/`0x5C` pads rather than XOR-ing it into
+an HMAC key (§5.2.3.1). Both are in `src/ssl3/`, selected by
+`session.version == BR_SSL30` at the `compute_master` and `compute_key_block`
+call sites. The TLS PRFs stay installed: TLS 1.0 and 1.1 still need them.
+
+**Record layer.** `ssl_rec_rc4.c` adds RC4 with the SSL 3.0 MAC, and cipher
+type 10 in the suite table carries `SSL3_RSA_EXPORT_RC4_40_MD5` (0x0003),
+`SSL3_RSA_RC4_128_MD5` (0x0004) and `SSL3_RSA_RC4_128_SHA` (0x0005). The
+export suite's 40-bit key is expanded to a 16-byte RC4 key the way §6.2.2
+specifies. `ssl_scert_single_rsa.c` refuses all three above SSL 3.0, so no
+TLS connection can land on RC4.
+
+**The two wire differences**, both bridged in `ssl_engine.c` and both fired at
+most once per connection, under conditions tight enough to be provable — a
+plaintext or encrypted handshake record as appropriate, SSL 3.0 negotiated with
+one of the three suites, the buffer positioned exactly at a record start
+holding exactly one complete message of the expected shape. Anything else is
+left untouched to fail as it did before:
+
+* **ClientKeyExchange has no length prefix.** SSL 3.0 sends the RSA-encrypted
+  pre-master secret raw (§5.2.2); the bytecode reads a TLS-style 16-bit length
+  and dies on the first two ciphertext bytes. `ssl3_rewrite_cke` inserts the
+  missing length in place and grows the record by two.
+* **Finished is 36 bytes, not 12** — an MD5 and a SHA-1 over the handshake
+  transcript with a `CLNT`/`SRVR` sender (§5.6.9). `ssl3_rewrite_finished`
+  verifies the real 36 bytes in constant time and only then shrinks the message
+  to the 12 zero bytes the bytecode expects; `compute-Finished-inner` is
+  patched to produce zeros for SSL 3.0 so the comparison it makes is
+  zeros against zeros. **A Finished that does not verify is left alone and
+  fails the handshake** — the check is not bypassed, it is moved.
+  `br_ssl_engine_flush_record` expands our own Finished the same way on the way
+  out.
+
+That verification needs the raw transcript, which BearSSL does not keep — the
+multihash retains digests only, and the record-layer rewrites here and in §22
+mean the parsed bytes are not the hashed ones. `hs_transcript` collects exactly
+what is fed to the transcript hash, and `hs_transcript_full` latches on
+overflow, which disables the bridge and so fails closed.
+
+**Two things found along the way**, both independent of SSL 3.0:
+
+* §22's `hash_skip` had been applied to the generated `ssl_hs_server.c` and to
+  no `.t0` file, so regenerating the bytecode would have silently dropped it.
+  It is in `ssl_hs_common.t0` now, where it survives a regeneration.
+* `BR_SSE2` was on for any i386 target. The Windows build's floor is Windows 95
+  and NT 3.51, which run on 486 and original Pentium hardware. BearSSL
+  dispatches on CPUID at run time, so this was belt and braces — but the belt
+  is free here, where throughput is bounded by a 1997 browser.
+
+**Reached only through `connect_mitm`, and only while `allow_sslv3` is 1**
+(the default). `ssl3_server_init` widens the server engine's floor to 0x0300;
+with the preference off it returns before doing so and nothing else in the
+patch can be entered. BearSSL's server picks the highest version in common, so
+a browser that can manage TLS 1.0 still gets TLS 1.0.
+
+**Cost.** `hs_transcript` is 4 KB in every `br_ssl_engine_context`, including
+the client engines that talk TLS 1.2 and 1.3 upstream and will never use it.
+At the default twelve concurrent sessions that is under 100 KB against an 8 MB
+partition, which is why it is a fixed buffer rather than an allocation.

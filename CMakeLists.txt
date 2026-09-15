@@ -96,7 +96,9 @@ add_library(bearssl STATIC ${BEARSSL_SOURCES})
 target_include_directories(bearssl
     PUBLIC  ${CERTAINLY_DIR}/bearssl/inc
     PRIVATE ${CERTAINLY_DIR}/bearssl/src
-                 ${CMAKE_SOURCE_DIR}/src
+    # ssl_rec_rc4.c is BearSSL's record layer for the SSL 3.0 suites and
+    # shares src/ssl3's MAC and key schedule.
+    PRIVATE ${CMAKE_SOURCE_DIR}/src
 )
 
 # --------------------------------------------------------------------
@@ -128,6 +130,9 @@ target_include_directories(certainly BEFORE
     PUBLIC  ${CERTAINLY_DIR}/include
     PRIVATE ${CERTAINLY_DIR}/src
     PRIVATE ${CERTAINLY_DIR}/bearssl/inc
+    # server.c bridges the SSL 3.0 handshake and logs through gw_log.
+    PRIVATE ${CMAKE_SOURCE_DIR}/src
+    PRIVATE ${CMAKE_SOURCE_DIR}/src/portable
 )
 target_link_libraries(certainly PRIVATE bearssl)
 target_compile_options(certainly PRIVATE -Wall -Wno-unused-parameter)
@@ -186,7 +191,19 @@ target_include_directories(gw_net PRIVATE
     ${CERTAINLY_DIR}/bearssl/inc
     ${CERTAINLY_DIR}/src
 )
+#
+# The SSL 3.0 bridge makes the library graph cyclic, deliberately.
+#
+# BearSSL's ssl_rec_rc4.c and certainly's server.c both call into src/ssl3,
+# which lives in gw_net, which already links certainly for gw_ca.c's entropy;
+# server.c also logs through gw_log in gw_portable. Static libraries may form
+# cycles in CMake, which resolves them by repeating the whole connected
+# component on the link line -- the alternative being to hand-order four
+# archives and get it wrong the first time the graph changes.
+#
 target_link_libraries(gw_net PUBLIC certainly gw_portable)
+target_link_libraries(certainly PRIVATE gw_net gw_portable)
+target_link_libraries(bearssl PRIVATE gw_net)
 target_compile_options(gw_net PRIVATE -Wall -Wno-unused-parameter)
 
 # --------------------------------------------------------------------

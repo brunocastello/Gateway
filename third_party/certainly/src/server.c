@@ -29,8 +29,11 @@
 #include <stdio.h>
 
 #include <bearssl.h>
-#include "../../src/ssl3/ssl3.h"
-#include "../../src/portable/gw_log.h"
+/* Gateway: src is on this target's include path (CMakeLists.txt and
+ * Makefile.win32 both put it there), so these are found without reaching
+ * back out of third_party by relative path. */
+#include <ssl3/ssl3.h>
+#include <gw_log.h>
 
 struct MacTLS_Server {
     MacTLS_State           state;

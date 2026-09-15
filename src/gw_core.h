@@ -54,6 +54,9 @@ int         GW_RedirectPolicy(void);
 int         GW_RewriteHttps(void);
 int         GW_ConnectMitm(void);
 
+/* SSL 3.0 for a client with no TLS at all, inside connect_mitm. */
+int         GW_AllowSSLv3(void);
+
 /* Ceiling on a relayed response body, in bytes; 0 means no limit. */
 long        GW_MaxBodyBytes(void);
 

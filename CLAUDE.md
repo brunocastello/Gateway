@@ -60,7 +60,9 @@
 * Carbon, OpenSSL, writing TLS 1.3 from scratch
 * Completing OAuth consent inside Classilla
 * HTTP/2, HTTP/3
-* SSL 2.0 and SSL 3.0 on the client side. BearSSL implements TLS 1.0 and up and nothing older (`BR_SSL30` is a header constant with no implementation), so a browser that cannot reach TLS 1.0 — IE 4, Netscape 4 — cannot be served by `connect_mitm` and must use `rewrite_https` instead. The SSL 2.0 *record framing* is a separate question and is accepted: `PATCHES.md` §22 converts an SSLv2-compatible ClientHello into the TLS hello it stands for, so "Use SSL 2.0" no longer has to be unticked. What is not implemented is SSL 2.0 or 3.0 as a protocol — a hello asking for one still fails.
+* SSL 2.0 as a protocol. Its *record framing* is accepted — `PATCHES.md` §22 converts an SSLv2-compatible ClientHello into the TLS hello it stands for, so "Use SSL 2.0" does not have to be unticked — but a hello actually asking to speak SSL 2.0 still fails.
+
+  SSL 3.0 **is** implemented, and was the non-goal this replaces. `BR_SSL30` was a header constant with no implementation; `PATCHES.md` §28 gives it one — the RFC 6101 key schedule and record MAC, an RC4 record layer, and a bridge for the two places SSL 3.0's wire format differs from TLS (ClientKeyExchange carries no length prefix, Finished is 36 bytes rather than 12). The frozen T0 handshake bytecode is not touched; the differences are reconciled at the record layer before it looks. Reached only through `connect_mitm`, only when the client offers nothing better, and only while `allow_sslv3` is 1. It is what serves Netscape 3, IE 3 and IE 4 with no TLS at all, which before could reach nothing but `rewrite_https`.
 
 ---
 

@@ -288,10 +288,15 @@
  * SSE2 intrinsics are available on x86 (32-bit and 64-bit) with
  * GCC 4.4+, Clang 3.7+ and MSC 2005+.
  */
+/*
+ * Gateway: never SSE2. The Windows build's floor is Windows 95 and NT 3.51,
+ * which run on 486 and original Pentium hardware; SSE2 is Pentium 4 and
+ * later. BearSSL dispatches on CPUID at run time, so this is belt and
+ * braces -- but the belt costs nothing here, where throughput is bounded by
+ * a 1997 browser on the other end of the socket rather than by ChaCha20.
+ */
 #ifndef BR_SSE2
-#if (BR_i386 || BR_amd64) && (BR_GCC_4_4 || BR_CLANG_3_7 || BR_MSC_2005)
-//#define BR_SSE2   1
-#endif
+#define BR_SSE2   0
 #endif
 
 /*
