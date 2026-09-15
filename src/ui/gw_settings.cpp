@@ -125,22 +125,32 @@ const int kListLimit = 2000;
  *   captions      Geneva 9, 17 pixels below the row and 17 above the next one
  */
 const short kWindowWidth   = 460;
-const short kMargin        = 12;   // window edge to the group frame
-const short kSelectorTop   = 12;
+const short kFrameInset    = 4;    // the dialog border drawn by DrawFrame
+const short kMargin        = 12;   // border to the group frame
+const short kSelectorTop   = kFrameInset + 12;                // 16
 const short kSelectorHeight = 20;
-const short kGroupTop      = 21;   // the selector's middle line
-const short kGroupLeft     = kMargin;
-const short kGroupRight    = kWindowWidth - kMargin;          // 448
-const short kRowLeft       = kGroupLeft + 16;                 // 28
-const short kCheckTextLeft = kRowLeft + 16;                   // 44
-const short kFieldLeft     = 244;                             // editable column
-const short kFieldRight    = kGroupRight - 16;                // 432
+const short kGroupTop      = kFrameInset + 21;                // the selector's middle
+const short kGroupLeft     = kFrameInset + kMargin;           // 16
+const short kGroupRight    = kWindowWidth - kFrameInset - kMargin;  // 444
+const short kRowLeft       = kGroupLeft + 16;                 // 32
+const short kCheckTextLeft = kRowLeft + 16;                   // 48
+const short kFieldLeft     = 248;                             // editable column
+const short kFieldRight    = kGroupRight - 16;                // 428
 const short kGroupPadTop   = 23;   // group line to the first row
 const short kGroupPadBottom = 14;  // last ink to the group line
 const short kIntroBase     = kGroupTop + 32;                  // first intro baseline
 const short kCaptionPitch  = 13;
-const short kCaptionDrop   = 17;   // row bottom to the first caption baseline
+const short kCaptionDrop   = 17;   // check box or list bottom to its caption
+/* A caption reads against the label above it, not against the control beside
+ * it, so field and pop-up captions hang off the label's baseline. Measuring
+ * from the control instead pushed them five pixels low, because a field frame
+ * is ten pixels deeper than a check box glyph. */
+const short kCaptionBelowLabel = 20;
 const short kCaptionLift   = 17;   // last caption baseline to the next row
+/* The border ramp, outermost pixel first: light towards the top left, shadow
+ * towards the bottom right, closed by black. */
+const unsigned short kBorderLit[4]   = { 0xC5C5, 0xC5C5, 0x8E8E, 0x0000 };
+const unsigned short kBorderShade[4] = { 0xC5C5, 0xC5C5, 0xFFFF, 0x0000 };
 const short kGapAfterCheck = 6;
 const short kGapAfterField = 11;
 const short kCheckHeight   = 16;   // control rect; the glyph is inset 2
@@ -155,6 +165,23 @@ const short kButtonHeight  = 20;
 const short kButtonWidth   = 70;
 const short kButtonSpacing = 10;
 const short kMarginBottom  = 12;
+
+/*
+ * TextEdit erases with the port's background, and this window's background is
+ * the platinum dialog brush. Anything that draws into the whitelist -- typing,
+ * clicking, scrolling, updating -- has to hand it white first, or the text
+ * lands on grey as soon as the view scrolls.
+ */
+struct White {
+    RGBColor saved = {};
+    White()
+    {
+        GetBackColor(&saved);
+        RGBColor white = { 0xFFFF, 0xFFFF, 0xFFFF };
+        RGBBackColor(&white);
+    }
+    ~White() { RGBBackColor(&saved); }
+};
 
 struct Item {
     ControlHandle control;         // null for the whitelist, which owns its TE
@@ -357,25 +384,28 @@ public:
                 y = last + kCaptionLift;
                 ink = last;
             }
-            bool first = true;
+            // A caption already carries the row on to the next one; only a
+            // row that ends in its control needs a gap added.
+            bool gap = false;
             Kind previous = Check;
             for (int i = 0; i < kFieldCount; ++i) {
                 const Field &f = kFields[i];
                 if (f.pane != p) continue;
                 Item &item = items[i];
-                if (!first)
+                if (gap)
                     y += (previous == Check ? kGapAfterCheck : kGapAfterField);
-                first = false;
                 previous = f.kind;
                 item.labelBase = 0;
                 item.hintBase = 0;
                 short bottom;      // the row's last drawn line
+                short caption;     // baseline of its first caption line
                 switch (f.kind) {
                 case Check:
                     item.box.top = y; item.box.left = kRowLeft;
                     item.box.bottom = static_cast<short>(y + kCheckHeight);
                     item.box.right = static_cast<short>(kGroupRight - 6);
                     bottom = static_cast<short>(y + kCheckHeight - 2);
+                    caption = static_cast<short>(bottom + kCaptionDrop);
                     break;
                 case List:
                     item.labelBase = static_cast<short>(y + 11);
@@ -384,6 +414,7 @@ public:
                     item.box.bottom = static_cast<short>(y + kListHeight);
                     item.box.right = static_cast<short>(kFieldRight - 15);
                     bottom = item.box.bottom;
+                    caption = static_cast<short>(bottom + kCaptionDrop);
                     break;
                 case Redirect:
                 case Provider:
@@ -392,6 +423,7 @@ public:
                     item.box.bottom = static_cast<short>(y + kPopupHeight);
                     item.box.right = static_cast<short>(kFieldRight + 3);
                     bottom = item.box.bottom;
+                    caption = static_cast<short>(item.labelBase + kCaptionBelowLabel);
                     break;
                 default:
                     item.labelBase = static_cast<short>(y + kFieldAscent);
@@ -399,22 +431,26 @@ public:
                     item.box.bottom = static_cast<short>(y + kFieldHeight);
                     item.box.right = static_cast<short>(kFieldRight + 3);
                     bottom = item.box.bottom;
+                    caption = static_cast<short>(item.labelBase + kCaptionBelowLabel);
                     break;
                 }
                 if (f.hint[0]) {
-                    item.hintBase = static_cast<short>(bottom + kCaptionDrop);
-                    short last = static_cast<short>(item.hintBase +
+                    item.hintBase = caption;
+                    short last = static_cast<short>(caption +
                                  kCaptionPitch * (Lines(f.hint) - 1));
                     y = static_cast<short>(last + kCaptionLift);
                     ink = last;
+                    gap = false;
                 } else {
                     y = item.box.bottom;
                     ink = bottom;
+                    gap = true;
                 }
             }
             paneBottom[p] = static_cast<short>(ink + kGroupPadBottom);
             paneHeight[p] = static_cast<short>(paneBottom[p] + kButtonGap +
-                                               kButtonHeight + kMarginBottom);
+                                               kButtonHeight + kMarginBottom +
+                                               kFrameInset);
             if (paneHeight[p] > tallest) tallest = paneHeight[p];
         }
     }
@@ -508,9 +544,9 @@ public:
                 // typing has to keep the caret in sight.
                 TEAutoView(true, item.text);
                 HintFont();
-                // One pixel below the frame's top line and sharing its right
-                // edge, so the two read as a single recessed well.
-                scrollFrame.top = static_cast<short>(listFrame.top + 1);
+                // Flush with the frame's top and bottom and sharing its
+                // right-hand pixel, so the two read as a single recessed well.
+                scrollFrame.top = listFrame.top;
                 scrollFrame.bottom = listFrame.bottom;
                 scrollFrame.left = static_cast<short>(listFrame.right - 1);
                 scrollFrame.right = static_cast<short>(listFrame.right + 15);
@@ -632,13 +668,35 @@ public:
         RGBColor c; c.red = c.green = c.blue = level; RGBForeColor(&c);
     }
 
+    /*
+     * The dialog's raised border. Mac OS 9's movable modal defproc leaves only
+     * a two-pixel band outside the content region -- white towards the top
+     * left, grey towards the bottom right -- so the rest of the Platinum ramp
+     * is drawn here, inside it. Read from the outside in, the result is the
+     * same 255/197/197/142 bevel closed by a black line that the QuickTime
+     * Settings window wears, with the pane sitting in the well it makes.
+     */
+    void DrawFrame()
+    {
+        short right = static_cast<short>(bounds.right - 1);
+        short foot = static_cast<short>(bounds.bottom - 1);
+        for (short n = 0; n < kFrameInset; ++n) {
+            Pen(kBorderLit[n]);
+            MoveTo(n, n); LineTo(static_cast<short>(right - n), n);
+            MoveTo(n, n); LineTo(n, static_cast<short>(foot - n));
+            Pen(kBorderShade[n]);
+            MoveTo(n, static_cast<short>(foot - n));
+            LineTo(static_cast<short>(right - n), static_cast<short>(foot - n));
+            MoveTo(static_cast<short>(right - n), n);
+            LineTo(static_cast<short>(right - n), static_cast<short>(foot - n));
+        }
+        Pen(0x0000);
+    }
+
     void DrawList()
     {
         Item &item = items[listIndex];
-        RGBColor saved;
-        GetBackColor(&saved);
-        RGBColor white = { 0xFFFF, 0xFFFF, 0xFFFF };
-        RGBBackColor(&white);
+        White white;
         Rect interior = listFrame;
         InsetRect(&interior, 1, 1);
         Pen(0xFFFF); PaintRect(&interior);
@@ -655,15 +713,14 @@ public:
         LineTo(scrollFrame.right, listFrame.bottom);
         Pen(0x0000);
         TEUpdate(&(*item.text)->viewRect, item.text);
-        RGBBackColor(&saved);
         if (focus == listIndex) DrawThemeFocusRect(&listFrame, true);
     }
 
     void Draw()
     {
         EraseRect(&bounds);
-        // The Window Manager owns the native outer window frame. Only the
-        // pane is framed here, with its selector replacing the title.
+        DrawFrame();
+        // The pane's own frame, with its selector replacing the title.
         DrawThemePrimaryGroup(&paneFrame, kThemeStateActive);
         // The group's top line runs behind the selector; clear it first.
         Rect selectorGround = selectorFrame;
@@ -694,6 +751,7 @@ public:
 
     void SyncScroll()
     {
+        White white;
         TEHandle te = items[listIndex].text;
         int height = (*te)->viewRect.bottom - (*te)->viewRect.top;
         int line = (*te)->lineHeight > 0 ? (*te)->lineHeight : 12;
@@ -708,6 +766,7 @@ public:
 
     void Scroll(short delta)
     {
+        White white;
         int old = GetControlValue(scroll);
         int value = old + delta;
         if (value < 0) value = 0;
@@ -833,10 +892,9 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
                 if (!PtInRect(point, &hitBox)) continue;
                 p->Focus(i);
                 if (kFields[i].kind == List) {
-                    RGBColor saved, white = { 0xFFFF, 0xFFFF, 0xFFFF };
-                    GetBackColor(&saved); RGBBackColor(&white);
-                    TEClick(point, (event.modifiers & shiftKey) != 0, p->items[i].text);
-                    RGBBackColor(&saved);
+                    { White white;
+                      TEClick(point, (event.modifiers & shiftKey) != 0,
+                              p->items[i].text); }
                     p->SyncScroll();
                 } else {
                     // Track the click as well as changing focus: this places the caret.
@@ -853,6 +911,7 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
                 if (part == kControlIndicatorPart) {
                     int old = GetControlValue(hit);
                     TrackControl(hit, point, nullptr);
+                    White white;
                     TEScroll(0, old - GetControlValue(hit), p->items[p->listIndex].text);
                 } else {
                     TrackControl(hit, point, scrollAction);
@@ -890,8 +949,12 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
             Item &item = p->items[p->focus];
             const Field &field = kFields[p->focus];
             TEHandle te = item.text;
-            RGBColor savedBack = {}, white = { 0xFFFF, 0xFFFF, 0xFFFF };
-            if (inList) { GetBackColor(&savedBack); RGBBackColor(&white); }
+            RGBColor savedBack = {};
+            if (inList) {
+                GetBackColor(&savedBack);
+                RGBColor white = { 0xFFFF, 0xFFFF, 0xFFFF };
+                RGBBackColor(&white);
+            }
             int limit = field.kind == List ? kListLimit : kValueCapacity - 1;
             int remaining = limit - ((*te)->teLength - ((*te)->selEnd - (*te)->selStart));
             if (command) {
