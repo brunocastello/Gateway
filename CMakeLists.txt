@@ -196,19 +196,7 @@ target_include_directories(gw_net PRIVATE
     ${CERTAINLY_DIR}/bearssl/src
     ${CERTAINLY_DIR}/src
 )
-#
-# The SSL 3.0 bridge makes the library graph cyclic, deliberately.
-#
-# BearSSL's ssl_rec_rc4.c and certainly's server.c both call into src/ssl3,
-# which lives in gw_net, which already links certainly for gw_ca.c's entropy;
-# server.c also logs through gw_log in gw_portable. Static libraries may form
-# cycles in CMake, which resolves them by repeating the whole connected
-# component on the link line -- the alternative being to hand-order four
-# archives and get it wrong the first time the graph changes.
-#
 target_link_libraries(gw_net PUBLIC certainly gw_portable)
-target_link_libraries(certainly PRIVATE gw_net gw_portable)
-target_link_libraries(bearssl PRIVATE gw_net)
 target_compile_options(gw_net PRIVATE -Wall -Wno-unused-parameter)
 
 # --------------------------------------------------------------------
@@ -232,7 +220,19 @@ add_application(Gateway
 )
 
 target_include_directories(Gateway PRIVATE src)
-target_link_libraries(Gateway gw_settings ${GW_UNIV_LIB}/libAppearanceLib.a gw_net gw_portable certainly bearssl ${GW_OT_LIBS})
+#
+# The four core archives are linked as a group, because the SSL 3.0 bridge
+# made their graph cyclic: BearSSL's ssl_rec_rc4.c and certainly's server.c
+# both call into src/ssl3, which lives in gw_net, which already links
+# certainly for gw_ca.c's entropy -- and gw_net sits before bearssl, where a
+# single-pass linker cannot reach back for it. --start-group makes ld rescan
+# until nothing is left undefined, which is cheaper to maintain than an order
+# that is correct only until the next call crosses a library boundary.
+#
+target_link_libraries(Gateway
+    gw_settings ${GW_UNIV_LIB}/libAppearanceLib.a
+    -Wl,--start-group gw_net gw_portable certainly bearssl -Wl,--end-group
+    ${GW_OT_LIBS})
 
 set_target_properties(Gateway PROPERTIES COMPILE_OPTIONS -ffunction-sections)
 set_target_properties(Gateway PROPERTIES LINK_FLAGS "-Wl,-gc-sections")
