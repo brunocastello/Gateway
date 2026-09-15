@@ -171,9 +171,11 @@ static void der_alg(Der *d, const unsigned char *oid, size_t oid_len)
 
 /*
  * Name ::= SEQUENCE OF RDN, and one RDN holding one CN is all any of this
- * needs. PrintableString would be the era-correct choice but excludes
- * characters a hostname can legally contain after IDN punycoding is undone by
- * nobody; UTF8String is accepted by every client in range and by openssl.
+ * needs. PrintableString is the era-correct choice (a hostname only ever
+ * holds letters, digits, dots and hyphens, and so does "Gateway Local CA"
+ * with its spaces): vintage parsers that predate UTF8String in names --
+ * which PKIX only blessed in 1999 -- read it without tripping, and
+ * everything newer accepts it too.
  */
 static void der_name_cn(Der *d, const char *cn)
 {
@@ -184,7 +186,7 @@ static void der_name_cn(Der *d, const char *cn)
         {
             size_t seq = der_len(d);
 
-            der_prim(d, DER_UTF8STRING, cn, strlen(cn));
+            der_prim(d, DER_PRINTABLE, cn, strlen(cn));
             der_prim(d, DER_OID, kOidCommonName, sizeof(kOidCommonName));
             der_head(d, DER_SEQUENCE, der_len(d) - seq);
         }
