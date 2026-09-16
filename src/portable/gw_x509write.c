@@ -324,26 +324,44 @@ size_t gw_x509_tbs(const GWCertReq *req, unsigned char *out, size_t cap,
     der_init(&d, out, cap);
     mark = der_len(&d);
 
-    /* Reverse order of the TBSCertificate fields, which is how this reads. */
-    der_extensions(&d, req);
-    der_spki(&d, req);
-    der_name_cn(&d, req->cn);
-    {
-        size_t v = der_len(&d);
-        der_prim(&d, DER_UTCTIME, req->not_after, 13);
-        der_prim(&d, DER_UTCTIME, req->not_before, 13);
-        der_head(&d, DER_SEQUENCE, der_len(&d) - v);
+    /* Reverse order of the TBSCertificate fields, which is how this reads.
+     * For leaves, emit v1 (no version, no extensions) for maximal vintage
+     * compatibility - Gold 3.04's v3 parser is strict and the RC2 path
+     * was "bad data" with v3 SAN/EKU even though RC4 tolerated it. */
+    if (!req->is_ca) {
+        der_spki(&d, req);
+        der_name_cn(&d, req->cn);
+        {
+            size_t v = der_len(&d);
+            der_prim(&d, DER_UTCTIME, req->not_after, 13);
+            der_prim(&d, DER_UTCTIME, req->not_before, 13);
+            der_head(&d, DER_SEQUENCE, der_len(&d) - v);
+        }
+        der_name_cn(&d, req->issuer_cn);
+        der_alg(&d, kOidSha1WithRsa, sizeof(kOidSha1WithRsa));
+        der_uint(&d, req->serial, req->serial_len);
+        der_head(&d, DER_SEQUENCE, der_len(&d) - mark);
+    } else {
+        der_extensions(&d, req);
+        der_spki(&d, req);
+        der_name_cn(&d, req->cn);
+        {
+            size_t v = der_len(&d);
+            der_prim(&d, DER_UTCTIME, req->not_after, 13);
+            der_prim(&d, DER_UTCTIME, req->not_before, 13);
+            der_head(&d, DER_SEQUENCE, der_len(&d) - v);
+        }
+        der_name_cn(&d, req->issuer_cn);
+        der_alg(&d, kOidSha1WithRsa, sizeof(kOidSha1WithRsa));
+        der_uint(&d, req->serial, req->serial_len);
+        {
+            /* version [0] EXPLICIT INTEGER { v3(2) } */
+            size_t v = der_len(&d);
+            der_small_int(&d, 2);
+            der_head(&d, DER_CTX(0), der_len(&d) - v);
+        }
+        der_head(&d, DER_SEQUENCE, der_len(&d) - mark);
     }
-    der_name_cn(&d, req->issuer_cn);
-    der_alg(&d, kOidSha1WithRsa, sizeof(kOidSha1WithRsa));
-    der_uint(&d, req->serial, req->serial_len);
-    {
-        /* version [0] EXPLICIT INTEGER { v3(2) } */
-        size_t v = der_len(&d);
-        der_small_int(&d, 2);
-        der_head(&d, DER_CTX(0), der_len(&d) - v);
-    }
-    der_head(&d, DER_SEQUENCE, der_len(&d) - mark);
 
     if (d.err) return 0;
     *off = d.at;
