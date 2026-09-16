@@ -215,6 +215,67 @@ br_ssl_engine_switch_rc4_out(br_ssl_engine_context *cc,
 }
 
 void
+br_ssl_engine_switch_rc2_in(br_ssl_engine_context *cc,
+	int is_client, int prf_id, int mac_id,
+	size_t rc2_key_len, size_t mac_key_len)
+{
+	unsigned char kb[96];
+	unsigned char expkey[16], expiv[16];
+	size_t kb_len = (mac_key_len + rc2_key_len + 8) * 2;
+	if (kb_len > sizeof kb) kb_len = sizeof kb;
+	const br_hash_class *hash = (mac_id == br_md5_ID) ? &br_md5_vtable : &br_sha1_vtable;
+	unsigned char *mac_key, *rc2_key, *iv;
+	compute_key_block_ssl3(cc, kb, kb_len);
+	/* layout: cli MAC | srv MAC | cli KEY | srv KEY | cli IV | srv IV */
+	if (is_client) { mac_key = kb + mac_key_len; rc2_key = kb + 2*mac_key_len + rc2_key_len; iv = kb + 2*mac_key_len + 2*rc2_key_len + 8; }
+	else { mac_key = kb; rc2_key = kb + 2*mac_key_len; iv = kb + 2*mac_key_len + 2*rc2_key_len; }
+	/* Export 40-bit: expand 5-byte key + derive IV via MD5(randoms) */
+	if (cc->session.cipher_suite == 0x0006) {
+		ssl3_export_expand(cc, rc2_key, rc2_key_len, !is_client, expkey);
+		rc2_key = expkey; rc2_key_len = 16;
+		/* IV for export: MD5 of randoms, first 8 bytes */
+		{
+			br_md5_context md5; const unsigned char *er1 = !is_client ? cc->server_random : cc->client_random;
+			const unsigned char *er2 = !is_client ? cc->client_random : cc->server_random;
+			br_md5_init(&md5); br_md5_update(&md5, er1, 32); br_md5_update(&md5, er2, 32); br_md5_out(&md5, expiv);
+			iv = expiv;
+		}
+	}
+	cc->in.rc2.vtable = &br_sslrec_in_rc2_vtable;
+	br_sslrec_in_rc2_vtable.init((const br_sslrec_in_rc2_class **)&cc->in.rc2.vtable, rc2_key, rc2_key_len, 40, hash, mac_key, mac_key_len, iv);
+	cc->in.rc2.hash = hash; cc->in.rc2.mac_len = mac_key_len; cc->incrypt = 1;
+}
+
+void
+br_ssl_engine_switch_rc2_out(br_ssl_engine_context *cc,
+	int is_client, int prf_id, int mac_id,
+	size_t rc2_key_len, size_t mac_key_len)
+{
+	unsigned char kb[96];
+	unsigned char expkey[16], expiv[16];
+	size_t kb_len = (mac_key_len + rc2_key_len + 8) * 2;
+	if (kb_len > sizeof kb) kb_len = sizeof kb;
+	const br_hash_class *hash = (mac_id == br_md5_ID) ? &br_md5_vtable : &br_sha1_vtable;
+	unsigned char *mac_key, *rc2_key, *iv;
+	compute_key_block_ssl3(cc, kb, kb_len);
+	if (is_client) { mac_key = kb; rc2_key = kb + 2*mac_key_len; iv = kb + 2*mac_key_len + 2*rc2_key_len; }
+	else { mac_key = kb + mac_key_len; rc2_key = kb + 2*mac_key_len + rc2_key_len; iv = kb + 2*mac_key_len + 2*rc2_key_len + 8; }
+	if (cc->session.cipher_suite == 0x0006) {
+		ssl3_export_expand(cc, rc2_key, rc2_key_len, is_client, expkey);
+		rc2_key = expkey; rc2_key_len = 16;
+		{
+			br_md5_context md5; const unsigned char *er1 = is_client ? cc->client_random : cc->server_random;
+			const unsigned char *er2 = is_client ? cc->server_random : cc->client_random;
+			br_md5_init(&md5); br_md5_update(&md5, er1, 32); br_md5_update(&md5, er2, 32); br_md5_out(&md5, expiv);
+			iv = expiv;
+		}
+	}
+	cc->out.rc2.vtable = &br_sslrec_out_rc2_vtable;
+	br_sslrec_out_rc2_vtable.init((const br_sslrec_out_rc2_class **)&cc->out.rc2.vtable, rc2_key, rc2_key_len, 40, hash, mac_key, mac_key_len, iv);
+	cc->out.rc2.hash = hash; cc->out.rc2.mac_len = mac_key_len;
+}
+
+void
 ssl3_register_ciphers(br_ssl_engine_context *cc)
 {
 	(void)cc;

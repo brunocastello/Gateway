@@ -72,11 +72,11 @@ sr_choose(const br_ssl_server_policy_class **pctx,
 		 * else reaches the clean alert at the end.
 		 */
 		{
-			int is_rc4 = (id == 0x0003 || id == 0x0004
-				|| id == 0x0005);
+			int is_ssl3_suite = (id == 0x0003 || id == 0x0004
+				|| id == 0x0005 || id == 0x0006);
 			int is_ssl3 = (cc->eng.session.version == BR_SSL30);
 
-			if (is_rc4 != is_ssl3) {
+			if (is_ssl3_suite != is_ssl3) {
 				continue;
 			}
 		}

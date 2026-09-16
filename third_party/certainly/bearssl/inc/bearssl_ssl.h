@@ -827,6 +827,31 @@ typedef br_sslrec_rc4_context br_sslrec_out_rc4_context;
 extern const br_sslrec_in_rc4_class br_sslrec_in_rc4_vtable;
 extern const br_sslrec_out_rc4_class br_sslrec_out_rc4_vtable;
 
+/* RC2-CBC for SSL3 */
+typedef struct br_sslrec_in_rc2_class_ br_sslrec_in_rc2_class;
+struct br_sslrec_in_rc2_class_ {
+	br_sslrec_in_class inner;
+	void (*init)(const br_sslrec_in_rc2_class **ctx, const void *key, size_t key_len, unsigned effective_bits, const br_hash_class *hash, const void *mac_key, size_t mac_len, const void *iv);
+};
+typedef struct br_sslrec_out_rc2_class_ br_sslrec_out_rc2_class;
+struct br_sslrec_out_rc2_class_ {
+	br_sslrec_out_class inner;
+	void (*init)(const br_sslrec_out_rc2_class **ctx, const void *key, size_t key_len, unsigned effective_bits, const br_hash_class *hash, const void *mac_key, size_t mac_len, const void *iv);
+};
+typedef struct {
+	const void *vtable;
+	uint64_t seq;
+	void *rc2;
+	const br_hash_class *hash;
+	unsigned char mac_key[48];
+	size_t mac_len;
+	unsigned char iv[8];
+} br_sslrec_rc2_context;
+typedef br_sslrec_rc2_context br_sslrec_in_rc2_context;
+typedef br_sslrec_rc2_context br_sslrec_out_rc2_context;
+extern const br_sslrec_in_rc2_class br_sslrec_in_rc2_vtable;
+extern const br_sslrec_out_rc2_class br_sslrec_out_rc2_vtable;
+
 /* ===================================================================== */
 
 /**
@@ -944,6 +969,7 @@ typedef struct {
     br_sslrec_chapol_context chapol;
     br_sslrec_ccm_context ccm;
     br_sslrec_in_rc4_context rc4;
+    br_sslrec_in_rc2_context rc2;
   } in;
   union {
     const br_sslrec_out_class *vtable;
@@ -953,6 +979,7 @@ typedef struct {
     br_sslrec_chapol_context chapol;
     br_sslrec_ccm_context ccm;
     br_sslrec_out_rc4_context rc4;
+    br_sslrec_out_rc2_context rc2;
   } out;
 
 	/*

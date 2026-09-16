@@ -2375,6 +2375,12 @@ void br_ssl_engine_switch_rc4_in(br_ssl_engine_context *cc,
 void br_ssl_engine_switch_rc4_out(br_ssl_engine_context *cc,
 	int is_client, int prf_id, int mac_id,
 	size_t rc4_key_len, size_t mac_key_len);
+void br_ssl_engine_switch_rc2_in(br_ssl_engine_context *cc,
+	int is_client, int prf_id, int mac_id,
+	size_t rc2_key_len, size_t mac_key_len);
+void br_ssl_engine_switch_rc2_out(br_ssl_engine_context *cc,
+	int is_client, int prf_id, int mac_id,
+	size_t rc2_key_len, size_t mac_key_len);
 
 /*
  * Gateway: true SSL 3.0 key derivation (RFC 6101 section 6), used by

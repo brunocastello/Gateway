@@ -703,9 +703,13 @@ ssl2_convert_hello(br_ssl_engine_context *rc)
 
 	/*
 	 * Translate 3-byte specs to 2-byte suites. TLS suites are
-	 * 0x00 xx xx; SSLv2 3DES (0x07 0x00 0xC0) maps to 0x00 0x0A.
-	 * Anything else SSLv2-specific (RC4, single DES) has no TLS
-	 * equivalent here and is dropped.
+	 * 0x00 xx xx; SSLv2 3DES (0x07 0x00 0xC0) maps to 0x00 0x0A;
+	 * SSLv2 RC4 maps to its TLS namesakes (0x01 0x00 0x80 to
+	 * 0x00 0x04, 0x02 0x00 0x80 export to 0x00 0x03), which do
+	 * have an SSL 3.0 record layer here. Anything else SSLv2-
+	 * specific (RC2, single DES, IDEA) is dropped: SSL 3.0 is
+	 * spoken over RC4 only, so those suites could never
+	 * negotiate anyway.
 	 */
 	num_suites = 0;
 	for (i = 0; i < cs_len; i += 3) {
@@ -717,6 +721,12 @@ ssl2_convert_hello(br_ssl_engine_context *rc)
 			suite = (s1 << 8) | s2;
 		} else if (s0 == 0x07 && s1 == 0x00 && s2 == 0xC0) {
 			suite = 0x000A;
+		} else if (s0 == 0x01 && s1 == 0x00 && s2 == 0x80) {
+			suite = 0x0004;
+		} else if (s0 == 0x02 && s1 == 0x00 && s2 == 0x80) {
+			suite = 0x0003;
+		} else if (s0 == 0x04 && s1 == 0x00 && s2 == 0x80) {
+			suite = 0x0006;
 		} else {
 			continue;
 		}

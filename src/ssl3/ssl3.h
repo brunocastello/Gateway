@@ -84,9 +84,11 @@ void rc4_crypt(void *ctx, const unsigned char *input, unsigned char *output, siz
 void rc4_cleanup(void *ctx);
 
 /*
- * RC2-CBC cipher primitive.
+ * RC2-CBC cipher primitive. Effective bits is 40 for export suites
+ * (RC2_40) and 128 otherwise; when 0, key_len*8 is used.
  */
 void *rc2_setup(const unsigned char *key, size_t key_len);
+void *rc2_setup_bits(const unsigned char *key, size_t key_len, unsigned effective_bits);
 void rc2_cbc_encrypt(void *ctx, const unsigned char *iv, unsigned char *data, size_t len);
 void rc2_cbc_decrypt(void *ctx, const unsigned char *iv, unsigned char *data, size_t len);
 void rc2_cleanup(void *ctx);

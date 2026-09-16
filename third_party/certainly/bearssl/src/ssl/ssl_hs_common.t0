@@ -866,6 +866,7 @@ hexb| CCA9 2504 | \ TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
 hexb| 0003 0A11 | \ SSL3_RSA_EXPORT_RC4_40_MD5
 hexb| 0004 0A11 | \ SSL3_RSA_RC4_128_MD5
 hexb| 0005 0A22 | \ SSL3_RSA_RC4_128_SHA
+hexb| 0006 0B11 | \ SSL3_RSA_EXPORT_RC2_CBC_40_MD5
 
 hexb| 0000 | \ List terminator.
 
@@ -1013,9 +1014,18 @@ hexb| 0000 | \ List terminator.
 			then
 		endof
 
+		\ RC2-CBC (SSL3 export 40-bit, Gateway)
+		11 of 0 0
+			for-input if
+				switch-rc2-in
+			else
+				switch-rc2-out
+			then
+		endof
+
 		\ Now we only have AES/CCM suites (6 to 9). Since the
-		\ input is between 0 and 15, and we checked values 0 to 5
-		\ and 10 above, we only need to reject values larger than 9
+		\ input is between 0 and 15, and we checked values 0 to 5,
+		\ 10 and 11 above, we only need to reject values larger than 9
 		\ (11 to 15 are unassigned).
 		dup 9 > if
 			ERR_BAD_PARAM fail
@@ -1169,6 +1179,42 @@ cc: switch-rc4-in ( is_client prf_id mac_id rc4_key_len mac_key_len -- ) {
 	else { rc4_key_len = 0; mac_key_len = 0; }
 	br_ssl_engine_switch_rc4_in(ENG, is_client, prf_id, mac_id,
 		rc4_key_len, mac_key_len);
+}
+
+\ Switch the record layer to SSL 3.0 RC2-CBC (Gateway). Same dummy
+\ length trick as RC4: real parameters from suite ID.
+cc: switch-rc2-out ( is_client prf_id mac_id rc2_key_len mac_key_len -- ) {
+	int is_client, prf_id, mac_id;
+	size_t rc2_key_len, mac_key_len;
+	uint16_t cipher_suite;
+
+	mac_key_len = T0_POP();
+	rc2_key_len = T0_POP();
+	mac_id = T0_POP();
+	prf_id = T0_POP();
+	is_client = T0_POP();
+	cipher_suite = ENG->session.cipher_suite;
+	if (cipher_suite == 0x0006) { rc2_key_len = 5; mac_key_len = 16; }
+	else { rc2_key_len = 0; mac_key_len = 0; }
+	br_ssl_engine_switch_rc2_out(ENG, is_client, prf_id, mac_id,
+		rc2_key_len, mac_key_len);
+}
+
+cc: switch-rc2-in ( is_client prf_id mac_id rc2_key_len mac_key_len -- ) {
+	int is_client, prf_id, mac_id;
+	size_t rc2_key_len, mac_key_len;
+	uint16_t cipher_suite;
+
+	mac_key_len = T0_POP();
+	rc2_key_len = T0_POP();
+	mac_id = T0_POP();
+	prf_id = T0_POP();
+	is_client = T0_POP();
+	cipher_suite = ENG->session.cipher_suite;
+	if (cipher_suite == 0x0006) { rc2_key_len = 5; mac_key_len = 16; }
+	else { rc2_key_len = 0; mac_key_len = 0; }
+	br_ssl_engine_switch_rc2_in(ENG, is_client, prf_id, mac_id,
+		rc2_key_len, mac_key_len);
 }
 
 \ Write Finished message.
