@@ -160,12 +160,12 @@ static void describe_hello(MacTLS_Server *s, char *out, size_t cap)
      * anything it read in our answer.
      */
     snprintf(out, cap,
-             "%s hello, client version %04x, %u suite(s) [%s], chosen %04x/%04x,"
-             " %u handshake bytes",
-             s->sc.eng.ssl2_hello ? "SSLv2-framed" : "native",
-             s->sc.client_max_version, s->sc.client_suites_num, suites,
+             "%s, %u hs bytes, ver %04x, chose %04x/%04x, %u suite(s) [%s]",
+             s->sc.eng.ssl2_hello ? "SSLv2" : "native",
+             (unsigned)s->sc.eng.hs_transcript_len,
+             s->sc.client_max_version,
              s->sc.eng.session.cipher_suite, s->sc.eng.session.version,
-             (unsigned)s->sc.eng.hs_transcript_len);
+             s->sc.client_suites_num, suites);
 }
 
 MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
@@ -226,8 +226,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
             if (!s->handshook) {
                 char hello[384];
                 describe_hello(s, hello, sizeof(hello));
-                gw_log("MITM: the browser closed before the handshake "
-                       "finished; %s", hello);
+                gw_log("MITM closed unfinished: %s", hello);
             }
             s->state = kMacTLS_Closed;
         } else {
@@ -322,8 +321,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
                     if (!s->handshook) {
                         char hello[384];
                         describe_hello(s, hello, sizeof(hello));
-                        gw_log("MITM: the browser hung up before the "
-                               "handshake finished; %s", hello);
+                        gw_log("MITM hung up unfinished: %s", hello);
                     }
                     br_ssl_engine_close(&s->sc.eng);
                     s->state = kMacTLS_Closed;
@@ -376,7 +374,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
             char hello[384];
             s->handshook = 1;
             describe_hello(s, hello, sizeof(hello));
-            gw_log("MITM handshake done: %s", hello);
+            gw_log("MITM done: %s", hello);
         }
         s->state = kMacTLS_Connected;
     }
