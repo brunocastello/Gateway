@@ -26,6 +26,21 @@
 
 preamble {
 
+/* Gateway: 512-bit temp RSA key for SSL3 RSA_EXPORT SKE (like OpenSSL's
+ * s3_srvr.c for 0003/0006 with 1024-bit leaf). Hardcoded test vector.
+ * Modulus 64 bytes, exponent 0x010001. Used only for SKE when the
+ * negotiated suite is EXPORT40 and the leaf is >512 bits; the same key
+ * is reused for every SKE in the process (like OpenSSL's temp key
+ * cache) — generating a fresh 512-bit key per handshake would stall
+ * the cooperative loop. */
+static const unsigned char temp512_n[64] = {
+	0xBB,0xB2,0x70,0x93,0xB0,0xED,0xE0,0x09,0x51,0x0E,0xAF,0x8C,0xF7,0x63,0x04,0x4C,
+	0x45,0x09,0xCB,0xD5,0xE2,0x9B,0xBC,0xE2,0x80,0xDC,0x3F,0x43,0x1F,0x94,0xC4,0x0C,
+	0x29,0x2B,0x04,0xB5,0x54,0xEE,0xBE,0x4E,0x1B,0x1F,0x56,0xF1,0xA8,0x0B,0x0C,0xA1,
+	0xFF,0xFE,0x97,0xCF,0xC5,0xA3,0x8C,0xC3,0xF8,0x3D,0x7D,0x3A,0x2C,0x27,0x7A,0x65
+};
+static const unsigned char temp512_e[3] = { 0x01,0x00,0x01 };
+
 /*
  * This macro evaluates to a pointer to the server context, under that
  * specific name. It must be noted that since the engine context is the
@@ -1000,8 +1015,25 @@ cc: do-ecdhe-part1 ( curve -- len ) {
 	0 begin dup2 >> 1 and 0= while 1+ repeat
 	swap drop ;
 
+cc: do-rsa-export-ske ( -- ) {
+	if (ENG->hlen_out < 75) return;
+	{
+		unsigned char *p = ENG->hbuf_out;
+		p[0] = 12; p[1] = 0; p[2] = 0; p[3] = 71;
+		p[4] = 0; p[5] = 64; memcpy(p + 6, temp512_n, 64);
+		p[70] = 0; p[71] = 3; memcpy(p + 72, temp512_e, 3);
+		br_multihash_update(&ENG->mhash, p, 75);
+		gw_hs_append(ENG, p, 75);
+		ENG->hbuf_out += 75;
+		ENG->hlen_out -= 75;
+	}
+}
+
 \ Write the Server Key Exchange message (if applicable).
 : write-ServerKeyExchange ( -- )
+	addr-cipher_suite get16 dup 0x0003 = swap 0x0006 = or if
+		do-rsa-export-ske ret
+	then
 	addr-cipher_suite get16 use-ecdhe? ifnot ret then
 
 	\ We must select an appropriate curve among the curves that
