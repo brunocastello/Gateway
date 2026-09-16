@@ -9,6 +9,9 @@
 #include "inner.h"
 #include <string.h>
 #include <stdlib.h>
+#ifdef GW_DEBUG_IO
+#include <stdio.h>
+#endif
 
 static void
 in_rc2_init(const br_sslrec_in_rc2_class **ctx,
@@ -73,7 +76,24 @@ rc2_in_decrypt(const br_sslrec_in_class **ctx,
 	size_t plain_len;
 	unsigned char len_buf[2];
 
-	if (plen < 8 || (plen & 7) != 0) return NULL;
+#ifdef GW_DEBUG_IO
+	{
+		FILE *kf = fopen("C:\\Gateway\\keylog.txt", "a");
+		if (kf != NULL) {
+			fprintf(kf, "RC2 DEC enter seq=%llu type=%d plen=%u mac=%u\n",
+				(unsigned long long)cc->seq, record_type,
+				(unsigned)plen, (unsigned)mac_len);
+			fflush(kf); fclose(kf);
+		}
+	}
+#endif
+	if (plen < 8 || (plen & 7) != 0) {
+#ifdef GW_DEBUG_IO
+		FILE *kf = fopen("C:\\Gateway\\keylog.txt", "a");
+		if (kf != NULL) { fprintf(kf, "RC2 early1 plen=%u\n", (unsigned)plen); fclose(kf); }
+#endif
+		return NULL;
+	}
 	{
 		unsigned char ctail[8];
 		memcpy(ctail, data + plen - 8, 8);
@@ -81,9 +101,28 @@ rc2_in_decrypt(const br_sslrec_in_class **ctx,
 		memcpy(cc->iv, ctail, 8);
 	}
 
-	if (plen < 1) return NULL;
+	if (plen < 1) {
+#ifdef GW_DEBUG_IO
+		FILE *kf = fopen("C:\\Gateway\\keylog.txt", "a");
+		if (kf != NULL) { fprintf(kf, "RC2 early2 plen=%u\n", (unsigned)plen); fclose(kf); }
+#endif
+		return NULL;
+	}
 	pad_len = data[plen - 1];
-	if (pad_len >= 8 || pad_len + 1 + mac_len > plen) return NULL;
+	if (pad_len >= 8 || pad_len + 1 + mac_len > plen) {
+#ifdef GW_DEBUG_IO
+		FILE *kf = fopen("C:\\Gateway\\keylog.txt", "a");
+		if (kf != NULL) {
+			fprintf(kf, "RC2 early3 pad=%u plain? plen=%u mac=%u\n",
+				(unsigned)pad_len, (unsigned)plen, (unsigned)mac_len);
+			fprintf(kf, "RC2 tail %02x%02x%02x%02x%02x%02x%02x%02x\n",
+				data[plen-8], data[plen-7], data[plen-6], data[plen-5],
+				data[plen-4], data[plen-3], data[plen-2], data[plen-1]);
+			fclose(kf);
+		}
+#endif
+		return NULL;
+	}
 	plain_len = plen - mac_len - pad_len - 1;
 	len_buf[0] = (plain_len >> 8) & 0xFF;
 	len_buf[1] = plain_len & 0xFF;
@@ -94,6 +133,22 @@ rc2_in_decrypt(const br_sslrec_in_class **ctx,
 		const unsigned char *recv_mac = data + plain_len;
 		size_t k;
 		for (k = 0; k < mac_len; k++) diff |= recv_mac[k] ^ mac[k];
+#ifdef GW_DEBUG_IO
+		{
+			FILE *kf = fopen("C:\\Gateway\\keylog.txt", "a");
+			if (kf != NULL) {
+				fprintf(kf, "RC2 DEC seq=%llu type=%d plen=%u plain=%u pad=%u %s\n",
+					(unsigned long long)cc->seq, record_type,
+					(unsigned)plen, (unsigned)plain_len, (unsigned)pad_len,
+					diff ? "MISMATCH" : "match");
+				fprintf(kf, "RC2 pt %02x%02x%02x%02x calc %02x%02x%02x%02x recv %02x%02x%02x%02x\n",
+					data[0], data[1], data[2], data[3],
+					mac[0], mac[1], mac[2], mac[3],
+					recv_mac[0], recv_mac[1], recv_mac[2], recv_mac[3]);
+				fclose(kf);
+			}
+		}
+#endif
 		if (diff) return NULL;
 	}
 	cc->seq++;

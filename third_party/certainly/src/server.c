@@ -243,6 +243,36 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
                 gw_log("  SEND rec %02x %02x%02x len %u",
                        buf[0], buf[1], buf[2],
                        (unsigned)(((unsigned)buf[3] << 8) | buf[4]));
+                if (buf[0] == 22 && len > 5) {
+                    size_t dump = len - 5;
+                    size_t off = 0;
+                    while (off < dump) {
+                        char raw[193];
+                        size_t chunk = dump - off > 32 ? 32 : dump - off;
+                        size_t k, p = 0;
+                        for (k = 0; k < chunk && p + 3 < sizeof(raw); k++) {
+                            int nn = snprintf(raw + p, sizeof(raw) - p, "%s%02x",
+                                              k ? " " : "", buf[5 + off + k]);
+                            if (nn < 0) break;
+                            p += (size_t)nn;
+                        }
+                        gw_log("  SEND payload [%u/%u]: %s", (unsigned)off, (unsigned)dump, raw);
+                        off += chunk;
+                    }
+                    if (dump >= 4 && buf[5] == 0x02) {
+                        size_t hs_len = ((size_t)buf[6] << 16) | ((size_t)buf[7] << 8) | buf[8];
+                        size_t sh_off = 5 + 4;
+                        size_t suite_off = sh_off + 2 + 32 + 1;
+                        unsigned suite = 0xFFFF;
+                        if (hs_len >= 2+32+1+2 && len >= suite_off + 2) {
+                            unsigned sid_len = buf[sh_off + 2 + 32];
+                            suite_off += 1 + sid_len;
+                            if (len >= suite_off + 2)
+                                suite = ((unsigned)buf[suite_off] << 8) | buf[suite_off+1];
+                        }
+                        gw_log("  ServerHello suite %04x", suite);
+                    }
+                }
             } else {
                 gw_log("  SEND rec %u bytes (short)", (unsigned)len);
             }
@@ -272,7 +302,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
             n = ct_transport_recv(s->transport, buf, len);
             if (n > 0) {
 #ifdef GW_DEBUG_IO
-                if (s->logged_raw < 10 && n >= 4) {
+                if (s->logged_raw < 10 && n >= 2) {
                     size_t dump = (size_t)n > 96 ? 96 : (size_t)n;
                     size_t off = 0;
                     s->logged_raw++;
