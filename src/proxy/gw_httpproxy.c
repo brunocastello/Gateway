@@ -629,7 +629,7 @@ static void session_serve_ca(GWHttpSession *s)
 }
 
 /* /gateway-ca.crt, and .der for anything that decides by extension. */
-static int ca_is_request(const char *path)
+static int ca_is_path(const char *path)
 {
     size_t n;
 
@@ -641,6 +641,31 @@ static int ca_is_request(const char *path)
     if (n != 15) return 0;
     return gw_strnicmp(path, "/gateway-ca.crt", 15) == 0
         || gw_strnicmp(path, "/gateway-ca.der", 15) == 0;
+}
+
+/*
+ * Is this asking us for the authority certificate?
+ *
+ * Unlike the auto-configuration script, this is fetched *after* the proxy has
+ * been set, because setting the proxy is what creates the need for it -- so
+ * the browser sends the absolute form, naming Gateway's own address and port,
+ * and not the origin form. Accepting only the origin form, as the first cut
+ * of this did, made the endpoint unreachable in exactly the situation it
+ * exists for.
+ *
+ * Both forms are taken. What keeps it unambiguous is the port: a request
+ * arriving at Gateway and addressed to Gateway's own listening port is
+ * addressed to Gateway, whatever the host in it says. Inside a connect_mitm
+ * tunnel it is never ours -- that is a browser talking to a real origin.
+ */
+static int ca_is_request(GWHttpSession *s)
+{
+    if (s->mitm) return 0;
+    if (!ca_is_path(s->req.url.path)) return 0;
+    if (s->req.shape == kGWShapeOrigin) return 1;
+    if (s->req.shape != kGWShapeAbsolute) return 0;
+    return s->req.url.port ==
+           (s->wayback ? GW_WaybackPort() : GW_HttpPort());
 }
 
 /*
@@ -914,10 +939,7 @@ static void step_recv_request(GWHttpSession *s)
         return;
     }
 
-    /* Same reasoning as the script above: origin-form, not inside a tunnel,
-     * so someone has pointed a browser straight at Gateway's own address. */
-    if (s->req.shape == kGWShapeOrigin && !s->mitm &&
-        ca_is_request(s->req.url.path)) {
+    if (ca_is_request(s)) {
         session_serve_ca(s);
         return;
     }
