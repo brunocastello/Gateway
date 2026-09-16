@@ -386,6 +386,33 @@ const unsigned char *GWCa_Leaf(const char *host, size_t *len)
     slot->len = certlen;
     gw_copy_n(slot->host, sizeof(slot->host), host, strlen(host));
 
+#ifdef GW_DEBUG_IO
+    /* Persist the minted leaf beside the CA store as leaf-<host>.der, so
+     * issued certificates can be inspected offline (openssl x509 -inform
+     * der -text) without traffic capture. Best effort: a failed write
+     * must never fail the handshake it was minted for. */
+    {
+        char fn[272];
+        size_t i, o = 0;
+        static const char kPrefix[] = "leaf-";
+        static const char kSuffix[] = ".der";
+        for (i = 0; kPrefix[i] != '\0' && o + 1 < sizeof(fn); i++)
+            fn[o++] = kPrefix[i];
+        for (i = 0; host[i] != '\0' && o + 1 < sizeof(fn); i++) {
+            char c = host[i];
+            fn[o++] = ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                       (c >= '0' && c <= '9') || c == '.' || c == '-' ||
+                       c == '_') ? c : '_';
+        }
+        for (i = 0; kSuffix[i] != '\0' && o + 1 < sizeof(fn); i++)
+            fn[o++] = kSuffix[i];
+        fn[o] = '\0';
+        if (GWPlat_WriteFile(fn, slot->der, (long)certlen))
+            gw_log("certificate authority: saved %s (%lu bytes)",
+                   fn, (unsigned long)certlen);
+    }
+#endif
+
     if (len != NULL) *len = certlen;
     return slot->der;
 }
