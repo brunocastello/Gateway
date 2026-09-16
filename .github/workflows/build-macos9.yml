@@ -1,17 +1,6 @@
 name: Build (Mac OS 9 PowerPC / Classic Toolbox)
 
 on:
-  # A build that hexdumps every handshake record, for explaining what a
-  # vintage browser actually sent. Off on every ordinary build:
-  #
-  #     gh workflow run build-macos9.yml --ref <branch> -f debug_io=true
-  #
-  workflow_dispatch:
-    inputs:
-      debug_io:
-        description: "Hexdump handshake records to the log (GW_DEBUG_IO)"
-        type: boolean
-        default: false
   push:
     # Both filters are needed. Naming tags alone restricts push events to tags
     # and silently stops every branch build -- which is exactly what happened
@@ -65,7 +54,6 @@ jobs:
             -v "${{ github.workspace }}:/root/Gateway" \
             -w /root/Gateway \
             -e GW_BUILD_ID="$(echo "${{ github.sha }}" | cut -c1-7)" \
-            -e GW_DEBUG_IO="${{ inputs.debug_io && 'ON' || 'OFF' }}" \
             -i ghcr.io/autc04/retro68 /bin/bash <<'EOF'
           set -euo pipefail
           TOOLCHAIN=/Retro68-build/toolchain
@@ -106,8 +94,7 @@ jobs:
           cd build
           cmake .. \
             -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN/powerpc-apple-macos/cmake/retroppc.toolchain.cmake" \
-            -DGW_UNIVERSAL_DIR="$TOOLCHAIN/universal" \
-            -DGW_DEBUG_IO=${GW_DEBUG_IO:-OFF}
+            -DGW_UNIVERSAL_DIR="$TOOLCHAIN/universal"
           cmake --build . --verbose
           ls -la
           EOF
