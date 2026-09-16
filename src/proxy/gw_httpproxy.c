@@ -1614,6 +1614,9 @@ static void step_mitm_wait(GWHttpSession *s)
                         "floor (%s)", ver, dir);
                 why = why_buf;
             }
+            else if (err == 0)
+                why = ": the browser closed it, which is not an error "
+                      "-- see the line above for what it was offered";
             else if (err == 16)
                 why = ": no cipher suite in common (a 40-bit browser?)";
             else if (err == 4)
@@ -1625,8 +1628,10 @@ static void step_mitm_wait(GWHttpSession *s)
             else if (err > 256)
                 why = ": the browser sent a fatal alert";
 
-            gw_log("#%ld handshake with the browser failed for %s "
-                   "(BearSSL %d%s)", s->id, s->mitmHost, err, why);
+            gw_log("#%ld handshake with the browser %s for %s "
+                   "(BearSSL %d%s)", s->id,
+                   err == 0 ? "was abandoned" : "failed",
+                   s->mitmHost, err, why);
         }
         s->state = kHPDone;
         break;

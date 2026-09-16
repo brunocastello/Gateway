@@ -54,6 +54,9 @@ struct MacTLS_Server {
     /* One-shot/limited hexdump throttle for GW_DEBUG_IO builds. Kept
      * unconditionally so the struct layout never depends on the flag. */
     int                    logged_raw;
+    /* Set once the handshake completes, so a close before that can be told
+     * apart from an ordinary end-of-session close. */
+    int                    handshook;
 };
 
 MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
@@ -129,6 +132,31 @@ MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
     return s;
 }
 
+/*
+ * What the browser asked for, for the log: its highest version, the suites it
+ * offered, and what we had settled on when the connection ended. Written into
+ * the caller's buffer because it is wanted on two paths.
+ */
+static void describe_hello(MacTLS_Server *s, char *out, size_t cap)
+{
+    char suites[256];
+    size_t pos = 0;
+    unsigned i;
+
+    suites[0] = '\0';
+    for (i = 0; i < s->sc.client_suites_num && pos < sizeof(suites) - 12; i++) {
+        int n = snprintf(suites + pos, sizeof(suites) - pos, "%s%04x",
+                         (i ? "," : ""), s->sc.client_suites[i][0]);
+        if (n < 0) break;
+        pos += (size_t)n;
+    }
+    if (s->sc.client_suites_num == 0)
+        snprintf(suites, sizeof(suites), "(none)");
+    snprintf(out, cap, "client version %04x, %u suite(s) [%s], chosen %04x/%04x",
+             s->sc.client_max_version, s->sc.client_suites_num, suites,
+             s->sc.eng.session.cipher_suite, s->sc.eng.session.version);
+}
+
 MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
 {
     unsigned char *buf;
@@ -176,31 +204,32 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
         int err = br_ssl_engine_last_error(&s->sc.eng);
 
         if (err == BR_ERR_OK) {
+            /*
+             * A clean close. Ordinary at the end of a session -- but a
+             * browser that walks away mid-handshake lands here too, with no
+             * error to report and, until now, nothing in the log. That is
+             * the shape of a client that opens a connection and abandons it,
+             * and the only way to tell which version it had been offered is
+             * to say so here.
+             */
+            if (!s->handshook) {
+                char hello[384];
+                describe_hello(s, hello, sizeof(hello));
+                gw_log("MITM: the browser closed before the handshake "
+                       "finished; %s", hello);
+            }
             s->state = kMacTLS_Closed;
         } else {
             s->state = kMacTLS_Error;
             s->error = kMacTLS_ErrHandshake;
             {
-                char suites[256];
-                size_t pos = 0;
-                unsigned i;
-                suites[0] = '\0';
-                for (i = 0; i < s->sc.client_suites_num && pos < sizeof(suites)-12; i++) {
-                    int n = snprintf(suites + pos, sizeof(suites) - pos, "%s%04x:%04x",
-                        (i ? "," : ""), s->sc.client_suites[i][0], s->sc.client_suites[i][1]);
-                    if (n < 0) break;
-                    pos += (size_t)n;
-                }
-                if (s->sc.client_suites_num == 0)
-                    snprintf(suites, sizeof(suites), "(none)");
+                char hello[384];
+                describe_hello(s, hello, sizeof(hello));
                 if (err >= BR_ERR_SEND_FATAL_ALERT) {
-                gw_log("MITM handshake failed: BearSSL %d (alert %d), client version %04x, %u suite(s) [%s], chosen %04x/%04x",
-                    err, err - BR_ERR_SEND_FATAL_ALERT, s->sc.client_max_version, s->sc.client_suites_num, suites,
-                    s->sc.eng.session.cipher_suite, s->sc.eng.session.version);
+                    gw_log("MITM handshake failed: BearSSL %d (alert %d), %s",
+                           err, err - BR_ERR_SEND_FATAL_ALERT, hello);
                 } else {
-                gw_log("MITM handshake failed: BearSSL %d, client version %04x, %u suite(s) [%s], chosen %04x/%04x",
-                    err, s->sc.client_max_version, s->sc.client_suites_num, suites,
-                    s->sc.eng.session.cipher_suite, s->sc.eng.session.version);
+                    gw_log("MITM handshake failed: BearSSL %d, %s", err, hello);
                 }
 #ifdef GW_DEBUG_IO
                 if (s->sc.client_suites_num == 0 && s->sc.eng.hbuf_in && s->sc.eng.hlen_in >= 6) {
@@ -315,8 +344,15 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
         }
     }
 #endif
-    if (st & (BR_SSL_SENDAPP | BR_SSL_RECVAPP))
+    if (st & (BR_SSL_SENDAPP | BR_SSL_RECVAPP)) {
+        if (!s->handshook) {
+            char hello[384];
+            s->handshook = 1;
+            describe_hello(s, hello, sizeof(hello));
+            gw_log("MITM handshake done: %s", hello);
+        }
         s->state = kMacTLS_Connected;
+    }
     else if (st & (BR_SSL_SENDREC | BR_SSL_RECVREC)) {
         /*
          * Record-level I/O alone means "still handshaking" only before the
