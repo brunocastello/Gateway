@@ -104,8 +104,18 @@ are minted from that key as they are asked for, signed with SHA-1 because the
 browsers this exists for cannot verify anything newer.
 
 The browser will warn that it does not know the issuer, with a Yes button to
-continue. Installing `Gateway CA` stops the warning — worth doing, because
-subresources on other hosts tend to fail silently rather than prompt.
+continue. Installing the authority stops the warning — worth doing, and not
+only for the warning: subresources on other hosts tend to fail silently rather
+than prompt, and a browser that does not trust the certificate closes the
+connection to put its dialog up and opens a second one afterwards, so every
+host costs two handshakes instead of one.
+
+**To install it, fetch `http://<gateway-address>:8765/gateway-ca.crt`** in the
+browser you are setting up. Gateway serves its authority certificate there as
+`application/x-x509-ca-cert`, which is the media type Internet Explorer 4 and
+5 and Netscape 3 and 4 answer by offering to install rather than to save. The
+`Gateway CA` file beside the preferences is the private store — key material
+included — and is not what you import.
 
 **Why not by default:** the only cipher these browsers and BearSSL share is
 3DES, so with `connect_mitm` every byte of every page is encrypted three times
