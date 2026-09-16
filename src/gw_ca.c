@@ -68,7 +68,21 @@ static int    sCacheNext;
  * end to end is the whole format.
  */
 #define GW_CA_MAGIC  "GWCA"
-#define GW_CA_VER    1
+/*
+ * 2 since 0.3.5. The name in a certificate went from UTF8String to
+ * PrintableString (see der_name_cn in gw_x509write.c), which changes the
+ * bytes of the authority's *subject* -- and a stored authority keeps the
+ * certificate it was issued with. Every leaf minted afterwards writes a
+ * PrintableString *issuer*, so the two no longer match byte for byte and no
+ * client can chain the leaf to the authority it has installed: "the identity
+ * certificate issuer is unknown", on a handshake that otherwise succeeds.
+ *
+ * Bumping the version makes store_load reject the old file, so the authority
+ * is regenerated whole and its subject matches again. The authority has to be
+ * installed in the browser once more, which is the price of the encoding
+ * change and is paid once.
+ */
+#define GW_CA_VER    2
 #define GW_CA_HDR    24
 
 static void put16(unsigned char *p, unsigned v)

@@ -5,6 +5,28 @@
 
 Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rather than in front of it, so applications written before modern TLS existed can reach the current web, current mail servers, and the Internet Archive. It runs on Mac OS 9 (PowerPC) and on Windows 95 through XP.
 
+## 0.3.5 — SSL 3.0, and a settings window
+
+**Browsers with no TLS at all now work.** Netscape 3, Internet Explorer 3 and 4, and Internet Explorer 5 for Mac speak SSL 3.0 and nothing newer. BearSSL speaks TLS 1.0 and nothing older, so until now there was no version in common and those browsers could only use link rewriting. Gateway implements SSL 3.0 itself now — the key schedule, the record MAC and an RC4 record layer — and `connect_mitm` serves them a real `https://` address bar. Contributed by [roytam1](https://github.com/roytam1), verified on Netscape 3.04 Gold, 16-bit IE5 and IE 5.1.7 for Mac OS 9.
+
+It is on by default, as `allow_sslv3 = 1`, and only ever chosen when the browser offers nothing better: a browser that can manage TLS 1.0 still gets TLS 1.0. Set it to `0` to refuse SSL 3.0 outright.
+
+**Settings have a window.** Both builds get a preferences window with eight panes — Modules, Web proxy, Wayback, Wayback sites, Mail, Mail upstream, OAuth and Log — reached from the Settings menu item on Mac OS 9 and from File ▸ Preferences on Windows. Every setting in `docs/prefs.md` is there, validated before it is written, and the file keeps its comments and layout. Editing it by hand still works exactly as before.
+
+The Windows window is built from the controls Windows has carried since NT 3.1, so it runs as far back as the rest of the program does.
+
+**You can install the certificate authority now.** `connect_mitm` signs a certificate for each site with an authority it generates on your machine, and the browser warns until that authority is trusted. There was no way to install it — the `Gateway CA` file beside your preferences is the private store, not something a browser can import. Fetch `http://<gateway-address>:8765/gateway-ca.crt` in the browser you are setting up and it will offer to install it. The warning is harmless if you would rather click through it; the only cost is an extra connection per host.
+
+If you used `connect_mitm` in 0.3.4, the authority is regenerated once on first run and has to be trusted again. Nothing else changes.
+
+### Also in 0.3.5
+
+* The About box on Windows was drawing its text a third larger than the Mac's. Same size on both now.
+* An Open Transport connect that failed to complete was reported a step later as a send error, naming the wrong call.
+* `PATCHES.md` §22 could translate two SSLv2 cipher specs onto one TLS suite and emit it twice.
+* §22 itself existed only in generated code and would have been lost by a regeneration. It is in the source it is generated from now.
+* The Windows build no longer compiles SSE2 paths, which do not exist on the hardware its floor implies.
+
 **0.3.4 removes the checkbox.** 0.3.3 made a typed `https://` URL work in a browser with no modern TLS of its own, but only after unticking "Use SSL 2.0" — a setting every Internet Explorer ships with on, and one whose failure looked like anything except a setting. Gateway now understands the message those browsers send and `connect_mitm` works out of the box. Everything 0.3.3 did it still does; nothing else changed.
 
 0.3.3, still current in everything below, makes a typed `https://` URL work in a browser that has no modern TLS of its own, and takes Gateway back to Windows 95 RTM and, on paper, NT 3.51. Nothing from 0.3.2 is regressed; everything new is off by default except the link rewriting.
@@ -17,20 +39,14 @@ There are two ways to get an old browser onto an `https://` site, and they are *
 
 | Prefs | For | What you get |
 |---|---|---|
-| `connect_mitm = 1`, `rewrite_https = 0` | Internet Explorer 5 and 6, Classilla, RetroZilla | Type `https://` and it works. Real https as far as the browser is concerned: the padlock, `Secure` cookies, the URL it asked for. |
-| `rewrite_https = 1`, `connect_mitm = 0` | Internet Explorer 4, Netscape 4.x, IE 5.1 on Mac OS 9 | Type `http://`, or no scheme at all. Links, redirects and resources from other hosts all work. The address bar and `Secure` cookies do not. |
+| `connect_mitm = 1`, `rewrite_https = 0` | Any browser, since 0.3.5 — Internet Explorer 3 upward, Netscape 3 upward, Classilla, RetroZilla | Type `https://` and it works. Real https as far as the browser is concerned: the padlock, `Secure` cookies, the URL it asked for. |
+| `rewrite_https = 1`, `connect_mitm = 0` | Anything, and the lighter of the two | Type `http://`, or no scheme at all. Links, redirects and resources from other hosts all work. The address bar and `Secure` cookies do not. |
 
 `rewrite_https = 1` is the default, so a fresh install behaves as the second row without being configured.
 
-### If you use `connect_mitm`, check that "Use TLS 1.0" is ticked
+### Both boxes can be left alone since 0.3.5
 
-In Internet Explorer: **Tools → Internet Options → Advanced**, down in the Security group. Netscape 4.7 has the equivalent under **Security → Navigator → Configure SSL**. TLS 1.0 is the oldest protocol Gateway can speak to a browser, so a browser with it switched off has nothing in common with Gateway however capable it otherwise is.
-
-"Use SSL 2.0" can be left alone, which is new in 0.3.4 and is the next section. In 0.3.3 it had to be unticked.
-
-### Internet Explorer 4 and Netscape 4 cannot use `connect_mitm`
-
-Not a setting and not a bug. Those browsers have SSL 3.0 and no TLS; BearSSL has TLS 1.0 and no SSL. There is no version in common and nothing that creates one. Use `rewrite_https` with them and type addresses without a scheme — which works well, and is how the feature came to exist. What changed in 0.3.4 is the framing, not the version, so this limit is where it was.
+"Use TLS 1.0" and "Use SSL 2.0", in Internet Explorer under **Tools → Internet Options → Advanced**, or in Netscape 4.7 under **Security → Navigator → Configure SSL**. Gateway now speaks SSL 3.0 as well as TLS, and accepts the SSLv2-compatible hello since 0.3.4, so whichever of them is ticked there is something in common. In 0.3.4 "Use TLS 1.0" had to be on; in 0.3.3 "Use SSL 2.0" had to be off.
 
 ## The SSL 2.0 hello is converted rather than refused (new in 0.3.4)
 

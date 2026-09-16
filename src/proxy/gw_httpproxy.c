@@ -597,6 +597,78 @@ static void session_serve_pac(GWHttpSession *s)
 }
 
 /*
+ * The authority certificate, for installing.
+ *
+ * Until now there was no way to get it. `Gateway CA` beside the preferences
+ * is the private store -- magic, key material and certificate -- not
+ * something a browser can import, so "install Gateway CA" was an instruction
+ * nobody could follow and every host warned for ever. It is served here
+ * instead, in DER, as application/x-x509-ca-cert: the media type that makes
+ * Internet Explorer 4 and 5 and Netscape 3 and 4 open their install dialog
+ * rather than offering to save a file.
+ *
+ * GWCa_Init() rather than GWCa_Ready(): asking for the certificate is a
+ * perfectly good reason to make one, and generating it here costs the same
+ * pause it would cost on the first CONNECT.
+ */
+static void session_serve_ca(GWHttpSession *s)
+{
+    const unsigned char *ca;
+    size_t caLen = 0;
+
+    if (!GWCa_Init() || (ca = GWCa_Cert(&caLen)) == NULL || caLen == 0) {
+        session_fail(s, "HTTP/1.0 503 Service Unavailable\r\n"
+                        "Connection: close\r\n\r\n",
+                     "no certificate authority to serve");
+        return;
+    }
+    gw_log("#%ld serving the authority certificate, %lu bytes",
+           s->id, (unsigned long)caLen);
+    session_serve(s, "application/x-x509-ca-cert",
+                  (const char *)ca, caLen);
+}
+
+/* /gateway-ca.crt, and .der for anything that decides by extension. */
+static int ca_is_path(const char *path)
+{
+    size_t n;
+
+    if (path == NULL || *path != '/') return 0;
+
+    /* Up to the query string, as the script endpoint does. */
+    for (n = 0; path[n] != '\0' && path[n] != '?' && path[n] != '#'; n++)
+        ;
+    if (n != 15) return 0;
+    return gw_strnicmp(path, "/gateway-ca.crt", 15) == 0
+        || gw_strnicmp(path, "/gateway-ca.der", 15) == 0;
+}
+
+/*
+ * Is this asking us for the authority certificate?
+ *
+ * Unlike the auto-configuration script, this is fetched *after* the proxy has
+ * been set, because setting the proxy is what creates the need for it -- so
+ * the browser sends the absolute form, naming Gateway's own address and port,
+ * and not the origin form. Accepting only the origin form, as the first cut
+ * of this did, made the endpoint unreachable in exactly the situation it
+ * exists for.
+ *
+ * Both forms are taken. What keeps it unambiguous is the port: a request
+ * arriving at Gateway and addressed to Gateway's own listening port is
+ * addressed to Gateway, whatever the host in it says. Inside a connect_mitm
+ * tunnel it is never ours -- that is a browser talking to a real origin.
+ */
+static int ca_is_request(GWHttpSession *s)
+{
+    if (s->mitm) return 0;
+    if (!ca_is_path(s->req.url.path)) return 0;
+    if (s->req.shape == kGWShapeOrigin) return 1;
+    if (s->req.shape != kGWShapeAbsolute) return 0;
+    return s->req.url.port ==
+           (s->wayback ? GW_WaybackPort() : GW_HttpPort());
+}
+
+/*
  * Point a request at the archive, unless it is for the settings page or for a
  * host on the allow-list. Returns 1 when the session is already finished.
  */
@@ -864,6 +936,11 @@ static void step_recv_request(GWHttpSession *s)
     if (s->req.shape == kGWShapeOrigin && !s->mitm &&
         gw_pac_is_request(s->req.url.path)) {
         session_serve_pac(s);
+        return;
+    }
+
+    if (ca_is_request(s)) {
+        session_serve_ca(s);
         return;
     }
 
@@ -1559,6 +1636,9 @@ static void step_mitm_wait(GWHttpSession *s)
                         "floor (%s)", ver, dir);
                 why = why_buf;
             }
+            else if (err == 0)
+                why = ": the browser closed it, which is not an error "
+                      "-- see the line above for what it was offered";
             else if (err == 16)
                 why = ": no cipher suite in common (a 40-bit browser?)";
             else if (err == 4)
@@ -1570,8 +1650,10 @@ static void step_mitm_wait(GWHttpSession *s)
             else if (err > 256)
                 why = ": the browser sent a fatal alert";
 
-            gw_log("#%ld handshake with the browser failed for %s "
-                   "(BearSSL %d%s)", s->id, s->mitmHost, err, why);
+            gw_log("#%ld handshake with the browser %s for %s "
+                   "(BearSSL %d%s)", s->id,
+                   err == 0 ? "was abandoned" : "failed",
+                   s->mitmHost, err, why);
         }
         s->state = kHPDone;
         break;

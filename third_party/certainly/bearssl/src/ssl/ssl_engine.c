@@ -711,6 +711,7 @@ ssl2_convert_hello(br_ssl_engine_context *rc)
 	for (i = 0; i < cs_len; i += 3) {
 		unsigned s0 = cs_ptr[i], s1 = cs_ptr[i + 1], s2 = cs_ptr[i + 2];
 		unsigned suite;
+		size_t k;
 
 		if (s0 == 0x00) {
 			suite = (s1 << 8) | s2;
@@ -719,6 +720,18 @@ ssl2_convert_hello(br_ssl_engine_context *rc)
 		} else {
 			continue;
 		}
+		/*
+		 * Two specs can land on one suite, and a real browser sends
+		 * both: Internet Explorer 5 lists SSLv2's own 3DES
+		 * (07 00 C0) and TLS_RSA_WITH_3DES_EDE_CBC_SHA (00 00 0A),
+		 * which translate to the same 0x000A. Emitting it twice
+		 * hands BearSSL a hello no client would have sent.
+		 */
+		for (k = 0; k < num_suites; k++) {
+			if (((unsigned)suites[k * 2] << 8 | suites[k * 2 + 1])
+				== suite) break;
+		}
+		if (k < num_suites) continue;
 		if (num_suites * 2 + 2 > sizeof suites) {
 			br_ssl_engine_fail(rc, BR_ERR_TOO_LARGE);
 			return;
@@ -755,6 +768,7 @@ ssl2_convert_hello(br_ssl_engine_context *rc)
 	 */
 	br_multihash_update(&rc->mhash, p + 2, len);
 	rc->hash_skip = hs_len;
+	rc->ssl2_hello = 1;
 	/* Gateway: the side transcript hashes what the peer sent. */
 	gw_hs_append(rc, p + 2, len);
 
@@ -1782,6 +1796,7 @@ br_ssl_engine_hs_reset(br_ssl_engine_context *cc,
 	cc->hash_skip = 0;
 	cc->hs_transcript_len = 0;
 	cc->hs_transcript_full = 0;
+	cc->ssl2_hello = 0;
 	cc->shutdown_recv = 0;
 	cc->application_data = 0;
 	cc->alert = 0;

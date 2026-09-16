@@ -56,10 +56,20 @@ static pascal void gw_conn_notifier(void *context, OTEventCode event,
     (void)cookie;
 
     switch (event) {
-    case T_CONNECT:
+    case T_CONNECT: {
+        /*
+         * OTRcvConnect is what actually completes the connect, and its result
+         * used to be discarded: a failure here left fConnect set, the state
+         * machine went to Ready believing the endpoint was up, and the first
+         * OTSnd on it came back kOTOutStateErr -- a confusing way to learn
+         * that the connect never finished, and one that names the wrong call.
+         */
+        OSStatus rcv = OTRcvConnect(c->ep, NULL);
+
+        if (rcv != noErr && rcv != kOTNoDataErr) c->err = rcv;
         c->fConnect = true;
-        OTRcvConnect(c->ep, NULL);
         break;
+    }
 
     case T_PASSCON:
         c->fPassCon = true;
@@ -226,7 +236,10 @@ GWConnState GWConn_Pump(GWConn *c)
             break;
         }
         if (c->fDisconnect) { c->state = kGWConnError; break; }
-        if (c->fConnect) c->state = kGWConnReady;
+        if (c->fConnect) {
+            /* Set by the notifier when OTRcvConnect refused to finish. */
+            c->state = c->err != noErr ? kGWConnError : kGWConnReady;
+        }
         break;
 
     case kGWConnAccepting:

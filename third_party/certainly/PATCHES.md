@@ -1009,6 +1009,16 @@ directly rather than `s->state`, and `GWStream_Pump()` will not move a stream
 back out of Ready, so nothing acted on it. Left in place it would have been
 waiting for the first caller that did.
 
+### §22 addendum — two SSLv2 specs can mean one TLS suite
+
+Internet Explorer 5's SSLv2-compatible hello lists both SSLv2's own 3DES
+(`07 00 C0`) and `TLS_RSA_WITH_3DES_EDE_CBC_SHA` (`00 00 0A`). The converter
+maps the first onto the second, so the rewritten hello carried `0x000A` twice
+— a list no client would have sent. Found in the log as
+`4 suite(s) [0004,000a,000a,0003]` on the connection IE opened and abandoned,
+against `3 suite(s) [0004,000a,0003]` on the one it kept. Translated suites
+are now checked against the ones already emitted.
+
 ## §28 — SSL 3.0, for browsers that have no TLS at all
 
 Contributed by [roytam1](https://github.com/roytam1/Gateway/tree/myfix2), who

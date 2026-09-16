@@ -470,17 +470,27 @@ static HWND gAbout;
  * the text, so every line still lands where it was laid out -- at 230 the last
  * line shared its row with the OK button.
  */
-/* Points to logical units through the display's own resolution, so the text is
- * the size it claims whatever the screen is set to. */
-static HFONT about_font(int dpi, int pt, int weight)
+/*
+ * The sizes in kAbout are the Mac's, and the Mac's are pixels: a classic Mac
+ * screen is 72 dpi, so Charcoal 12 is a twelve-pixel em. Converting them as
+ * points through a 96 dpi display made every line a third taller than its
+ * counterpart -- cap heights of 12 and 10 against the Mac's 9 and 8 -- so the
+ * two About boxes carried the same words at visibly different sizes.
+ *
+ * Scaling against 96 rather than 72 makes the number mean the pixel height it
+ * means on the Mac, while still growing on a display set to more, which is
+ * what the dpi argument was for. The face stays MS Sans Serif: the point was
+ * only ever the size.
+ */
+static HFONT about_font(int dpi, int px, int weight)
 {
-    return CreateFontA(-MulDiv(pt, dpi, 72), 0, 0, 0, weight, 0, 0, 0,
+    return CreateFontA(-MulDiv(px, dpi, 96), 0, 0, 0, weight, 0, 0, 0,
                        ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                        DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
                        "MS Sans Serif");
 }
 
-static const struct { int y; int pt; int bold; const char *text; } kAbout[] = {
+static const struct { int y; int px; int bold; const char *text; } kAbout[] = {
     {  64, 12, 1, "Gateway " GW_VERSION_STRING     },
     {  84, 10, 0, "A TLS 1.3 gateway for Windows"  },
     { 112, 10, 1, "Bruno Castello"                 },
@@ -529,7 +539,7 @@ static LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
         for (i = 0; i < (int)(sizeof(kAbout) / sizeof(kAbout[0])); i++) {
             SelectObject(dc, !kAbout[i].bold ? plain
-                             : (kAbout[i].pt == 12 ? title : name));
+                             : (kAbout[i].px == 12 ? title : name));
             TextOutA(dc, midX, kAbout[i].y, kAbout[i].text,
                      (int)strlen(kAbout[i].text));
         }

@@ -92,6 +92,19 @@ file(GLOB_RECURSE BEARSSL_SOURCES
     ${CERTAINLY_DIR}/bearssl/src/x509/*.c
 )
 
+#
+# Per-record handshake hexdumps in the Certainly MITM server, matching
+# Makefile.win32's GW_DEBUG_IO. Off by default: a release build stays quiet
+# apart from the one-line handshake notes. Turn it on for a build that has to
+# explain a vintage handshake byte by byte:
+#
+#   cmake -DGW_DEBUG_IO=ON ...
+#
+option(GW_DEBUG_IO "Hexdump handshake records to the log" OFF)
+if(GW_DEBUG_IO)
+    add_compile_definitions(GW_DEBUG_IO)
+endif()
+
 add_library(bearssl STATIC ${BEARSSL_SOURCES})
 target_include_directories(bearssl
     PUBLIC  ${CERTAINLY_DIR}/bearssl/inc

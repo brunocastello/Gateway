@@ -1074,6 +1074,14 @@ typedef struct {
 	unsigned char hs_transcript_full;
 
 	/*
+	 * Set when the ClientHello arrived in SSLv2 framing and was converted
+	 * (see ssl2_convert_hello). Diagnostic only: the converted hello is
+	 * indistinguishable from a native one once it has been rewritten, and
+	 * the difference is exactly what a log has to be able to say.
+	 */
+	unsigned char ssl2_hello;
+
+	/*
 	 * The 'action' value communicates OOB information between the
 	 * engine and the handshake processor.
 	 *
