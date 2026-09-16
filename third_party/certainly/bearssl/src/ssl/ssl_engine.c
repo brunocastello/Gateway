@@ -1366,7 +1366,6 @@ static int
 ssl3_rewrite_finished(br_ssl_engine_context *cc,
 	unsigned char *hbuf, size_t hlen)
 {
-	unsigned suite = cc->session.cipher_suite;
 	unsigned char expect[36];
 	unsigned diff;
 	size_t k;
@@ -1374,7 +1373,6 @@ ssl3_rewrite_finished(br_ssl_engine_context *cc,
 	if (cc->incrypt == 0
 		|| cc->record_type_in != BR_SSL_HANDSHAKE
 		|| cc->session.version != BR_SSL30
-		|| (suite != 0x0003 && suite != 0x0004 && suite != 0x0005)
 		|| cc->hs_transcript_full
 		|| cc->ixa != 5
 		|| cc->ixc != 0
@@ -1412,9 +1410,12 @@ ssl3_rewrite_finished(br_ssl_engine_context *cc,
  * SSLv2 conversion above).
  *
  * This fires at most once per connection, and only when provably safe:
- * plaintext handshake record, negotiated SSL 3.0 with an RSA RC4 suite,
- * buffer positioned exactly at a record start holding exactly one
- * complete ClientKeyExchange message. Anything else (splits, other
+ * plaintext handshake record, SSL 3.0 negotiated, buffer positioned exactly
+ * at a record start holding exactly one complete ClientKeyExchange message.
+ * The missing length is a property of the version, not of the cipher suite:
+ * gating it on the RC4 suites left SSL 3.0 with 3DES -- which BearSSL has
+ * always had -- dying on LIMIT_EXCEEDED, which is what Netscape 4.75
+ * negotiates. Anything else (splits, other
  * messages, other suites) is left untouched to fail as before.
  * Returns 1 when the message was rewritten (grown by 2 bytes).
  */
@@ -1422,13 +1423,11 @@ static int
 ssl3_rewrite_cke(br_ssl_engine_context *cc,
 	unsigned char *hbuf, size_t hlen)
 {
-	unsigned suite = cc->session.cipher_suite;
 	size_t msglen;
 
 	if (cc->incrypt
 		|| cc->record_type_in != BR_SSL_HANDSHAKE
 		|| cc->session.version != BR_SSL30
-		|| (suite != 0x0003 && suite != 0x0004 && suite != 0x0005)
 		|| cc->ixa != 5
 		|| cc->ixc != 0
 		|| hlen < 4
@@ -1559,9 +1558,6 @@ br_ssl_engine_flush_record(br_ssl_engine_context *cc)
 	 */
 	if (cc->record_type_out == BR_SSL_HANDSHAKE
 		&& cc->session.version == BR_SSL30
-		&& (cc->session.cipher_suite == 0x0003
-			|| cc->session.cipher_suite == 0x0004
-			|| cc->session.cipher_suite == 0x0005)
 		&& !cc->hs_transcript_full
 		&& cc->hbuf_out != NULL && cc->saved_hbuf_out != NULL
 		&& cc->hbuf_out - cc->saved_hbuf_out == 16
