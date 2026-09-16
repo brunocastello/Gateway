@@ -10,4 +10,9 @@ tests/host/*.der
 # The screenshot dropped in the root for a conversation, and the debug
 # bundle a host-test build leaves behind. Neither belongs to the program.
 Conversation.png
+# Screenshots used while testing against real hardware. They are evidence for
+# one conversation, not part of the program.
+*.png
+!src/win32/*.png
+!installer/**/*.png
 tests/host/run_tests.dSYM/
