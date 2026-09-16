@@ -264,6 +264,15 @@ static int pool_take(const char *host, UInt16 port, int tls, GWStream *out)
 
         /* Only if it is still up: the far end may have closed it since. */
         if (GWStream_Pump(&slot->stream) != kGWStreamReady) {
+            /*
+             * Worth saying. A pooled connection that is gone by the time it
+             * is wanted looks exactly like one that was never pooled -- both
+             * end in "opening a connection to" -- and the two call for
+             * different answers: the first is the far end hanging up on an
+             * idle socket, the second is our own framing rule refusing it.
+             */
+            gw_log("upstream to %s was pooled but had gone by the time it "
+                   "was wanted", host);
             pool_drop(slot);
             continue;
         }
