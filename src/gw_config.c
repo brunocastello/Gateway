@@ -26,11 +26,27 @@
 static char   sText[GW_PREFS_MAX];
 static long   sLen;
 static int    sLoaded;
+static unsigned long sSum;              /* of the text last reported */
 
+/* FNV-1a, only ever compared against itself. */
+static unsigned long prefs_sum(const char *text, long len)
+{
+    unsigned long h = 2166136261UL;
+    long i;
+
+    for (i = 0; i < len; i++) {
+        h ^= (unsigned long)(unsigned char)text[i];
+        h *= 16777619UL;
+    }
+    return h;
+}
 
 void GWConfig_Load(void)
 {
     long count;
+    long wasLen = sLoaded ? sLen : -1;
+    unsigned long wasSum = sSum;
+    unsigned long sum;
 
     sLen = 0;
     sLoaded = 0;
@@ -38,6 +54,21 @@ void GWConfig_Load(void)
 
     count = GWPlat_ReadPrefs(sText, GW_PREFS_MAX - 1);
     if (count < 0) return;
+
+    /*
+     * Reloading is routine -- every Save in the preferences window ends with
+     * one, and the core asks for another right after -- so the log says
+     * something only when the file has actually changed. Three identical
+     * pairs of lines after one Save said nothing the first pair had not.
+     */
+    sum = prefs_sum(sText, count);
+    if (wasLen == count && wasSum == sum) {
+        sLen = count;
+        sText[sLen] = '\0';
+        sLoaded = 1;
+        return;
+    }
+    sSum = sum;
 
     sLen = count;
     sText[sLen] = '\0';

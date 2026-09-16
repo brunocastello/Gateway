@@ -525,8 +525,7 @@ static int save_values(void)
         strcpy(gItems[i].original, value);
     }
 
-    GWConfig_Load();
-    GW_LoadSettings();
+    GW_LoadSettings();   /* which is the reload; see gw_core.c */
     return 1;
 }
 
