@@ -152,7 +152,9 @@ static void describe_hello(MacTLS_Server *s, char *out, size_t cap)
     }
     if (s->sc.client_suites_num == 0)
         snprintf(suites, sizeof(suites), "(none)");
-    snprintf(out, cap, "client version %04x, %u suite(s) [%s], chosen %04x/%04x",
+    snprintf(out, cap,
+             "%s hello, client version %04x, %u suite(s) [%s], chosen %04x/%04x",
+             s->sc.eng.ssl2_hello ? "SSLv2-framed" : "native",
              s->sc.client_max_version, s->sc.client_suites_num, suites,
              s->sc.eng.session.cipher_suite, s->sc.eng.session.version);
 }

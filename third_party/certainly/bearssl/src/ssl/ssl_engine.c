@@ -768,6 +768,7 @@ ssl2_convert_hello(br_ssl_engine_context *rc)
 	 */
 	br_multihash_update(&rc->mhash, p + 2, len);
 	rc->hash_skip = hs_len;
+	rc->ssl2_hello = 1;
 	/* Gateway: the side transcript hashes what the peer sent. */
 	gw_hs_append(rc, p + 2, len);
 
@@ -1795,6 +1796,7 @@ br_ssl_engine_hs_reset(br_ssl_engine_context *cc,
 	cc->hash_skip = 0;
 	cc->hs_transcript_len = 0;
 	cc->hs_transcript_full = 0;
+	cc->ssl2_hello = 0;
 	cc->shutdown_recv = 0;
 	cc->application_data = 0;
 	cc->alert = 0;
