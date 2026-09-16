@@ -100,9 +100,7 @@ file(GLOB_RECURSE BEARSSL_SOURCES
 #
 #   cmake -DGW_DEBUG_IO=ON ...
 #
-# TEMPORARY: ON so a CI build carries the hexdumps while the SSLv2-framed
-# hello from IE 5.1.7 for Mac is being read. Back to OFF once it is understood.
-option(GW_DEBUG_IO "Hexdump handshake records to the log" ON)
+option(GW_DEBUG_IO "Hexdump handshake records to the log" OFF)
 if(GW_DEBUG_IO)
     add_compile_definitions(GW_DEBUG_IO)
 endif()
