@@ -152,11 +152,20 @@ static void describe_hello(MacTLS_Server *s, char *out, size_t cap)
     }
     if (s->sc.client_suites_num == 0)
         snprintf(suites, sizeof(suites), "(none)");
+    /*
+     * hs_transcript_len is every handshake byte hashed in both directions, so
+     * it says how far a handshake got before it stopped. A few hundred is our
+     * certificate going out and nothing coming back; past that the peer has
+     * sent its key exchange and the question becomes Finished rather than
+     * anything it read in our answer.
+     */
     snprintf(out, cap,
-             "%s hello, client version %04x, %u suite(s) [%s], chosen %04x/%04x",
+             "%s hello, client version %04x, %u suite(s) [%s], chosen %04x/%04x,"
+             " %u handshake bytes",
              s->sc.eng.ssl2_hello ? "SSLv2-framed" : "native",
              s->sc.client_max_version, s->sc.client_suites_num, suites,
-             s->sc.eng.session.cipher_suite, s->sc.eng.session.version);
+             s->sc.eng.session.cipher_suite, s->sc.eng.session.version,
+             (unsigned)s->sc.eng.hs_transcript_len);
 }
 
 MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
