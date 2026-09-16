@@ -133,39 +133,15 @@ MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
 }
 
 /*
- * What the browser asked for, for the log: its highest version, the suites it
- * offered, and what we had settled on when the connection ended. Written into
- * the caller's buffer because it is wanted on two paths.
+ * What the connection settled on, for the log. Which framing the hello
+ * arrived in is worth a word: a browser that speaks the SSLv2-compatible
+ * form is a browser that predates the one Gateway would otherwise assume.
  */
 static void describe_hello(MacTLS_Server *s, char *out, size_t cap)
 {
-    char suites[256];
-    size_t pos = 0;
-    unsigned i;
-
-    suites[0] = '\0';
-    for (i = 0; i < s->sc.client_suites_num && pos < sizeof(suites) - 12; i++) {
-        int n = snprintf(suites + pos, sizeof(suites) - pos, "%s%04x",
-                         (i ? "," : ""), s->sc.client_suites[i][0]);
-        if (n < 0) break;
-        pos += (size_t)n;
-    }
-    if (s->sc.client_suites_num == 0)
-        snprintf(suites, sizeof(suites), "(none)");
-    /*
-     * hs_transcript_len is every handshake byte hashed in both directions, so
-     * it says how far a handshake got before it stopped. A few hundred is our
-     * certificate going out and nothing coming back; past that the peer has
-     * sent its key exchange and the question becomes Finished rather than
-     * anything it read in our answer.
-     */
-    snprintf(out, cap,
-             "%s, %u hs bytes, ver %04x, chose %04x/%04x, %u suite(s) [%s]",
+    snprintf(out, cap, "%s hello, version %04x, suite %04x",
              s->sc.eng.ssl2_hello ? "SSLv2" : "native",
-             (unsigned)s->sc.eng.hs_transcript_len,
-             s->sc.client_max_version,
-             s->sc.eng.session.cipher_suite, s->sc.eng.session.version,
-             s->sc.client_suites_num, suites);
+             s->sc.eng.session.version, s->sc.eng.session.cipher_suite);
 }
 
 MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
@@ -226,7 +202,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
             if (!s->handshook) {
                 char hello[384];
                 describe_hello(s, hello, sizeof(hello));
-                gw_log("MITM closed unfinished: %s", hello);
+                gw_log("MITM handshake abandoned by the browser: %s", hello);
             }
             s->state = kMacTLS_Closed;
         } else {
@@ -321,7 +297,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
                     if (!s->handshook) {
                         char hello[384];
                         describe_hello(s, hello, sizeof(hello));
-                        gw_log("MITM hung up unfinished: %s", hello);
+                        gw_log("MITM handshake abandoned by the browser: %s", hello);
                     }
                     br_ssl_engine_close(&s->sc.eng);
                     s->state = kMacTLS_Closed;
@@ -374,7 +350,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
             char hello[384];
             s->handshook = 1;
             describe_hello(s, hello, sizeof(hello));
-            gw_log("MITM done: %s", hello);
+            gw_log("MITM handshake done: %s", hello);
         }
         s->state = kMacTLS_Connected;
     }

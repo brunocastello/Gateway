@@ -23,7 +23,6 @@
  */
 
 #include "inner.h"
-#include <portable/gw_log.h>
 
 #if 0
 /* obsolete */
@@ -767,20 +766,6 @@ ssl2_convert_hello(br_ssl_engine_context *rc)
 	 * here -- the converted hello is always the first handshake
 	 * message -- so this pre-feed is exactly the transcript prefix.
 	 */
-	/*
-	 * The fields that decide whether the rewrite is faithful, in a form
-	 * that does not need a hex dump read back to it. The challenge length
-	 * is the one that matters: anything short of 32 has to be padded into
-	 * client_random, and if the browser pads it at the other end the two
-	 * sides derive different secrets and the handshake dies at Finished
-	 * -- silently, because a browser of this age closes rather than
-	 * sending an alert.
-	 */
-	gw_log("SSLv2 hello: version %04x, %u spec(s) -> %u suite(s), "
-		"session id %u, challenge %u",
-		version, (unsigned)(cs_len / 3), (unsigned)num_suites,
-		(unsigned)sid_len, (unsigned)chall_len);
-
 	br_multihash_update(&rc->mhash, p + 2, len);
 	rc->hash_skip = hs_len;
 	rc->ssl2_hello = 1;

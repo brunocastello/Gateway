@@ -264,15 +264,6 @@ static int pool_take(const char *host, UInt16 port, int tls, GWStream *out)
 
         /* Only if it is still up: the far end may have closed it since. */
         if (GWStream_Pump(&slot->stream) != kGWStreamReady) {
-            /*
-             * Worth saying. A pooled connection that is gone by the time it
-             * is wanted looks exactly like one that was never pooled -- both
-             * end in "opening a connection to" -- and the two call for
-             * different answers: the first is the far end hanging up on an
-             * idle socket, the second is our own framing rule refusing it.
-             */
-            gw_log("upstream to %s was pooled but had gone by the time it "
-                   "was wanted", host);
             pool_drop(slot);
             continue;
         }
@@ -291,8 +282,6 @@ static void pool_put(GWStream *s, const char *host, UInt16 port, int tls)
     int i;
 
     if (GWStream_Pump(s) != kGWStreamReady) {
-        gw_log("upstream to %s not kept: the connection was no longer ready",
-               host);
         GWStream_Destroy(s);
         return;
     }
@@ -312,8 +301,6 @@ static void pool_put(GWStream *s, const char *host, UInt16 port, int tls)
         return;
     }
 
-    gw_log("upstream to %s not kept: all %d pool slots are busy",
-           host, GW_POOL_SIZE);
     GWStream_Destroy(s);                    /* pool full */
 }
 
@@ -852,22 +839,10 @@ static int session_retry_fresh(GWHttpSession *s)
 /* The response is complete: keep the connection if its framing allowed it. */
 static void session_finish_body(GWHttpSession *s)
 {
-    /*
-     * A handshake to an origin is most of the cost of a request on this
-     * hardware, so when one cannot be kept it is worth saying which rule
-     * refused it -- every request paying for a fresh TLS connection to a host
-     * it just finished talking to is the difference between a page arriving
-     * and a page crawling.
-     */
-    if (s->upReusable && s->uheadLen == 0) {
+    if (s->upReusable && s->uheadLen == 0)
         pool_put(&s->up, s->upHost, s->upPort, s->upTls);
-    } else {
-        gw_log("#%ld upstream to %s not kept: %s", s->id, s->upHost,
-               !s->upReusable
-                   ? "the response framing did not allow it"
-                   : "the head buffer still held bytes");
+    else
         GWStream_Destroy(&s->up);
-    }
 
     /*
      * Release the held tail. There is no next read to finish an "https://"
