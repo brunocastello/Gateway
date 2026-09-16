@@ -52,14 +52,33 @@ sr_choose(const br_ssl_server_policy_class **pctx,
 		unsigned id = st[u][0];
 
 		/*
-		 * Gateway: SSL 3.0 RC4 suites negotiate below TLS 1.0
-		 * only; their record layer, MAC and key schedule do not
-		 * exist above it. Skip them anywhere else (fail closed
-		 * toward the next suite, eventually a clean alert 40).
+		 * Gateway: SSL 3.0 and the RC4 suites go together, in both
+		 * directions, and neither pairing exists outside the other.
+		 *
+		 * Above SSL 3.0 the RC4 suites have no record layer, MAC or
+		 * key schedule. At SSL 3.0 nothing *but* they do: SSL 3.0's
+		 * record MAC nests the secret between pads rather than
+		 * HMAC-ing it, and its CBC padding is arbitrary where TLS's
+		 * is checked, so BearSSL's CBC record layer -- which is what
+		 * a suite like TLS_RSA_WITH_3DES_EDE_CBC_SHA would reach for
+		 * -- computes the wrong MAC over the wrong padding and the
+		 * first encrypted record fails with BR_ERR_BAD_MAC. Netscape
+		 * Communicator 4.75 offers SSL 3.0 with 3DES and lands
+		 * exactly there.
+		 *
+		 * Skipping rather than failing: the loop moves on to the
+		 * next suite the client offered, which for every browser in
+		 * range includes RC4, and only a client offering nothing
+		 * else reaches the clean alert at the end.
 		 */
-		if ((id == 0x0003 || id == 0x0004 || id == 0x0005)
-			&& cc->eng.session.version != BR_SSL30) {
-			continue;
+		{
+			int is_rc4 = (id == 0x0003 || id == 0x0004
+				|| id == 0x0005);
+			int is_ssl3 = (cc->eng.session.version == BR_SSL30);
+
+			if (is_rc4 != is_ssl3) {
+				continue;
+			}
 		}
 
 		tt = st[u][1];
