@@ -7,13 +7,15 @@ Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rath
 
 ## What's new in 0.3.5
 
-**Browsers with no TLS at all now work.** Netscape 3, Internet Explorer 3 and 4, and IE 5 for Mac OS 9 speak SSL 3.0 and nothing newer, so until now they could only use link rewriting. Gateway implements SSL 3.0 itself and serves them a real `https://` address bar. Contributed by [roytam1](https://github.com/roytam1).
+**Browsers with no TLS at all now work.** Netscape 3 and 4, Internet Explorer 3 and 4, and IE 5 for Mac OS 9 speak SSL 3.0 and nothing newer, so until now they could only use link rewriting. Gateway implements SSL 3.0 itself — the key schedule, the record MAC and an RC4 record layer — and serves them a real `https://` address bar. Contributed by [roytam1](https://github.com/roytam1), verified on Netscape Communicator 4.75, 16-bit IE5 and IE 5.1.7 for Mac OS 9.
+
+SSL 3.0 is spoken over RC4, which is what every browser of that age offers. A client that asks for SSL 3.0 with nothing but a CBC suite is told there is no cipher in common rather than being handed a broken handshake.
 
 **Settings have a window.** Eight panes, on both platforms — Settings… in the Apple menu on Mac OS 9, File ▸ Preferences on Windows. The preferences file stays hand-editable and keeps its comments.
 
 **The certificate authority can be installed.** Visit `http://<gateway-address>:8765/gateway-ca.crt` in the browser you are setting up and it will offer to install it, which stops the warning `connect_mitm` otherwise shows on every site. Clicking through the warning still works.
 
-Also: the About box on Windows drew its text a third larger than the Mac's; a failed Open Transport connect reported the wrong call; and two SSLv2 cipher specs could translate onto one TLS suite and be sent twice.
+Also: the About box on Windows drew its text a third larger than the Mac's; a failed Open Transport connect reported the wrong call; and the SSLv2-compatible hello could translate two cipher specs onto one suite and send it twice.
 
 ## Setting it up
 
