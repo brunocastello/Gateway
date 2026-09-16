@@ -91,9 +91,13 @@ single field was read — no certificate warning, just `BearSSL 3` in the log.
 Gateway now understands that framing and reads the TLS hello inside it, so the
 box can be left as the browser shipped it.
 
-**IE 4 and Netscape 4 still cannot use `connect_mitm`.** Their limit was never
-the framing: they have SSL 3.0 and no TLS, BearSSL has TLS 1.0 and no SSL, and
-no setting creates an overlap. Those browsers want `rewrite_https` instead.
+**Browsers with no TLS at all can use `connect_mitm` since 0.3.5.** They have
+SSL 3.0 and nothing newer, and BearSSL had TLS 1.0 and nothing older, so until
+now no setting created an overlap and those browsers wanted `rewrite_https`
+instead. `allow_sslv3` closes that gap — `PATCHES.md` §28 gives `BR_SSL30` an
+implementation — and Internet Explorer 5.1.7 for Mac OS 9, which offers SSL 3.0
+as its *best* version, now gets a real `https://` address bar over RC4-128.
+`rewrite_https` remains the lighter option and still works for all of them.
 
 Gateway generates its own certificate authority the first time `connect_mitm`
 needs one — a 1024-bit RSA key and a self-signed certificate, made on the
