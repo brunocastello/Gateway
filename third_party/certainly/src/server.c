@@ -298,6 +298,22 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
                 br_ssl_engine_recvrec_ack(&s->sc.eng, (size_t)n);
             } else if (n < 0) {
                 if (ct_transport_peer_closed(s->transport)) {
+                    /*
+                     * The peer hung up. Ordinary at the end of a session, but
+                     * a browser that does it mid-handshake lands here too --
+                     * and this is the path it actually takes, ahead of the
+                     * BR_SSL_CLOSED branch below, so the description has to
+                     * be here as well to be of any use. What it says is how
+                     * far the handshake had got: a chosen suite of 0000/0000
+                     * means it left before we answered its hello, anything
+                     * else means it left after seeing our certificate.
+                     */
+                    if (!s->handshook) {
+                        char hello[384];
+                        describe_hello(s, hello, sizeof(hello));
+                        gw_log("MITM: the browser hung up before the "
+                               "handshake finished; %s", hello);
+                    }
                     br_ssl_engine_close(&s->sc.eng);
                     s->state = kMacTLS_Closed;
                     return s->state;

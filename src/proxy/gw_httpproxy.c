@@ -282,6 +282,8 @@ static void pool_put(GWStream *s, const char *host, UInt16 port, int tls)
     int i;
 
     if (GWStream_Pump(s) != kGWStreamReady) {
+        gw_log("upstream to %s not kept: the connection was no longer ready",
+               host);
         GWStream_Destroy(s);
         return;
     }
@@ -301,6 +303,8 @@ static void pool_put(GWStream *s, const char *host, UInt16 port, int tls)
         return;
     }
 
+    gw_log("upstream to %s not kept: all %d pool slots are busy",
+           host, GW_POOL_SIZE);
     GWStream_Destroy(s);                    /* pool full */
 }
 
@@ -839,10 +843,22 @@ static int session_retry_fresh(GWHttpSession *s)
 /* The response is complete: keep the connection if its framing allowed it. */
 static void session_finish_body(GWHttpSession *s)
 {
-    if (s->upReusable && s->uheadLen == 0)
+    /*
+     * A handshake to an origin is most of the cost of a request on this
+     * hardware, so when one cannot be kept it is worth saying which rule
+     * refused it -- every request paying for a fresh TLS connection to a host
+     * it just finished talking to is the difference between a page arriving
+     * and a page crawling.
+     */
+    if (s->upReusable && s->uheadLen == 0) {
         pool_put(&s->up, s->upHost, s->upPort, s->upTls);
-    else
+    } else {
+        gw_log("#%ld upstream to %s not kept: %s", s->id, s->upHost,
+               !s->upReusable
+                   ? "the response framing did not allow it"
+                   : "the head buffer still held bytes");
         GWStream_Destroy(&s->up);
+    }
 
     /*
      * Release the held tail. There is no next read to finish an "https://"
