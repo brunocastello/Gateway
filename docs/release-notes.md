@@ -29,5 +29,5 @@ If you used `connect_mitm`, the certificate authority is regenerated once on fir
 
 ## Downloads
 
-**Mac OS 9:** `Gateway-v0.3.5.sit` for real hardware, or `Gateway-v0.3.5.dsk` to mount in an emulator.
-**Windows:** `Gateway-Setup-v0.3.5.exe`, or the zip if you would rather not run an installer.
+**Mac OS 9:** the `.sit` archive for real hardware, or the `.dsk` disk image to mount in an emulator.
+**Windows:** the `.zip` to unpack anywhere, or the `.img` floppy image if the machine has no other way to receive a file.
