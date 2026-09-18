@@ -174,9 +174,16 @@ nothing, and the settings below stand on their own.
 | `oauth_client_secret` | empty | Needed by Google even for desktop clients; Microsoft public clients do not use one. |
 | `refresh_token` | — | Obtained out of band. Gateway rewrites this line whenever the provider rotates it, which is what keeps an account working for months. |
 
-Gateway never runs the OAuth consent flow. Get a refresh token on a modern
-machine — running [email-oauth2-proxy](https://github.com/simonrob/email-oauth2-proxy)
-against the account once is the easiest route — and extract it with
-`tools/extract-refresh-token.py`, which also prints the matching `client_id`
-and scope. Note that a token stored by that proxy is encrypted: a value
-beginning `gAAAAA` is ciphertext, not a token.
+Gateway never runs the OAuth consent flow: the providers' sign-in pages need a
+modern browser, and no browser Gateway serves can render them. Get the token
+on a modern computer with `get-email-token.py`, which ships with every release
+and lives in `tools/` — macOS, Windows or Linux, any Python 3, nothing to
+install. It opens the sign-in in your browser, then prints the `provider`,
+`oauth_client_id`, `oauth_client_secret` and `refresh_token` lines to put
+here. It uses Thunderbird's public clients, so there is no application to
+register.
+
+The splice itself follows [email-oauth2-proxy](https://github.com/simonrob/email-oauth2-proxy),
+which does the same job on a modern machine. A token from its config file does
+not paste across: that proxy stores tokens encrypted, and a value beginning
+`gAAAAA` is ciphertext. Run `get-email-token.py` instead.

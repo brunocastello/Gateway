@@ -15,8 +15,9 @@
  *     oauth_client_id = 00000000-0000-0000-0000-000000000000
  *     refresh_token  = M.C5...
  *
- * The refresh token is obtained out of band; Gateway never runs the consent
- * flow itself (CLAUDE.md non-goals).
+ * The refresh token comes from tools/get-email-token.py, run on a modern
+ * computer; Gateway never runs the consent flow itself (CLAUDE.md non-goals),
+ * because no browser it serves can render the providers' sign-in pages.
  */
 #ifndef GW_CONFIG_H
 #define GW_CONFIG_H

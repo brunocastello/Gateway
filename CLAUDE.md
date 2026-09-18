@@ -38,7 +38,8 @@
 
 ### Module 2 — Mail Splice (`:1993` / `:1587`)
 * Outlook Express 5 setup (Incoming IMAP `:1993` SSL off; Outgoing SMTP `:1587` SSL off, auth on).
-* Local password checked against Gateway prefs; refresh tokens read from a local file (out-of-band OAuth bootstrap). Gate9 only handles token refresh via Certainly and upstream IMAPS (`outlook.office365.com:993` with `AUTHENTICATE XOAUTH2`) / SMTPS (`smtp.office365.com:587` STARTTLS or 465).
+* Local password checked against Gateway prefs; the refresh token is read from the prefs file. Gateway only handles token refresh via Certainly and upstream IMAPS (`outlook.office365.com:993` with `AUTHENTICATE XOAUTH2`) / SMTPS (`smtp.office365.com:587` STARTTLS or 465).
+* **The token is obtained with `tools/get-email-token.py` on a modern computer** — the official and only route, shipped as a release asset. Python 3 standard library, Thunderbird's public clients, loopback redirect, PKCE; it prints the prefs lines. Verified 2026-09-18 for both providers. Do not build an in-Gateway consent flow: the providers' sign-in pages are script-only and no browser Gateway serves can render them (tested on Mac OS 9, 2026-09-17). Device-code and phone-assisted flows were considered and rejected — nothing that works for one provider only, and nothing that has users configure a phone, a firewall or a file transfer.
 
 ### Module 3 — Wayback Proxy (`:8888`, designed, not built)
 * Serve archived pages from the Internet Archive at a configured date, with a
@@ -58,7 +59,7 @@
 * SMBv1/v2/v3, AFP, file-system plugins
 * Transparent intercept (no pf on OS 9)
 * Carbon, OpenSSL, writing TLS 1.3 from scratch
-* Completing OAuth consent inside Classilla
+* Completing OAuth consent inside Classilla, or any browser Gateway serves (see Module 2)
 * HTTP/2, HTTP/3
 * SSL 2.0 as a protocol. Its *record framing* is accepted — `PATCHES.md` §22 converts an SSLv2-compatible ClientHello into the TLS hello it stands for, so "Use SSL 2.0" does not have to be unticked — but a hello actually asking to speak SSL 2.0 still fails.
 

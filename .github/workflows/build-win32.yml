@@ -266,6 +266,10 @@ jobs:
             sleep 20
           done
 
+          # The token script runs on the modern computer, not on the old
+          # one, so it is its own asset rather than part of either archive.
+          # Both jobs upload the same file; --clobber makes the order moot.
           gh release upload "$GITHUB_REF_NAME" --clobber \
             "release/Gateway-${GITHUB_REF_NAME}-windows.zip" \
-            "$IMG"
+            "$IMG" \
+            tools/get-email-token.py

@@ -340,12 +340,18 @@ the Resource Manager returns the **existing** refNum and the matching
 * **`T_DISCONNECT` carries no reason in the notifier.** Its `result` argument is
   always 0; the reason is in the `TDiscon` from `OTRcvDisconnect()`, which must
   be called anyway or the endpoint fails every later call with `kOTLookErr`.
+* **The refresh token cannot be obtained on the vintage machine.** Both
+  providers' sign-in pages are built entirely by script (`<body
+  style="display:none">`, `<noscript>` refreshing to a "JavaScript required"
+  page), so no browser Gateway serves can complete the consent — verified
+  against a real Mac OS 9 on 2026-09-17, with Gateway proxying every fetch
+  of the login chain correctly. `tools/get-email-token.py` does the sign-in on
+  a modern computer and prints the lines for the prefs; it is the one route.
 * **email-oauth2-proxy stores its tokens encrypted** (Fernet, keyed from the
   account password with PBKDF2-HMAC-SHA256 over `token_salt` /
-  `token_iterations`). A `refresh_token` beginning `gAAAAA` is ciphertext, and
-  Gateway has no way to use it. `tools/extract-refresh-token.py` decrypts it on
-  the host side; doing it on the Mac would mean 1.2 million PBKDF2 iterations
-  on a PowerPC, for a value that only has to be extracted once.
+  `token_iterations`), so a `refresh_token` beginning `gAAAAA` copied from its
+  config is ciphertext and Gateway has no way to use it. Gateway's splice is
+  descended from that project; its token is not portable.
 * **Prefs line endings** were a real trap: the parser split on LF only, so a
   file typed on the Mac (CR endings) parsed as a single comment line and every
   setting silently fell back to its default — including `local_password`, which

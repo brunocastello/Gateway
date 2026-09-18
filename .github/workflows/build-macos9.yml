@@ -232,7 +232,8 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" --clobber \
               "release/Gateway-${GITHUB_REF_NAME}.sit" \
-              "release/Gateway-${GITHUB_REF_NAME}.dsk"
+              "release/Gateway-${GITHUB_REF_NAME}.dsk" \
+              tools/get-email-token.py
             gh release edit "$GITHUB_REF_NAME" \
               --notes-file docs/release-notes.md
           else
@@ -240,5 +241,6 @@ jobs:
               --title "Gateway $GITHUB_REF_NAME" \
               --notes-file docs/release-notes.md \
               "release/Gateway-${GITHUB_REF_NAME}.sit" \
-              "release/Gateway-${GITHUB_REF_NAME}.dsk"
+              "release/Gateway-${GITHUB_REF_NAME}.dsk" \
+              tools/get-email-token.py
           fi

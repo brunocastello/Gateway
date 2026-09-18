@@ -95,6 +95,10 @@ docs/           prefs reference, release notes, porting notes, design notes
 
 [Certainly](https://github.com/minorbug/certainly) and
 [BearSSL](https://bearssl.org) do the cryptography.
+[email-oauth2-proxy](https://github.com/simonrob/email-oauth2-proxy) by Simon
+Robinson is where the mail splice comes from: the local-password login, the
+XOAUTH2 upstream and the token refresh are his design, carried over to C, and
+`get-email-token.py` stands in for its authorisation step.
 [Retro68](https://github.com/autc04/Retro68) makes a Mac OS 9 binary from a
 modern toolchain. [roytam1](https://github.com/roytam1) contributed the SSL 3.0
 implementation that reaches browsers older than TLS, and found the import that

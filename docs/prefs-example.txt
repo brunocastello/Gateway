@@ -58,6 +58,7 @@ local_password = change-me
 
 provider = outlook
 
+# Run get-email-token.py on a modern computer; it prints these four lines.
 oauth_user          = you@example.com
 oauth_client_id     = 00000000-0000-0000-0000-000000000000
 oauth_client_secret =
