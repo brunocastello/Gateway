@@ -11,7 +11,7 @@ Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rath
 
 SSL 3.0 is spoken over RC4, which is what every browser of that age offers. A client that asks for SSL 3.0 with nothing but a CBC suite is told there is no cipher in common rather than being handed a broken handshake.
 
-**Settings have a window.** Eight panes, on both platforms — Settings… in the Apple menu on Mac OS 9, File ▸ Preferences on Windows. The preferences file stays hand-editable and keeps its comments.
+**Settings have a window.** Eight panes, on both platforms — File ▸ Settings… on Mac OS 9, File ▸ Preferences… on Windows. The preferences file stays hand-editable and keeps its comments.
 
 **The certificate authority can be installed.** Visit `http://<gateway-address>:8765/gateway-ca.crt` in the browser you are setting up and it will offer to install it, which stops the warning `connect_mitm` otherwise shows on every site. Clicking through the warning still works.
 

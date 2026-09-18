@@ -46,10 +46,33 @@ Since 0.3.5 this reaches every browser in range, including ones with no TLS at
 all: Netscape 3, Internet Explorer 3 and 4, and IE 5 for Mac OS 9 are served
 over SSL 3.0. `allow_sslv3 = 0` refuses it if you would rather not.
 
+## Mail
+
+The mail splice lets a client with no TLS and no OAuth — Outlook Express,
+Netscape Mail, Eudora — use an Outlook.com or Gmail account. The client talks
+plaintext to Gateway on the same machine; Gateway talks TLS and XOAUTH2 to the
+provider.
+
+1. **Get the token** on a modern computer: download `get-email-token.py` from
+   the [release](https://github.com/brunocastello/Gateway/releases) and run
+   `python3 get-email-token.py` (`py get-email-token.py` on Windows). It opens
+   the provider's sign-in in your browser and prints four lines.
+2. **Put them in Gateway**, in the Mail pane of the settings window or the
+   prefs file: `provider`, `oauth_user`, `oauth_client_id` and
+   `refresh_token` (Gmail adds `oauth_client_secret`). Set `local_password`
+   to whatever you want the mail client to use.
+3. **Set up the mail client**: incoming IMAP `127.0.0.1` port `1993` (or POP3
+   `1995`), outgoing SMTP `127.0.0.1` port `1587`, **SSL off** on both,
+   authentication **on** for SMTP, and `local_password` as the password. The
+   user name can be anything; only the password is checked.
+
+Gateway rewrites `refresh_token` itself when the provider rotates it, so the
+token is fetched once. Every setting is in [`docs/prefs.md`](docs/prefs.md).
+
 ## Settings
 
-A preferences window, from **Settings…** in the Apple menu on Mac OS 9 and
-**File ▸ Preferences** on Windows. Everything is also a line in a plain text
+A preferences window, from **File ▸ Settings…** on Mac OS 9 and
+**File ▸ Preferences…** on Windows. Everything is also a line in a plain text
 file — `Gateway Prefs` beside the System Preferences folder, or `Gateway.ini`
 beside `Gateway.exe` — which stays hand-editable. Every key is listed in
 [`docs/prefs.md`](docs/prefs.md), with an example in
