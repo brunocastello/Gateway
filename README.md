@@ -99,6 +99,10 @@ docs/           prefs reference, release notes, porting notes, design notes
 Robinson is where the mail splice comes from: the local-password login, the
 XOAUTH2 upstream and the token refresh are his design, carried over to C, and
 `get-email-token.py` stands in for its authorisation step.
+[WaybackProxy](https://github.com/richardg867/WaybackProxy) by [richardg867](https://github.com/richardg867)
+is the prior art for the archive listener: its settings page and its options
+are kept compatible so existing bookmarks work, and the implementation is
+Gateway's own, since that project is GPL and this one is MIT.
 [Retro68](https://github.com/autc04/Retro68) makes a Mac OS 9 binary from a
 modern toolchain. [roytam1](https://github.com/roytam1) contributed the SSL 3.0
 implementation that reaches browsers older than TLS, and found the import that
