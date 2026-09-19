@@ -1119,9 +1119,12 @@ static void test_x509write(void)
     check(buf[off + 1] == 0x82, "with a two-byte length");
     check(((size_t)buf[off + 2] << 8 | buf[off + 3]) == n - 4,
           "and the length matches what was written");
-    /* A0 03 02 01 02: an explicit [0] holding INTEGER 2. */
-    check(memcmp(buf + off + 4, "\xA0\x03\x02\x01\x02", 5) == 0,
-          "version is [0] INTEGER 2, so v3");
+    /* A v1 leaf (since 2026-09-19, PATCHES.md §28) has no version field: the
+     * first TBSCertificate field is the serialNumber INTEGER, not an explicit
+     * [0]. Netscape 3.04 Gold refused a v3 leaf on the RC2 suite. The serial
+     * here is 4A170231, whose first byte is < 0x80, so it needs no padding. */
+    check(memcmp(buf + off + 4, "\x02\x04\x4A\x17\x02\x31", 6) == 0,
+          "no version field: the leaf is v1, starting at its serialNumber");
     check(memmem(buf + off, n, "lite.duckduckgo.com", 19) != NULL,
           "the subject name is in there");
     check(memmem(buf + off, n, "Gateway Local CA", 16) != NULL,
@@ -1144,6 +1147,9 @@ static void test_x509write(void)
               "the CA says cA TRUE");
         check(memmem(ca + caoff, can, "\x03\x02\x01\x06", 4) != NULL,
               "with keyCertSign and cRLSign");
+        /* The authority stays v3, unlike the leaf: version [0] INTEGER 2. */
+        check(memmem(ca + caoff, can, "\xA0\x03\x02\x01\x02", 5) != NULL,
+              "and is v3, so it carries the version field");
         req.is_ca = 0;
         req.cn    = "lite.duckduckgo.com";
     }
