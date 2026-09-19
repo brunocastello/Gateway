@@ -71,6 +71,14 @@ struct MacTLS_Server {
     size_t                 rxTotal;
     size_t                 rxAtFirstFlight;
     int                    firstFlightSeen;
+    /* Set once the opening bytes of the client's hello have been logged. A
+     * handshake that never completes, never fails through BearSSL and never
+     * times out -- IE 3 on Windows 95 does exactly this -- otherwise leaves no
+     * trace of what the client sent. The first bytes name the protocol: 16 03
+     * is a TLS/SSL 3 record, 80.. an SSLv2-framed hello (version at byte 3-4),
+     * and an 80.. hello whose version is 80 01 is Microsoft PCT, which is not
+     * SSL and is not served. */
+    int                    helloLogged;
 };
 
 MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
@@ -350,6 +358,26 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
             n = ct_transport_recv(s->transport, buf, len);
             if (n > 0) {
                 s->rxTotal += (size_t)n;
+                /*
+                 * Always-on, once: the opening bytes name the protocol the
+                 * client is really speaking, which is the whole diagnosis when
+                 * a handshake then goes nowhere. Capped at 24 bytes so it is
+                 * one line, and only on the very first read so it is the hello.
+                 */
+                if (!s->helloLogged) {
+                    char hex[3 * 24 + 1];
+                    size_t k, dump, p = 0;
+                    s->helloLogged = 1;
+                    dump = (size_t)n > 24 ? 24 : (size_t)n;
+                    for (k = 0; k < dump; k++) {
+                        int hn = snprintf(hex + p, sizeof(hex) - p, "%s%02x",
+                                          k ? " " : "", buf[k]);
+                        if (hn < 0) break;
+                        p += (size_t)hn;
+                    }
+                    gw_log("MITM client hello: %d bytes, first: %s",
+                           n, hex);
+                }
 #ifdef GW_DEBUG_IO
                 if (s->logged_raw < 10 && n >= 2) {
                     size_t dump = (size_t)n > 96 ? 96 : (size_t)n;
