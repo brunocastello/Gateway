@@ -57,6 +57,20 @@ struct MacTLS_Server {
     /* Set once the handshake completes, so a close before that can be told
      * apart from an ordinary end-of-session close. */
     int                    handshook;
+    /*
+     * How much the browser sent us, and how much of it arrived *after* our
+     * first flight went out. When a browser abandons the handshake, rxAfterFF
+     * is the whole diagnosis: 0 means it walked away on our ServerHello /
+     * Certificate / ServerHelloDone without answering, anything else means it
+     * sent a ClientKeyExchange (and possibly more) and then left. Paired with
+     * the engine's incrypt flag (set only once its ChangeCipherSpec is in),
+     * this says where in the exchange the browser gave up -- which is what
+     * tells an SSLv2-hello abandonment that reaches the certificate apart from
+     * one that dies at the client's own second flight.
+     */
+    size_t                 rxTotal;
+    size_t                 rxAtFirstFlight;
+    int                    firstFlightSeen;
 };
 
 MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
@@ -139,9 +153,30 @@ MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
  */
 static void describe_hello(MacTLS_Server *s, char *out, size_t cap)
 {
-    snprintf(out, cap, "%s hello, version %04x, suite %04x",
+    size_t      rx_after = s->rxTotal - s->rxAtFirstFlight;
+    const char *reached;
+
+    /*
+     * How far the browser got, in words. incrypt is the receive-side crypto
+     * flag: it turns on only after the client's ChangeCipherSpec, so it marks
+     * a client that finished its own second flight. Short of that, rx_after
+     * separates a client that answered our certificate with a
+     * ClientKeyExchange from one that never replied at all.
+     */
+    if (s->sc.eng.incrypt)
+        reached = "client finished its flight (bailed at Finished)";
+    else if (rx_after > 0)
+        reached = "client sent a reply, no CCS (bailed at ClientKeyExchange)";
+    else
+        reached = "client sent nothing back (bailed on our certificate)";
+
+    snprintf(out, cap,
+             "%s hello, version %04x, suite %04x "
+             "[%s; rx %lu, rx-after-flight %lu, in-rectype %u, incrypt %u]",
              s->sc.eng.ssl2_hello ? "SSLv2" : "native",
-             s->sc.eng.session.version, s->sc.eng.session.cipher_suite);
+             s->sc.eng.session.version, s->sc.eng.session.cipher_suite,
+             reached, (unsigned long)s->rxTotal, (unsigned long)rx_after,
+             s->sc.eng.record_type_in, s->sc.eng.incrypt);
 }
 
 MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
@@ -238,6 +273,16 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
     if (st & BR_SSL_SENDREC) {
         buf = br_ssl_engine_sendrec_buf(&s->sc.eng, &len);
         if (len > 0) {
+            /*
+             * The first bytes we ever send are our first flight, and the whole
+             * ClientHello has been received and parsed by the time the engine
+             * offers them. Freeze the received-byte count here so anything the
+             * browser sends afterwards can be told apart from its hello.
+             */
+            if (!s->firstFlightSeen) {
+                s->rxAtFirstFlight = s->rxTotal;
+                s->firstFlightSeen = 1;
+            }
 #ifdef GW_DEBUG_IO
             if (len >= 5) {
                 gw_log("  SEND rec %02x %02x%02x len %u",
@@ -301,6 +346,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
         if (len > 0) {
             n = ct_transport_recv(s->transport, buf, len);
             if (n > 0) {
+                s->rxTotal += (size_t)n;
 #ifdef GW_DEBUG_IO
                 if (s->logged_raw < 10 && n >= 2) {
                     size_t dump = (size_t)n > 96 ? 96 : (size_t)n;
