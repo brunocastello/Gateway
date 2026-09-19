@@ -157,18 +157,21 @@ static void describe_hello(MacTLS_Server *s, char *out, size_t cap)
     const char *reached;
 
     /*
-     * How far the browser got, in words. incrypt is the receive-side crypto
-     * flag: it turns on only after the client's ChangeCipherSpec, so it marks
-     * a client that finished its own second flight. Short of that, rx_after
-     * separates a client that answered our certificate with a
-     * ClientKeyExchange from one that never replied at all.
+     * How far the browser got, stated as a plain fact rather than a verdict:
+     * this describes the "done" line as well as the "abandoned" and "failed"
+     * ones, so the surrounding log verb supplies the outcome. incrypt is the
+     * receive-side crypto flag, set only after the client's ChangeCipherSpec,
+     * so it marks a client that finished its own second flight. Short of that,
+     * rx_after separates a client that answered our certificate with a
+     * ClientKeyExchange from one that never replied at all -- the distinction
+     * that says where an SSL 3.0 client (IE 3/4, Netscape) stops if it does.
      */
     if (s->sc.eng.incrypt)
-        reached = "client finished its flight (bailed at Finished)";
+        reached = "client completed its second flight";
     else if (rx_after > 0)
-        reached = "client sent a reply, no CCS (bailed at ClientKeyExchange)";
+        reached = "client replied, no ChangeCipherSpec";
     else
-        reached = "client sent nothing back (bailed on our certificate)";
+        reached = "no client reply after our certificate";
 
     snprintf(out, cap,
              "%s hello, version %04x, suite %04x "
