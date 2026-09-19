@@ -243,10 +243,11 @@ static void der_ext(Der *d, const unsigned char *oid, size_t oid_len,
  * client that ignored it would accept a leaf certificate as an authority, and
  * then any host Gateway had ever served could sign for any other.
  *
- * subjectAltName is written for the leaf even though the clients this exists
- * for do not read it -- IE 4 and Netscape 4 match the CN. It costs a few bytes
- * and means a certificate Gateway produced is not rejected out of hand by
- * anything newer that stopped reading the CN in 2017.
+ * Leaves are written as v1 since 2026-09-19 and carry no extensions at all
+ * (see gw_x509_tbs), so only the CA branch below is reached today. The leaf
+ * branch -- subjectAltName and extKeyUsage -- is kept for the day v3 leaves
+ * come back: it is what anything newer that stopped reading the CN in 2017
+ * would need, and nothing Gateway serves is that new.
  */
 static void der_extensions(Der *d, const GWCertReq *req)
 {
@@ -325,9 +326,14 @@ size_t gw_x509_tbs(const GWCertReq *req, unsigned char *out, size_t cap,
     mark = der_len(&d);
 
     /* Reverse order of the TBSCertificate fields, which is how this reads.
-     * For leaves, emit v1 (no version, no extensions) for maximal vintage
-     * compatibility - Gold 3.04's v3 parser is strict and the RC2 path
-     * was "bad data" with v3 SAN/EKU even though RC4 tolerated it. */
+     *
+     * Leaves are v1: no version field, no extensions. That is what every
+     * 1990s server sent, and it is what Netscape 3.04 Gold accepts -- it
+     * refused a v3 leaf with subjectAltName and extKeyUsage as "bad data"
+     * on the RC2 suite, though it had tolerated the same leaf over RC4.
+     * Every client this exists for matches the CN, so nothing is lost.
+     * The authority stays v3: basicConstraints is what stops a leaf from
+     * being taken for an authority. */
     if (!req->is_ca) {
         der_spki(&d, req);
         der_name_cn(&d, req->cn);

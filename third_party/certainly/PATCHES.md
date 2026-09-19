@@ -1031,8 +1031,9 @@ SSL 3.0, and there was none to offer.
 
 The constraint that shapes the whole patch is that BearSSL's handshake logic is
 **not C**. `ssl_hs_client.c` and `ssl_hs_server.c` are generated from
-`ssl_hs_*.t0` by a Forth-like compiler that is not part of this tree, so the
-bytecode cannot be extended to parse a second wire format. Everything below
+`ssl_hs_*.t0` by a Forth-like compiler — BearSSL ships it as C#, and `T0/`
+carries a Python port that reproduces its output byte for byte — and the
+bytecode is not the place to parse a second wire format. Everything below
 therefore either lives in the `.t0` sources (regenerated) or reconciles the two
 formats at the record layer, before the bytecode looks at the bytes.
 
@@ -1047,13 +1048,29 @@ call sites. The TLS PRFs stay installed: TLS 1.0 and 1.1 still need them.
 type 10 in the suite table carries `SSL3_RSA_EXPORT_RC4_40_MD5` (0x0003),
 `SSL3_RSA_RC4_128_MD5` (0x0004) and `SSL3_RSA_RC4_128_SHA` (0x0005). The
 export suite's 40-bit key is expanded to a 16-byte RC4 key the way §6.2.2
-specifies. `ssl_scert_single_rsa.c` refuses all three above SSL 3.0, so no
-TLS connection can land on RC4.
+specifies. `ssl_rec_rc2.c` adds RC2-CBC (RFC 2268, in `src/ssl3/ssl3_rc2.c`,
+checked against the RFC's test vectors) as cipher type 11, carrying
+`SSL3_RSA_EXPORT_RC2_CBC_40_MD5` (0x0006). Its key follows OpenSSL rather than
+the letter of §6.2.2: the 16-byte MD5 expansion is used whole, as a
+128-effective-bit RC2 key, and the IV is MD5 of the two randoms — which is
+what Netscape does, and the only thing that interoperates with it. CBC state
+chains across records, as SSL 3.0 requires. `ssl_scert_single_rsa.c` refuses
+all four above SSL 3.0, so no TLS connection can land on them. No
+ServerKeyExchange is sent for the export suites: Netscape 3.04 rejects the
+message outright and Netscape 4 completes without it, so the client always
+encrypts to the leaf.
+
+**The leaf certificate is X.509 v1** — no version field, no extensions —
+because Netscape 3.04 Gold refused a v3 leaf on the RC2 suite as "bad data"
+while tolerating it over RC4. Every client this serves matches the CN, so the
+subjectAltName it loses was read by nothing. The authority stays v3, since
+basicConstraints is what stops a leaf from being taken for an authority.
 
 **The two wire differences**, both bridged in `ssl_engine.c` and both fired at
 most once per connection, under conditions tight enough to be provable — a
-plaintext or encrypted handshake record as appropriate, SSL 3.0 negotiated with
-one of the three suites, the buffer positioned exactly at a record start
+plaintext or encrypted handshake record as appropriate, SSL 3.0 negotiated
+(whatever the suite — the differences are the version's, and 3DES has them
+too), the buffer positioned exactly at a record start
 holding exactly one complete message of the expected shape. Anything else is
 left untouched to fail as it did before:
 

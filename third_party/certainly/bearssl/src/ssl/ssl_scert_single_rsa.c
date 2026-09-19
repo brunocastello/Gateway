@@ -23,9 +23,6 @@
  */
 
 #include "inner.h"
-#ifdef GW_DEBUG_IO
-#include <stdio.h>
-#endif
 
 static int
 sr_choose(const br_ssl_server_policy_class **pctx,
@@ -89,16 +86,6 @@ sr_choose(const br_ssl_server_policy_class **pctx,
 		case BR_SSLKEYX_RSA:
 			if ((pc->allowed_usages & BR_KEYTYPE_KEYX) != 0) {
 				choices->cipher_suite = st[u][0];
-#ifdef GW_DEBUG_IO
-				{
-					FILE *kf = fopen("C:\\Gateway\\keylog.txt", "a");
-					if (kf != NULL) {
-						fprintf(kf, "policy chose %04x/%04x version %04x\n",
-							st[u][0], st[u][1], cc->eng.session.version);
-						fclose(kf);
-					}
-				}
-#endif
 				return 1;
 			}
 			break;
@@ -121,36 +108,7 @@ sr_do_keyx(const br_ssl_server_policy_class **pctx,
 	br_ssl_server_policy_rsa_context *pc;
 
 	pc = (br_ssl_server_policy_rsa_context *)pctx;
-	{
-		uint32_t r;
-#ifdef GW_DEBUG_IO
-		unsigned char raw[256];
-		size_t rawlen = *len;
-		if (rawlen > sizeof raw) rawlen = 0;
-		else memcpy(raw, data, rawlen);
-#endif
-		r = br_rsa_ssl_decrypt(pc->irsacore, pc->sk, data, *len);
-#ifdef GW_DEBUG_IO
-		{
-			FILE *kf = fopen("C:\\Gateway\\keylog.txt", "a");
-			if (kf != NULL) {
-				fprintf(kf, "keyx x=%u len=%u nbits=%u pms=%02x%02x%02x%02x\n",
-					(unsigned)r, (unsigned)*len, (unsigned)pc->sk->n_bitlen,
-					data[0], data[1], data[2], data[3]);
-				if (!r && rawlen >= 12) {
-					uint32_t ok;
-					ok = pc->irsacore(raw, pc->sk);
-					fprintf(kf, "keyx raw ok=%u %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
-						(unsigned)ok, raw[0], raw[1], raw[2], raw[3],
-						raw[4], raw[5], raw[6], raw[7],
-						raw[8], raw[9], raw[10], raw[11]);
-				}
-				fclose(kf);
-			}
-		}
-#endif
-		return r;
-	}
+	return br_rsa_ssl_decrypt(pc->irsacore, pc->sk, data, *len);
 }
 
 /*

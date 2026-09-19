@@ -1,8 +1,9 @@
 /* Automatically generated code; do not modify directly. Regenerate with
- * T0Comp (build T0/*.cs with csc.exe) from this directory's .t0 sources:
- *   T0Comp -o ssl_hs_client -r br_ssl_hs_client -m main ssl_hs_common.t0 ssl_hs_client.t0
- * Gateway T0-level customizations live in ssl_hs_common.t0 (SSL3 RC4/RC2
- * suites and dispatch, transcript gates, SSL3 Finished zeros). */
+ * T0/t0comp.py (a Python port of BearSSL's T0Comp) from this directory's
+ * .t0 sources:
+ *   python3 ../../../../../T0/t0comp.py -o ssl_hs_client -r br_ssl_hs_client -m main ssl_hs_common.t0 ssl_hs_client.t0
+ * Gateway's T0-level changes live in ssl_hs_common.t0 (SSL 3.0 RC4 and
+ * RC2 suites and dispatch, transcript gates, SSL 3.0 Finished zeros). */
 
 #include <stddef.h>
 #include <stdint.h>

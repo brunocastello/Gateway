@@ -7,9 +7,9 @@ Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rath
 
 ## What's new in 0.3.5
 
-**Browsers with no TLS at all now work.** Netscape 3 and 4, Internet Explorer 3 and 4, and IE 5 for Mac OS 9 speak SSL 3.0 and nothing newer, so until now they could only use link rewriting. Gateway implements SSL 3.0 itself — the key schedule, the record MAC and an RC4 record layer — and serves them a real `https://` address bar. Contributed by [roytam1](https://github.com/roytam1), verified on Netscape Communicator 4.75, 16-bit IE5 and IE 5.1.7 for Mac OS 9.
+**Browsers with no TLS at all now work.** Netscape 3 and 4, Internet Explorer 3 and 4, and IE 5 for Mac OS 9 speak SSL 3.0 and nothing newer, so until now they could only use link rewriting. Gateway implements SSL 3.0 itself — the key schedule, the record MAC, and RC4 and RC2 record layers — and serves them a real `https://` address bar. Contributed by [roytam1](https://github.com/roytam1), verified on Netscape 3.04 Gold and Communicator 4.75, 16-bit IE5 and IE 5.1.7 for Mac OS 9.
 
-SSL 3.0 is spoken over RC4, which is what every browser of that age offers. A client that asks for SSL 3.0 with nothing but a CBC suite is told there is no cipher in common rather than being handed a broken handshake.
+SSL 3.0 is spoken over RC4, which is what every browser of that age offers, or over export-grade RC2 for one that asks for nothing else. A client that asks for SSL 3.0 with only a DES suite is told there is no cipher in common rather than being handed a broken handshake. The certificate Gateway presents for each site is now X.509 v1, the form every server of that era sent; Netscape 3 refuses a v3 one.
 
 **Settings have a window.** Eight panes, on both platforms — File ▸ Settings… on Mac OS 9, File ▸ Preferences… on Windows. The preferences file stays hand-editable and keeps its comments.
 

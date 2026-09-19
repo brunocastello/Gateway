@@ -7,9 +7,6 @@
 #include "../gw_core.h"
 
 #include <string.h>
-#ifdef GW_DEBUG_IO
-#include <stdio.h>
-#endif
 
 #define SSL3_HDR_LEN    5
 #define SSL3_MAC_LEN    36
@@ -31,9 +28,9 @@ ssl3_server_init(br_ssl_server_context *sc)
 	 * SSL 3.0 export suites for vintage clients, appended to the
 	 * full-RSA profile's list (which init_full_rsa installed just
 	 * before this runs, modern suites first). 0x000A is already
-	 * there, so it is not repeated. Suites without a record layer
-	 * (RC2, DES40, single DES) translate to nothing and filter out
-	 * cleanly until their engines exist.
+	 * there, so it is not repeated. RC4 and RC2-CBC have record
+	 * layers; the DES suites (DES40, single DES) do not, and
+	 * translate to nothing in the suite table until theirs exist.
 	 */
 	static const uint16_t ssl3_extra_suites[] = {
 		SSL3_CK_RSA_EXPORT_RC4_40_MD5,    /* 0x0003 */
@@ -228,15 +225,6 @@ br_ssl_engine_switch_rc2_in(br_ssl_engine_context *cc,
 	const br_hash_class *hash = (mac_id == br_md5_ID) ? &br_md5_vtable : &br_sha1_vtable;
 	unsigned char *mac_key, *rc2_key, *iv;
 	compute_key_block_ssl3(cc, kb, kb_len);
-#ifdef GW_DEBUG_IO
-	{
-		FILE *kf = fopen("C:\\Gateway\\keylog.txt", "a");
-		if (kf != NULL) {
-			size_t k; fprintf(kf, "RC2 SWI in=%d suite=%04x rc2len=%u maclen=%u\n", is_client, cc->session.cipher_suite, (unsigned)rc2_key_len, (unsigned)mac_key_len);
-			fprintf(kf, "RC2 KB "); for (k=0;k<kb_len;k++) fprintf(kf, "%02x", kb[k]); fprintf(kf, "\n"); fclose(kf);
-		}
-	}
-#endif
 	/* layout: cli MAC | srv MAC | cli KEY | srv KEY | cli IV | srv IV */
 	if (is_client) { mac_key = kb + mac_key_len; rc2_key = kb + 2*mac_key_len + rc2_key_len; iv = kb + 2*mac_key_len + 2*rc2_key_len + 8; }
 	else { mac_key = kb; rc2_key = kb + 2*mac_key_len; iv = kb + 2*mac_key_len + 2*rc2_key_len; }
@@ -252,20 +240,6 @@ br_ssl_engine_switch_rc2_in(br_ssl_engine_context *cc,
 		const unsigned char *er2 = !is_client ? cc->server_random : cc->client_random;
 		ssl3_export_expand(cc, rc2_key, rc2_key_len, !is_client, expkey);
 		br_md5_init(&md5); br_md5_update(&md5, er1, 32); br_md5_update(&md5, er2, 32); br_md5_out(&md5, expiv);
-#ifdef GW_DEBUG_IO
-		{
-			FILE *kf = fopen("C:\\Gateway\\keylog.txt", "a");
-			if (kf != NULL) {
-				size_t k;
-				fprintf(kf, "RC2 rawkey "); for (k=0;k<rc2_key_len;k++) fprintf(kf, "%02x", rc2_key[k]); fprintf(kf, "\n");
-				fprintf(kf, "RC2 cli "); for (k=0;k<32;k++) fprintf(kf, "%02x", cc->client_random[k]); fprintf(kf, "\n");
-				fprintf(kf, "RC2 srv "); for (k=0;k<32;k++) fprintf(kf, "%02x", cc->server_random[k]); fprintf(kf, "\n");
-				fprintf(kf, "RC2 expkey "); for (k=0;k<16;k++) fprintf(kf, "%02x", expkey[k]); fprintf(kf, "\n");
-				fprintf(kf, "RC2 expiv "); for (k=0;k<8;k++) fprintf(kf, "%02x", expiv[k]); fprintf(kf, "\n");
-				fclose(kf);
-			}
-		}
-#endif
 		cc->in.rc2.vtable = &br_sslrec_in_rc2_vtable;
 		br_sslrec_in_rc2_vtable.init((const br_sslrec_in_rc2_class **)&cc->in.rc2.vtable, expkey, 16, 128, hash, mac_key, mac_key_len, expiv);
 		cc->in.rc2.hash = hash; cc->in.rc2.mac_len = mac_key_len; cc->incrypt = 1;
@@ -287,15 +261,6 @@ br_ssl_engine_switch_rc2_out(br_ssl_engine_context *cc,
 	const br_hash_class *hash = (mac_id == br_md5_ID) ? &br_md5_vtable : &br_sha1_vtable;
 	unsigned char *mac_key, *rc2_key, *iv;
 	compute_key_block_ssl3(cc, kb, kb_len);
-#ifdef GW_DEBUG_IO
-	{
-		FILE *kf = fopen("C:\\Gateway\\keylog.txt", "a");
-		if (kf != NULL) {
-			size_t k; fprintf(kf, "RC2 SWO in=%d suite=%04x rc2len=%u maclen=%u\n", is_client, cc->session.cipher_suite, (unsigned)rc2_key_len, (unsigned)mac_key_len);
-			fprintf(kf, "RC2 KB "); for (k=0;k<kb_len;k++) fprintf(kf, "%02x", kb[k]); fprintf(kf, "\n"); fclose(kf);
-		}
-	}
-#endif
 	if (is_client) { mac_key = kb; rc2_key = kb + 2*mac_key_len; iv = kb + 2*mac_key_len + 2*rc2_key_len; }
 	else { mac_key = kb + mac_key_len; rc2_key = kb + 2*mac_key_len + rc2_key_len; iv = kb + 2*mac_key_len + 2*rc2_key_len + 8; }
 	/* SSL3 export: exp_key = MD5(raw + er1 + er2), exp_iv = MD5(er1 + er2).
