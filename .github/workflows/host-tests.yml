@@ -41,14 +41,21 @@ jobs:
           leaf=$(openssl x509 -in gw_leaf.der -inform DER -noout -text)
           ca=$(openssl x509 -in gw_ca.der -inform DER -noout -text)
 
-          # A leaf that claims to be a CA would let any host Gateway has served
-          # sign for any other, so this is the one worth failing over.
-          echo "$leaf" | grep -q "CA:FALSE" \
-            || { echo "::error::the leaf does not say CA:FALSE"; exit 1; }
+          # The leaf is X.509 v1 (PATCHES.md s28: Netscape 3.04 Gold refuses a
+          # v3 one), so it carries no extensions and names the host in its
+          # CN. A leaf that claims to be a CA would let any host Gateway has
+          # served sign for any other; with no extensions it cannot claim it,
+          # and that is what is checked -- a v3 leaf reappearing here would be
+          # a regression of the Netscape 3 fix.
+          echo "$leaf" | grep -q "Version: 1 (0x0)" \
+            || { echo "::error::the leaf is not X.509 v1"; exit 1; }
+          if echo "$leaf" | grep -q "X509v3 extensions"; then
+            echo "::error::the v1 leaf carries extensions"; exit 1
+          fi
+          echo "$leaf" | grep -q "Subject: CN *= *lite.duckduckgo.com" \
+            || { echo "::error::the leaf CN is not the host"; exit 1; }
           echo "$ca"   | grep -q "CA:TRUE" \
             || { echo "::error::the CA does not say CA:TRUE"; exit 1; }
-          echo "$leaf" | grep -q "DNS:lite.duckduckgo.com" \
-            || { echo "::error::the leaf has no subjectAltName"; exit 1; }
           # SHA-1, deliberately: IE 4 and Netscape 4 cannot verify SHA-2.
           echo "$leaf" | grep -q "sha1WithRSAEncryption" \
             || { echo "::error::the signature algorithm is not SHA-1/RSA"; exit 1; }
