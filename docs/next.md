@@ -152,3 +152,20 @@ leaf without objecting. It was removed in 5e13663. Bring it back only if a
 client's hello offers nothing but 0003/0006 and it then abandons at
 `rx-after-flight 0` — and bring it back complete, with a private key and the
 matching ClientKeyExchange decrypt.
+
+---
+
+## Considered, and the premise turned out favourable
+
+**Check for updates.** Set aside on 2026-09-20 on the grounds that the
+browsers Gateway serves cannot reach GitHub — but through Gateway they can:
+that is what the proxy is for. Typed as `http://github.com/.../releases/
+download/<tag>/<asset>` into a browser pointed at `:8765`, the request is
+fetched over TLS 1.3 by Gateway, both `https` redirect hops (to the release
+and on to `objects.githubusercontent.com`) are followed internally under
+`follow_redirects = auto`, and the binary body streams through untouched
+with its `Content-Length`. Untested as an actual download, but nothing in the
+design stands in its way. The feature itself would be small: at launch,
+Gateway asks `api.github.com/repos/brunocastello/Gateway/releases/latest`
+with its own stack, compares the tag to `GW_VERSION_STRING`, and logs one
+line with the direct asset link for this platform. No page to render.
