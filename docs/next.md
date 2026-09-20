@@ -153,6 +153,28 @@ client's hello offers nothing but 0003/0006 and it then abandons at
 `rx-after-flight 0` — and bring it back complete, with a private key and the
 matching ClientKeyExchange decrypt.
 
+**The auto-configuration script on Classilla.** Not working as of
+2026-09-20: Classilla fetches `/proxy.pac` (the log shows it served, 556
+bytes), then makes every request DIRECT and fails its own handshake with "no
+common encryption algorithms". JavaScript on, `network.proxy.type` = 2, the
+same result via `127.0.0.1` and a hosts-file name. Manual settings with the
+same address work and are what the README documents, so the user stays on
+manual. Cause not established. Classilla's resolver
+(`nsProxyAutoConfig.js`, 9.3.3) answers DIRECT while the script is still
+loading and re-creates the loader on every Reload, and answers DIRECT for
+ever if the script throws — the JavaScript Console names the error. Those
+two checks (wait, then load twice; then the console) were not run. The
+script itself is verified: 557 bytes generated for that authority, syntax
+within Netscape 3's engine. The commit that added the PAC (4281342) asserted
+Classilla support without testing it; the README makes no such claim.
+
+**A request for Gateway's own address, through Gateway.** `#47` in the same
+session: Classilla, while on manual settings, asked the proxy for
+`http://proxyweb.com:8765/proxy.pac`, so Gateway opened a connection to
+itself and served its own request. It worked, but it spends a splice slot on
+a loop. An absolute-form request whose host and port are one of Gateway's
+own listeners could be answered locally. Small.
+
 ---
 
 ## Considered, and the premise turned out favourable
