@@ -55,14 +55,26 @@ as the browser likes. Resumption gets most of the benefit without touching
 that rule, so do it first and measure before deciding whether this is still
 worth its cost.
 
-## 3. IE 3.0 may need a checkbox, not code
+## 3. IE 3.0 may need a checkbox, not code — but first, its hello bytes
 
-IE 3.0 on Windows 95 sends a PCT hello by default (`80 .. 80 01` in the hello
-log), which is not SSL and is not served. Its Options ▸ Advanced pane has a
-"PCT 1.0" tick box; with it off, IE 3 sends an SSLv2-framed SSL 3.0 hello,
-which PATCHES.md §22 already converts. This has not been tried. It is one
-more attempt on the existing Win95 image and a line in the README if it
-works — before anyone concludes IE 3 needs a PCT implementation.
+32-bit IE 3.0x on Windows 95 has only ever produced "CONNECT, terminating
+TLS, then silence" — three attempts alike, all on builds from before the
+hello logger existed (fc4bb6f). No hello bytes from any IE 3 have been seen.
+The working hypothesis is that it sends a PCT hello by default (`80 .. 80 01`
+in the hello log), which is not SSL and is not served; that is what IE 3.0
+was documented to do, not something the log has shown.
+
+The test is therefore two steps on the 32-bit build, with 0.3.6 or later:
+read the hello bytes as shipped, and then again with "PCT 1.0" unticked in
+Options ▸ Advanced. If the second attempt shows an SSLv2-framed hello with
+version `03 00`, PATCHES.md §22 already converts it and IE 3 needs a line in
+the README, not code. If both attempts show nothing at all, IE 3's secure
+path is failing before it writes — the same signature as the 16-bit build
+below — and the abandon and timeout lines will say whether it closed or hung.
+
+Already known: the 16-bit Windows 3.1 build of 3.0 fails identically with
+PCT unticked and SSL 2/3 ticked (tried 2026-09-20). Its failure is before
+protocol selection, so it says nothing about the 32-bit build.
 
 ## 4. Documentation drift
 
@@ -84,7 +96,7 @@ then silence — the client never sent a hello, so neither is a data point:
 - *The 16-bit Windows 3.1 build of 3.0.* It carries its own secure-channel
   code rather than `schannel.dll`, and that code fails on Windows 95 after
   the tunnel opens. The browser reports the load as failed without writing
-  a byte.
+  a byte, with PCT on or off.
 - *An extracted 3.02 folder.* Its `iexplore.exe` creates the browser through
   COM, the registry points at IE 4's `shdocvw.dll`, and the result is IE 4's
   frame over a mix of DLLs. The https path dies with error 120,
