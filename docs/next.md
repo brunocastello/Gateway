@@ -162,8 +162,15 @@ same address work and are what the README documents, so the user stays on
 manual. Cause not established. Classilla's resolver
 (`nsProxyAutoConfig.js`, 9.3.3) answers DIRECT while the script is still
 loading and re-creates the loader on every Reload, and answers DIRECT for
-ever if the script throws — the JavaScript Console names the error. Those
-two checks (wait, then load twice; then the console) were not run. The
+ever if the script throws — the JavaScript Console names the error. Both
+checks were then run: after a wait, a plain `http://frogfind.com/` load
+produced no line in Gateway's log and no error in the JavaScript Console --
+the resolver answers DIRECT for plain http too, silently. That leaves only
+the PAC component failing to create, which reports nothing outside a debug
+build. Classilla's source has everything the path needs (the component, the
+sandbox globals, the handler flags); whether the shipped build has
+`Components:nsProxyAutoConfig.js` was not checked. Nothing on Gateway's
+side is implicated; treat it as a Classilla defect. The
 script itself is verified: 557 bytes generated for that authority, syntax
 within Netscape 3's engine. The commit that added the PAC (4281342) asserted
 Classilla support without testing it; the README makes no such claim.
