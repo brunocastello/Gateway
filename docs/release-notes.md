@@ -5,17 +5,13 @@
 
 Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rather than in front of it, so applications written before modern TLS existed can reach the current web, current mail servers and the Internet Archive. Mac OS 9 (PowerPC), and Windows 95 through XP.
 
-## What's new in 0.3.5
+## What's new in 0.3.6
 
-**Browsers with no TLS at all now work.** Netscape 3 and 4, Internet Explorer 3 and 4, and IE 5 for Mac OS 9 speak SSL 3.0 and nothing newer, so until now they could only use link rewriting. Gateway implements SSL 3.0 itself — the key schedule, the record MAC, and RC4 and RC2 record layers — and serves them a real `https://` address bar. Contributed by [roytam1](https://github.com/roytam1), verified on Netscape 3.04 Gold and Communicator 4.75, 16-bit IE5 and IE 5.1.7 for Mac OS 9.
+**SSL 3.0 over RC2, and a certificate from the era.** 0.3.5 spoke SSL 3.0 over RC4 only, and turned away a browser that offered nothing but export-grade RC2. Gateway now has an RC2-CBC record layer, and the certificate it presents for each site is X.509 v1 — the form every server of that day sent, and the only one Netscape 3 accepts over RC2. Both from [roytam1](https://github.com/roytam1), verified on Netscape 3.04 Gold.
 
-SSL 3.0 is spoken over RC4, which is what every browser of that age offers, or over export-grade RC2 for one that asks for nothing else. A client that asks for SSL 3.0 with only a DES suite is told there is no cipher in common rather than being handed a broken handshake. The certificate Gateway presents for each site is now X.509 v1, the form every server of that era sent; Netscape 3 refuses a v3 one.
+**The handshake log says what the browser is speaking.** Each `connect_mitm` handshake now logs the first bytes of the browser's hello and, if the browser walks away, how far it got — enough to tell an SSL 3.0 client from one speaking PCT, and a browser that refused the certificate from one that never sent a hello.
 
-**Settings have a window.** Eight panes, on both platforms — File ▸ Settings… on Mac OS 9, File ▸ Preferences… on Windows. The preferences file stays hand-editable and keeps its comments.
-
-**The certificate authority can be installed.** Visit `http://<gateway-address>:8765/gateway-ca.crt` in the browser you are setting up and it will offer to install it, which stops the warning `connect_mitm` otherwise shows on every site. Clicking through the warning still works.
-
-Also: the About box on Windows drew its text a third larger than the Mac's; a failed Open Transport connect reported the wrong call; and the SSLv2-compatible hello could translate two cipher specs onto one suite and send it twice.
+**One script for the mail token.** `tools/get-email-token.py`, run once on a modern computer with nothing but Python 3, signs in to Outlook.com or Gmail and prints the lines to paste into the preferences file. It replaces `extract-refresh-token.py`.
 
 ## Setting it up
 
@@ -25,9 +21,9 @@ Point the browser's HTTP proxy at the machine running Gateway, port `8765`. Clas
 
 Mail and the Wayback proxy are off until configured. Every setting is listed in [`docs/prefs.md`](https://github.com/brunocastello/Gateway/blob/main/docs/prefs.md).
 
-## Upgrading from 0.3.4
+## Upgrading from 0.3.5
 
-If you used `connect_mitm`, the certificate authority is regenerated once on first run and has to be trusted again. Nothing else changes, and the preferences file is untouched.
+Nothing to do. The certificate authority is kept, so a browser that already trusts it stays trusting it, and the preferences file is untouched.
 
 ## Downloads
 
