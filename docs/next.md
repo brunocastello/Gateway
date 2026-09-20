@@ -76,13 +76,38 @@ Already known: the 16-bit Windows 3.1 build of 3.0 fails identically with
 PCT unticked and SSL 2/3 ticked (tried 2026-09-20). Its failure is before
 protocol selection, so it says nothing about the 32-bit build.
 
-## 4. Documentation drift
+## 4. For 0.3.7: a log a person can read, without losing the material
 
-`CLAUDE.md` still describes Module 3 as "designed, not built" and
-`docs/module3-wayback.md` opens with "Nothing here is implemented", while the
-log shows `listening on port 8888` and `wayback: serving 20011231 +730 days`.
-The wayback proxy is built and running. Both files steer future sessions and
-should say so.
+The log window is the only diagnostic Gateway has, and this weekend it did its
+job — but only for someone who knows what `rx-after-flight 0` means. The
+lines that carry the diagnosis today read like this:
+
+```
+MITM handshake abandoned by the browser: SSLv2 hello, version 0300, suite 0004
+[no client reply after our certificate; rx 54, rx-after-flight 0]
+```
+
+The ask for 0.3.7 is a log in plain sentences by default, with the detail
+still obtainable when a report needs it. Two mechanisms, and they are not
+alternatives:
+
+- **A short code on the plain line**, so a screenshot from a user still
+  carries the diagnosis: the sentence says what happened, the code says
+  exactly which branch said so. Codes are stable, documented in one table
+  (`docs/log-codes.md`), and never reused. Something like
+  `#2 the browser gave up after seeing our certificate (H12)`.
+- **A `log_debug` preference**, read at launch like everything else, that
+  turns today's engineer lines back on: hello bytes, suite numbers, byte
+  counts, BearSSL error numbers. A runtime switch rather than a build flag,
+  because builds come from CI and a user asked to reproduce something must
+  not need one. `GW_DEBUG_IO` stays what it is: a build-time flag for the
+  developer, not the mechanism for users.
+
+Where to start: `gw_log` calls in `gw_httpproxy.c` and
+`third_party/certainly/src/server.c` (the MITM lines), then the mail splice.
+Each existing line becomes a sentence plus a code, and its current text moves
+behind `log_debug`. The request line (`#N :8765 GET host:port/path`) is
+already readable and stays.
 
 ---
 
@@ -96,7 +121,11 @@ then silence — the client never sent a hello, so neither is a data point:
 - *The 16-bit Windows 3.1 build of 3.0.* It carries its own secure-channel
   code rather than `schannel.dll`, and that code fails on Windows 95 after
   the tunnel opens. The browser reports the load as failed without writing
-  a byte, with PCT on or off.
+  a byte, with PCT on or off. The same build loads `http://www.howsmyssl.com/`
+  through Gateway: that is the plain-proxy path, where Gateway follows the
+  site's redirect to https itself and the browser does no TLS at all. So the
+  16-bit IE 3 is usable with `rewrite_https` (the default); only its own SSL
+  is dead on Windows 95.
 - *An extracted 3.02 folder.* Its `iexplore.exe` creates the browser through
   COM, the registry points at IE 4's `shdocvw.dll`, and the result is IE 4's
   frame over a mix of DLLs. The https path dies with error 120,

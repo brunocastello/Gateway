@@ -1,12 +1,15 @@
-# Module 3 — Wayback proxy (design, not yet built)
+# Module 3 — Wayback proxy (design, built in 0.2.0)
 
 Serve the old web to old browsers: requests go to the Internet Archive's
 Wayback Machine at a configured date instead of to the live site, except for a
 list of hosts that are allowed through as they are.
 
-Nothing here is implemented. This document exists so a later session can pick
-the work up without re-deriving the decisions, and it records what has already
-been checked so those checks are not repeated.
+This is the design the module was built from (commit 4b63949, released in
+0.2.0; the code is `src/portable/gw_wayback.c` and the hooks in
+`src/proxy/gw_httpproxy.c`, the settings in `docs/prefs.md`). It is kept as
+the record of why the module is shaped as it is and of what was verified
+before it was written, so neither is re-derived. Section 8 says how each
+decision that was open at design time was settled.
 
 ---
 
@@ -366,23 +369,20 @@ all. Per-client state keyed on the peer address would *not* solve the case
 described — IE4 and iCab on the same Mac share an address — so the port is the
 right discriminator. Not worth building until it is asked for.
 
-## 8. Decisions still open
+## 8. Decisions that were open, and how they were settled
 
-- **Should the settings page persist to prefs?** The reference implementation
-  changes the running configuration only; the file has to be edited for
-  permanence. Gateway has `GWConfig_Set()` and already writes prefs for the
-  rotated OAuth token, so it could persist. Recommendation: persist the date
-  and tolerance, since otherwise they must be re-set after every launch on a
-  machine that gets restarted often. Keep the checkboxes session-only.
-- **Should a miss fall back to the live site?** Cleaner to return a clear error
-  page than to silently serve a 2026 page to a 1997 browser.
-- **`SETTINGS_PAGE` on `web.archive.org` means Gateway shadows a real host.**
-  That is the reference behaviour and the bookmarks depend on it, but it should
-  be switchable off. It should also only answer on the Wayback listener, so the
-  live-web proxy on 8765 can still reach the real site.
-- **Should the allow-list also apply on the live-web listener?** No: 8765 is
-  already "everything live". The list is only meaningful as an exception to the
-  archive.
+- **Should the settings page persist to prefs?** Yes, for the date and
+  tolerance: `GW_WaybackSave()` rewrites `wayback_date` and
+  `wayback_tolerance` when the page is used, so they survive a restart. The
+  checkboxes are session-only, as recommended.
+- **Should a miss fall back to the live site?** No. A snapshot outside the
+  tolerance is answered with a 404 page saying so, never a 2026 page to a
+  1997 browser.
+- **`SETTINGS_PAGE` on `web.archive.org` shadows a real host.** Kept for the
+  bookmarks, but only on the Wayback listener, and `wayback_settings = 0`
+  turns it off; the live-web proxy on 8765 still reaches the real site.
+- **Should the allow-list also apply on the live-web listener?** No, as
+  argued: 8765 is already "everything live".
 
 ## 9. Licensing
 
@@ -395,7 +395,7 @@ and a different concurrency model; nothing would be gained by copying anyway.
 Credit WaybackProxy as prior art here and in the README, and do not paste from
 it.
 
-## 10. Suggested order
+## 10. Suggested order (the order it was built in)
 
 1. `gw_glob_match()` and its tests. Smallest piece, and everything else depends
    on the allow-list being right.

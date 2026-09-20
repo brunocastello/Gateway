@@ -41,16 +41,24 @@
 * Local password checked against Gateway prefs; the refresh token is read from the prefs file. Gateway only handles token refresh via Certainly and upstream IMAPS (`outlook.office365.com:993` with `AUTHENTICATE XOAUTH2`) / SMTPS (`smtp.office365.com:587` STARTTLS or 465).
 * **The token is obtained with `tools/get-email-token.py` on a modern computer** — the official and only route, shipped as a release asset. Python 3 standard library, Thunderbird's public clients, loopback redirect, PKCE; it prints the prefs lines. Verified 2026-09-18 for both providers. Do not build an in-Gateway consent flow: the providers' sign-in pages are script-only and no browser Gateway serves can render them (tested on Mac OS 9, 2026-09-17). Device-code and phone-assisted flows were considered and rejected — nothing that works for one provider only, and nothing that has users configure a phone, a firewall or a file transfer.
 
-### Module 3 — Wayback Proxy (`:8888`, designed, not built)
-* Serve archived pages from the Internet Archive at a configured date, with a
-  glob allow-list of hosts that pass through to the live web.
+### Module 3 — Wayback Proxy (`:8888`, built in 0.2.0)
+* Serves archived pages from the Internet Archive at a configured date
+  (`wayback_date`, with `wayback_tolerance` days of slack), with an allow-list
+  of hosts that pass through to the live web (`wayback_live`, plain names or
+  globs). Every setting is in `docs/prefs.md`.
 * Its own listener (`wayback_port`), not a mode on `:8765`, so the live web and
   the archive are both available at once and a browser chooses between them by
-  proxy setting alone.
+  proxy setting alone. The allow-list applies only on this listener.
+* Fetches with the archive's `id_` modifier (original bytes, nothing to
+  rewrite). A snapshot outside the tolerance is a clear 404 page, never a
+  silent fall-through to the live site.
+* Settings page compatible with the URL of `richardg867/WaybackProxy`, so
+  existing bookmarks keep working; served on `web.archive.org` and `gateway`
+  on this listener only, switchable off with `wayback_settings`. The date and
+  tolerance it sets are written back to the prefs file. That project is GPL-3
+  and Gateway is MIT, so the implementation is independent of its source
+  (`src/portable/gw_wayback.c`, host-tested).
 * Design, decisions and prior verification: **`docs/module3-wayback.md`**.
-* Compatible by design with the settings URL of `richardg867/WaybackProxy`, so
-  existing bookmarks keep working. That project is GPL-3 and Gateway is MIT, so
-  the implementation must be independent of its source.
 
 ---
 
