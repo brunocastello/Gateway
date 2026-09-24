@@ -214,9 +214,14 @@ static void imap_command(GWMailSession *s, const char *line, size_t len)
     char      reply[512];
 
     if (!gw_imap_parse(line, len, &cmd)) {
+        gw_log("mail #%ld IMAP client sent a line Gateway could not parse",
+               s->id);
         say_client(s, "* BAD Gateway could not parse that\r\n");
         return;
     }
+
+    /* The verb only: the arguments of a LOGIN carry the password. */
+    gw_log("mail #%ld IMAP client sent %s", s->id, cmd.cmd);
 
     if (gw_stricmp(cmd.cmd, "CAPABILITY") == 0) {
         snprintf(reply, sizeof(reply),
@@ -268,9 +273,13 @@ static void pop_command(GWMailSession *s, const char *line, size_t len)
     char verb[32], arg[512];
 
     if (!gw_pop_parse(line, len, verb, sizeof(verb), arg, sizeof(arg))) {
+        gw_log("mail #%ld POP client sent a line Gateway could not parse",
+               s->id);
         say_client(s, "-ERR Gateway could not parse that\r\n");
         return;
     }
+
+    gw_log("mail #%ld POP client sent %s", s->id, verb);
 
     if (gw_stricmp(verb, "USER") == 0) {
         strncpy(s->user, arg, sizeof(s->user) - 1);
@@ -813,7 +822,12 @@ static void session_step(GWMailSession *s)
             break;
         }
         n = fill(&s->cli, s->cbuf, &s->cLen, (size_t)GW_MAIL_BUF);
-        if (n == -1) { s->state = kMSDone; break; }
+        if (n == -1) {
+            gw_log("mail #%ld client dropped the connection before logging in",
+                   s->id);
+            s->state = kMSDone;
+            break;
+        }
         if (n > 0) s->lastActivity = GWNet_Ticks();
 
         while (s->state == kMSCommand &&
@@ -822,8 +836,11 @@ static void session_step(GWMailSession *s)
             else if (s->kind == kMailPop) pop_command(s, line, strlen(line));
             else                          smtp_command(s, line, strlen(line));
         }
-        if (n == -2 && s->cLen == 0 && s->state == kMSCommand)
+        if (n == -2 && s->cLen == 0 && s->state == kMSCommand) {
+            gw_log("mail #%ld client closed the connection before logging in",
+                   s->id);
             s->state = kMSFlushClose;
+        }
         break;
     }
 
@@ -998,6 +1015,8 @@ static int mail_accept(GWConn *c, GWMailKind kind)
         s->kind = kind;
         s->id = ++sNextId;
         s->state = kMSGreet;
+        gw_log("mail #%ld %s connection opened", s->id,
+               kind == kMailImap ? "IMAP" : kind == kMailPop ? "POP" : "SMTP");
         s->lastActivity = GWNet_Ticks();
         return 1;
     }
