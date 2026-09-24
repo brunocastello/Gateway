@@ -117,13 +117,6 @@ GWListener  *GWListener_Open(UInt16 port, int backlog);
 GWConn      *GWListener_Poll(GWListener *l, int accepting);
 void         GWListener_Close(GWListener *l);
 
-/*
- * Log each incoming connection as the operating system reports it, before the
- * accept. For the mail ports, where a client that connects and one that never
- * does otherwise look the same; the proxy ports would drown the log in it.
- */
-void         GWListener_LogArrivals(GWListener *l);
-
 /* ------------------------------------------------------------------ */
 /* Stream: one interface over "raw TCP" and "TLS"                      */
 /* ------------------------------------------------------------------ */

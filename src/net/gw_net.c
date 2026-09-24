@@ -593,24 +593,10 @@ GWConn *GWListener_Poll(GWListener *l, int accepting)
     l->call.udata.maxlen = 0;
 
     err = OTListen(l->ep, &l->call);
-    if (err == kOTNoDataErr) {
-        if (l->logArrivals)
-            gw_log("port %u: told of a connection, but none was waiting",
-                   (unsigned)l->port);
-        return NULL;
-    }
+    if (err == kOTNoDataErr) return NULL;
     if (err != noErr) {
         gw_log("port %u: OTListen %d", (unsigned)l->port, (int)err);
         return NULL;
-    }
-    if (l->logArrivals) {
-        UInt32 h = l->callAddr.fHost;
-        gw_log("port %u: connection arriving from %lu.%lu.%lu.%lu",
-               (unsigned)l->port,
-               (unsigned long)((h >> 24) & 0xFF),
-               (unsigned long)((h >> 16) & 0xFF),
-               (unsigned long)((h >> 8) & 0xFF),
-               (unsigned long)(h & 0xFF));
     }
 
     l->pending = gw_conn_alloc_for_accept();
@@ -645,11 +631,6 @@ GWConn *GWListener_Poll(GWListener *l, int accepting)
         return NULL;
     }
     return NULL;                                /* wait for T_PASSCON */
-}
-
-void GWListener_LogArrivals(GWListener *l)
-{
-    if (l != NULL) l->logArrivals = true;
 }
 
 void GWListener_Close(GWListener *l)

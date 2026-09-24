@@ -23,7 +23,6 @@
 #define GW_MAIL_BUF     4096L
 #define GW_MAIL_LINE    2048
 #define GW_MAIL_IDLE    (600 * 60)          /* ticks: ten minutes */
-#define GW_MAIL_RETRY_WAIT (2 * 60)         /* ticks: two seconds */
 
 typedef enum { kMailNone = 0, kMailImap, kMailPop, kMailSmtp } GWMailKind;
 
@@ -38,7 +37,6 @@ typedef enum {
     kMSUpStartTLS,      /* sent STARTTLS, waiting for the server's 220   */
     kMSUpHandshake,     /* Certainly is negotiating on the same socket   */
     kMSUpAuth,
-    kMSUpRetryWait,     /* upstream refused the login; reconnect shortly */
     kMSSplice,
     kMSFlushClose,
     kMSDone
@@ -62,8 +60,6 @@ typedef struct {
     int           wantStartTLS;             /* upstream needs a STARTTLS upgrade */
     int           tlsUp;                    /* the upgrade has happened  */
     int           xoauthSent;               /* POP: payload sent after "+" */
-    int           attempts;                 /* upstream logins tried so far */
-    unsigned long retryAt;                  /* ticks: when to reconnect */
     char          upHost[GW_NET_HOST_MAX];  /* kept for SNI on the upgrade */
     unsigned long lastActivity;
 } GWMailSession;
@@ -218,14 +214,9 @@ static void imap_command(GWMailSession *s, const char *line, size_t len)
     char      reply[512];
 
     if (!gw_imap_parse(line, len, &cmd)) {
-        gw_log("mail #%ld IMAP client sent a line Gateway could not parse",
-               s->id);
         say_client(s, "* BAD Gateway could not parse that\r\n");
         return;
     }
-
-    /* The verb only: the arguments of a LOGIN carry the password. */
-    gw_log("mail #%ld IMAP client sent %s", s->id, cmd.cmd);
 
     if (gw_stricmp(cmd.cmd, "CAPABILITY") == 0) {
         snprintf(reply, sizeof(reply),
@@ -277,13 +268,9 @@ static void pop_command(GWMailSession *s, const char *line, size_t len)
     char verb[32], arg[512];
 
     if (!gw_pop_parse(line, len, verb, sizeof(verb), arg, sizeof(arg))) {
-        gw_log("mail #%ld POP client sent a line Gateway could not parse",
-               s->id);
         say_client(s, "-ERR Gateway could not parse that\r\n");
         return;
     }
-
-    gw_log("mail #%ld POP client sent %s", s->id, verb);
 
     if (gw_stricmp(verb, "USER") == 0) {
         strncpy(s->user, arg, sizeof(s->user) - 1);
@@ -627,32 +614,6 @@ static void step_up_starttls(GWMailSession *s)
     s->state = kMSUpHandshake;
 }
 
-/*
- * Upstream refused the login. Outlook.com personal accounts do this at random:
- * the same token, client and exchange get "User is authenticated but not
- * connected" most of the time and in on another try, with any client. So
- * rather than hand OE a failure, drop the upstream connection and log in
- * again on a fresh one, up to mail_retries more times. Returns 1 when a retry
- * is scheduled, 0 when the caller should fail the session.
- */
-static int retry_upstream(GWMailSession *s)
-{
-    long retries = GWConfig_Num("mail_retries", 4);
-
-    if (s->attempts > retries) return 0;
-    gw_log("mail #%ld login refused upstream, try %d of %ld; trying again",
-           s->id, s->attempts, retries + 1);
-    GWStream_Destroy(&s->up);
-    s->uLen = 0;
-    s->pLen = 0;
-    s->pSent = 0;
-    s->xoauthSent = 0;
-    s->tlsUp = 0;
-    s->retryAt = GWNet_Ticks() + GW_MAIL_RETRY_WAIT;
-    s->state = kMSUpRetryWait;
-    return 1;
-}
-
 static void step_up_auth(GWMailSession *s)
 {
     char line[GW_MAIL_LINE];
@@ -677,7 +638,6 @@ static void step_up_auth(GWMailSession *s)
             }
             if (gw_strnicmp(line, "GW1 ", 4) == 0) {
                 log_xoauth2_rejection(s, line);
-                if (retry_upstream(s)) return;
                 snprintf(reply, sizeof(reply),
                          "%s NO Upstream rejected XOAUTH2\r\n", s->tag);
                 mail_fail(s, reply, "upstream rejected XOAUTH2");
@@ -722,7 +682,6 @@ static void step_up_auth(GWMailSession *s)
             }
 
             log_xoauth2_rejection(s, line);
-            if (retry_upstream(s)) return;
             mail_fail(s, "-ERR Upstream rejected XOAUTH2\r\n",
                       "upstream rejected XOAUTH2");
             return;
@@ -854,12 +813,7 @@ static void session_step(GWMailSession *s)
             break;
         }
         n = fill(&s->cli, s->cbuf, &s->cLen, (size_t)GW_MAIL_BUF);
-        if (n == -1) {
-            gw_log("mail #%ld client dropped the connection before logging in",
-                   s->id);
-            s->state = kMSDone;
-            break;
-        }
+        if (n == -1) { s->state = kMSDone; break; }
         if (n > 0) s->lastActivity = GWNet_Ticks();
 
         while (s->state == kMSCommand &&
@@ -868,11 +822,8 @@ static void session_step(GWMailSession *s)
             else if (s->kind == kMailPop) pop_command(s, line, strlen(line));
             else                          smtp_command(s, line, strlen(line));
         }
-        if (n == -2 && s->cLen == 0 && s->state == kMSCommand) {
-            gw_log("mail #%ld client closed the connection before logging in",
-                   s->id);
+        if (n == -2 && s->cLen == 0 && s->state == kMSCommand)
             s->state = kMSFlushClose;
-        }
         break;
     }
 
@@ -902,7 +853,6 @@ static void session_step(GWMailSession *s)
              * buffer, and the resolver reads the name asynchronously. */
             strncpy(s->upHost, host, sizeof(s->upHost) - 1);
             host = s->upHost;
-            s->attempts++;
             gw_log("mail #%ld connecting to %s:%ld%s", s->id, host, port,
                    s->wantStartTLS ? " (STARTTLS)" : " (TLS)");
 
@@ -983,11 +933,6 @@ static void session_step(GWMailSession *s)
         q_flush(&s->cli, s->oq, &s->oLen, &s->oSent);
         break;
 
-    case kMSUpRetryWait:
-        s->lastActivity = GWNet_Ticks();
-        if (s->lastActivity >= s->retryAt) s->state = kMSToken;
-        break;
-
     case kMSSplice:
         step_splice(s);
         break;
@@ -1053,8 +998,6 @@ static int mail_accept(GWConn *c, GWMailKind kind)
         s->kind = kind;
         s->id = ++sNextId;
         s->state = kMSGreet;
-        gw_log("mail #%ld %s connection opened", s->id,
-               kind == kMailImap ? "IMAP" : kind == kMailPop ? "POP" : "SMTP");
         s->lastActivity = GWNet_Ticks();
         return 1;
     }

@@ -415,9 +415,6 @@ static int listeners_open(void)
         sImap = GWListener_Open((UInt16)sImapPort, 2);
         sPop  = GWListener_Open((UInt16)sPopPort, 2);
         sSmtp = GWListener_Open((UInt16)sSmtpPort, 2);
-        GWListener_LogArrivals(sImap);
-        GWListener_LogArrivals(sPop);
-        GWListener_LogArrivals(sSmtp);
     }
 
     if (!sProxyOn && !sMailOn && !sWaybackOn) {

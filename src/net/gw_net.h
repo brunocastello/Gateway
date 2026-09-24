@@ -52,7 +52,6 @@ struct GWListener {
     EndpointRef       ep;
     UInt16            port;
     Boolean           open;
-    Boolean           logArrivals;
     volatile Boolean  fListen;
     volatile Boolean  fAcceptDone;
     volatile OSStatus err;

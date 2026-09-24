@@ -43,7 +43,6 @@ struct GWListener {
     SOCKET sock;
     UInt16 port;
     int    open;
-    int    logArrivals;
 };
 
 /* ------------------------------------------------------------------ */
@@ -447,19 +446,7 @@ GWConn *GWListener_Poll(GWListener *l, int accepting)
     c->state = kGWConnReady;
     c->addr  = ntohl(sa.sin_addr.s_addr);
     c->port  = ntohs(sa.sin_port);
-    if (l->logArrivals)
-        gw_log("port %u: connection arriving from %lu.%lu.%lu.%lu",
-               (unsigned)l->port,
-               (unsigned long)((c->addr >> 24) & 0xFF),
-               (unsigned long)((c->addr >> 16) & 0xFF),
-               (unsigned long)((c->addr >> 8) & 0xFF),
-               (unsigned long)(c->addr & 0xFF));
     return c;
-}
-
-void GWListener_LogArrivals(GWListener *l)
-{
-    if (l != NULL) l->logArrivals = 1;
 }
 
 void GWListener_Close(GWListener *l)
