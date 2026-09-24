@@ -23,6 +23,7 @@
 #define GW_MAIL_BUF     4096L
 #define GW_MAIL_LINE    2048
 #define GW_MAIL_IDLE    (600 * 60)          /* ticks: ten minutes */
+#define GW_MAIL_RETRY_WAIT (2 * 60)         /* ticks: two seconds */
 
 typedef enum { kMailNone = 0, kMailImap, kMailPop, kMailSmtp } GWMailKind;
 
@@ -37,6 +38,7 @@ typedef enum {
     kMSUpStartTLS,      /* sent STARTTLS, waiting for the server's 220   */
     kMSUpHandshake,     /* Certainly is negotiating on the same socket   */
     kMSUpAuth,
+    kMSUpRetryWait,     /* upstream refused the login; reconnect shortly */
     kMSSplice,
     kMSFlushClose,
     kMSDone
@@ -60,6 +62,8 @@ typedef struct {
     int           wantStartTLS;             /* upstream needs a STARTTLS upgrade */
     int           tlsUp;                    /* the upgrade has happened  */
     int           xoauthSent;               /* POP: payload sent after "+" */
+    int           attempts;                 /* upstream logins tried so far */
+    unsigned long retryAt;                  /* ticks: when to reconnect */
     char          upHost[GW_NET_HOST_MAX];  /* kept for SNI on the upgrade */
     unsigned long lastActivity;
 } GWMailSession;
@@ -623,6 +627,32 @@ static void step_up_starttls(GWMailSession *s)
     s->state = kMSUpHandshake;
 }
 
+/*
+ * Upstream refused the login. Outlook.com personal accounts do this at random:
+ * the same token, client and exchange get "User is authenticated but not
+ * connected" most of the time and in on another try, with any client. So
+ * rather than hand OE a failure, drop the upstream connection and log in
+ * again on a fresh one, up to mail_retries more times. Returns 1 when a retry
+ * is scheduled, 0 when the caller should fail the session.
+ */
+static int retry_upstream(GWMailSession *s)
+{
+    long retries = GWConfig_Num("mail_retries", 4);
+
+    if (s->attempts > retries) return 0;
+    gw_log("mail #%ld login refused upstream, try %d of %ld; trying again",
+           s->id, s->attempts, retries + 1);
+    GWStream_Destroy(&s->up);
+    s->uLen = 0;
+    s->pLen = 0;
+    s->pSent = 0;
+    s->xoauthSent = 0;
+    s->tlsUp = 0;
+    s->retryAt = GWNet_Ticks() + GW_MAIL_RETRY_WAIT;
+    s->state = kMSUpRetryWait;
+    return 1;
+}
+
 static void step_up_auth(GWMailSession *s)
 {
     char line[GW_MAIL_LINE];
@@ -647,6 +677,7 @@ static void step_up_auth(GWMailSession *s)
             }
             if (gw_strnicmp(line, "GW1 ", 4) == 0) {
                 log_xoauth2_rejection(s, line);
+                if (retry_upstream(s)) return;
                 snprintf(reply, sizeof(reply),
                          "%s NO Upstream rejected XOAUTH2\r\n", s->tag);
                 mail_fail(s, reply, "upstream rejected XOAUTH2");
@@ -691,6 +722,7 @@ static void step_up_auth(GWMailSession *s)
             }
 
             log_xoauth2_rejection(s, line);
+            if (retry_upstream(s)) return;
             mail_fail(s, "-ERR Upstream rejected XOAUTH2\r\n",
                       "upstream rejected XOAUTH2");
             return;
@@ -870,6 +902,7 @@ static void session_step(GWMailSession *s)
              * buffer, and the resolver reads the name asynchronously. */
             strncpy(s->upHost, host, sizeof(s->upHost) - 1);
             host = s->upHost;
+            s->attempts++;
             gw_log("mail #%ld connecting to %s:%ld%s", s->id, host, port,
                    s->wantStartTLS ? " (STARTTLS)" : " (TLS)");
 
@@ -948,6 +981,11 @@ static void session_step(GWMailSession *s)
 
         q_flush(&s->up, s->pq, &s->pLen, &s->pSent);
         q_flush(&s->cli, s->oq, &s->oLen, &s->oSent);
+        break;
+
+    case kMSUpRetryWait:
+        s->lastActivity = GWNet_Ticks();
+        if (s->lastActivity >= s->retryAt) s->state = kMSToken;
         break;
 
     case kMSSplice:

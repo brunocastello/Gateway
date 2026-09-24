@@ -167,6 +167,7 @@ nothing, and the settings below stand on their own.
 | `pop_upstream_port` | `995` | Implicit TLS. |
 | `smtp_upstream_port` | `587` | With `smtp_starttls = 1`. Use `465` with `smtp_starttls = 0` for implicit TLS. |
 | `smtp_starttls` | `1` for 587, `0` for 465 | Whether to upgrade an initially plaintext connection. |
+| `mail_retries` | `4` | How many more times to log in upstream when the provider refuses an IMAP or POP login, two seconds apart, on a fresh connection each time, before the mail client is told. Outlook.com personal accounts refuse valid logins at random ("User is authenticated but not connected"); `0` turns retrying off. |
 | `oauth_host`, `oauth_path` | from `provider` | Token endpoint. |
 | `oauth_scope` | from `provider` | Must name every protocol in use — a token without the POP scope is refused by the POP server even though it is valid. |
 | `oauth_user` | — | The account address. |
