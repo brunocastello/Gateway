@@ -31,6 +31,35 @@
  */
 #define CERTAINLY_IOBUF_SIZE  (16384 + 325)  /* max TLS record + overhead */
 
+struct MacTLS_Context;
+
+/*
+ * Trust-any X.509 validator context (testing only, PATCHES.md §33). The
+ * vtable must stay the first field: the engine is handed &vtable and casts
+ * it back. Defined once, here, rather than kept in sync with a duplicate in
+ * certainly.c: MacTLS_SetInsecure() (certainly.c) is the only place that
+ * touches it.
+ */
+typedef struct {
+    const br_x509_class *vtable;
+    br_x509_decoder_context dc;
+    int cert_index;
+} MacTLS_InsecureCtx;
+
+/*
+ * X.509 validation-identity guard (PATCHES.md §34). Every validation call
+ * site -- BearSSL's 1.2 engine and the 1.3 state machine, which share one
+ * validator -- is pointed at this vtable instead of the real one (`xc`)
+ * directly, so that start_chain() always receives the connection's real
+ * host regardless of what name the wire's ClientHello SNI actually carried
+ * (MacTLS_SetSNI, tunnel_sni). Every other call forwards straight through
+ * to the real validator. The vtable pointer must stay the first field.
+ */
+typedef struct {
+    const br_x509_class   *vtable;
+    struct MacTLS_Context *owner;
+} MacTLS_SniGuardCtx;
+
 struct MacTLS_Context {
     /* Connection state */
     MacTLS_State    state;
@@ -49,6 +78,13 @@ struct MacTLS_Context {
      * CRL/OCSP revocation checking. Fine for our use case.
      */
     br_x509_minimal_context xc;
+
+    /*
+     * Validation-identity guard installed in front of `xc` (PATCHES.md §34).
+     * Both br_ssl_engine_set_x509() and hs13.x509_ctx point here, never at
+     * &xc.vtable directly, so start_chain() always sees the real host.
+     */
+    MacTLS_SniGuardCtx sni_guard;
 
     /* I/O buffer — BearSSL reads/writes TLS records here */
     unsigned char   iobuf[CERTAINLY_IOBUF_SIZE];
@@ -136,6 +172,34 @@ struct MacTLS_Context {
      * caller can name the actual remedy instead of a bare handshake error.
      */
     bool            fell_back_no_route;
+
+    /*
+     * Skip the TLS 1.3 state machine and drive BearSSL's 1.2 engine from
+     * the first pump (MacTLS_CreateOnEndpointTLS12). For far ends with no
+     * TLS 1.3, where the 1.3 ClientHello would only buy a fallback that an
+     * adopted connection cannot perform. See PATCHES.md §32.
+     */
+    bool            force_tls12;
+
+    /*
+     * SNI override (MacTLS_SetSNI, §34). 0 sends the dial hostname (the
+     * default), 1 sends sni_override, 2 sends no SNI at all. This changes
+     * only what the ClientHello carries -- sni_guard above keeps validation
+     * on the real host regardless. A middlebox doing SNI policy on a
+     * CONNECT tunnel is the reason to touch this: socat's handshake carries
+     * no SNI where Gateway's carries the far hostname, and only one of them
+     * gets answered by some proxies.
+     */
+    int             sni_mode;
+    char            sni_override[256];
+
+    /*
+     * Trust-any validator for testing (MacTLS_SetInsecure). Only the
+     * end-entity certificate is decoded, for its public key; everything
+     * else about the chain is accepted without checking. Off unless
+     * enabled, and never used by the mail module. See PATCHES.md §33.
+     */
+    MacTLS_InsecureCtx insecure;
 };
 
 struct MacTLS_Config {

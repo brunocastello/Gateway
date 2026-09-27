@@ -165,6 +165,14 @@ void          GWStream_Adopt(GWStream *s, GWConn *c);
 int           GWStream_UpgradeToTLS(GWStream *s, const char *host);
 
 /*
+ * The same detach, but for a far end with no TLS 1.3: BearSSL's 1.2 engine
+ * drives from the first pump and no fallback reconnect is needed, which is
+ * what makes 1.2-only servers reachable through a proxy tunnel or STARTTLS.
+ * Returns 0 if the stream is not in a state that can be upgraded.
+ */
+int           GWStream_UpgradeToTLS12(GWStream *s, const char *host);
+
+/*
  * The same upgrade with the roles reversed: Gateway answers the handshake
  * instead of starting it, presenting `leaf` for whatever host the client
  * asked for. For the browser side of a CONNECT that Gateway terminates.
@@ -218,6 +226,23 @@ const char   *GWStream_ErrorText(const GWStream *s);
  * failure text cannot say.
  */
 int           GWStream_FallbackNoRoute(const GWStream *s);
+
+/*
+ * Testing only (tunnel_insecure): stop validating the far end's certificate
+ * on this stream. Client side only -- never use on a mail or web-proxy
+ * stream. Must run before the first Pump, i.e. right after an Upgrade call
+ * returns.
+ */
+void          GWStream_SetInsecure(GWStream *s);
+
+/*
+ * Diagnosis (tunnel_sni): replace the name the handshake sends as SNI, or
+ * omit SNI entirely when sni is NULL. Client side only, before the first
+ * Pump. This changes only what goes out on the wire -- certificate
+ * validation always checks the host the stream was upgraded with
+ * (PATCHES.md §34), never this override.
+ */
+void          GWStream_SetSNI(GWStream *s, const char *sni);
 
 /*
  * A failure line with enough in it to act on: what went wrong, how far the

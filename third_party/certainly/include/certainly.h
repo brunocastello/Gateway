@@ -123,6 +123,13 @@ MacTLS_Context *MacTLS_CreateWithConfig(const char *host, uint16_t port,
  * the NULL case.
  */
 MacTLS_Context *MacTLS_CreateOnEndpoint(const char *host, CTSocket sock);
+/*
+ * Adopted, but for a far end with no TLS 1.3: BearSSL's TLS 1.2 engine
+ * drives from the first pump and no 1.3 ClientHello is ever sent, so no
+ * fallback reconnect is needed. Same ownership and return contract as
+ * MacTLS_CreateOnEndpoint.
+ */
+MacTLS_Context *MacTLS_CreateOnEndpointTLS12(const char *host, CTSocket sock);
 MacTLS_State    MacTLS_Pump(MacTLS_Context *ctx);
 void            MacTLS_Close(MacTLS_Context *ctx);
 
@@ -177,6 +184,32 @@ MacTLS_Version MacTLS_GetVersion(const MacTLS_Context *ctx);
  * message cannot say.
  */
 int          MacTLS_FallbackNoRoute(const MacTLS_Context *ctx);
+
+/*
+ * Testing only: accept any certificate from the far end -- wrong name,
+ * private CA, expired, all of it. The end-entity public key is still
+ * decoded so the handshake can complete, but nothing is verified, so a
+ * middlebox or impostor is indistinguishable from the real server. Must be
+ * called before the first Pump. Gateway exposes this as `tunnel_insecure`
+ * for the generic tunnel alone; it is never used for mail, the web proxy,
+ * or the archive.
+ */
+void         MacTLS_SetInsecure(MacTLS_Context *ctx);
+
+/*
+ * Replace the server name the handshake sends as SNI. sni == NULL omits SNI
+ * entirely; otherwise that name is sent instead of the connection's real
+ * host. Must run before the first Pump.
+ *
+ * This changes only what goes out on the wire: certificate validation
+ * always checks the connection's real host (the name passed to
+ * MacTLS_Create / MacTLS_CreateOnEndpoint), never this override, and never
+ * skips the check just because SNI was omitted (PATCHES.md §34). Exists
+ * because a middlebox on a CONNECT tunnel may apply SNI policy to the
+ * handshake inside: one far end answered a nameless ClientHello and
+ * stalled one carrying the hostname, with no other difference on the wire.
+ */
+void         MacTLS_SetSNI(MacTLS_Context *ctx, const char *sni);
 
 /*
  * How far the connection got before it stopped. A failure reported only as

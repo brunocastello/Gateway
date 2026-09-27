@@ -89,6 +89,42 @@ int GWStream_UpgradeToTLS(GWStream *s, const char *host)
 }
 
 /*
+ * The same detach, but for a far end with no TLS 1.3: BearSSL's 1.2 engine
+ * drives from the first pump and no fallback reconnect is needed, which is
+ * what makes 1.2-only servers reachable through a proxy tunnel or STARTTLS.
+ */
+int GWStream_UpgradeToTLS12(GWStream *s, const char *host)
+{
+    CTSocket sock;
+
+    if (s == NULL || s->tls || s->plain == NULL) return 0;
+    if (GWConn_GetState(s->plain) != kGWConnReady ||
+        GWConn_PeerClosed(s->plain)) return 0;
+
+    sock = GWConn_DetachSocket(s->plain);
+    GWConn_Destroy(s->plain);           /* closes the DNS provider, not the ep */
+    s->plain = NULL;
+
+    if (sock == CT_SOCKET_NONE) {
+        s->state = kGWStreamError;
+        return 0;
+    }
+
+    /* Certainly owns the connection from here, including on failure. */
+    s->sec = MacTLS_CreateOnEndpointTLS12(host, sock);
+    if (s->sec == NULL || MacTLS_GetState(s->sec) == kMacTLS_Error) {
+        s->state = kGWStreamError;
+        return 0;
+    }
+
+    s->tls = true;
+    s->eof = false;
+    s->startTicks = GWNet_Ticks();
+    s->state = kGWStreamConnecting;
+    return 1;
+}
+
+/*
  * The same detach, with Gateway answering the handshake instead of starting
  * it. The browser has just been told "200 Connection Established" and is about
  * to send a ClientHello; from here the socket belongs to Certainly's server
@@ -301,6 +337,31 @@ int GWStream_FallbackNoRoute(const GWStream *s)
 {
     if (s == NULL || !s->tls || s->sec == NULL) return 0;
     return MacTLS_FallbackNoRoute(s->sec);
+}
+
+/*
+ * Testing only (tunnel_insecure): stop validating the far end's certificate.
+ * Client side only -- the MITM server side presents certificates rather
+ * than checking them. Must run before the handshake, i.e. right after an
+ * Upgrade call returns and before the first Pump.
+ */
+void GWStream_SetInsecure(GWStream *s)
+{
+    if (s == NULL || !s->tls || s->sec == NULL) return;
+    MacTLS_SetInsecure(s->sec);
+}
+
+/*
+ * Testing/diagnosis (tunnel_sni): replace the SNI name the handshake sends,
+ * or omit SNI when sni is NULL. Client side only, before the first Pump --
+ * i.e. right after an Upgrade call returns. Certificate validation is
+ * unaffected: it always checks the host the stream was upgraded with
+ * (PATCHES.md §34).
+ */
+void GWStream_SetSNI(GWStream *s, const char *sni)
+{
+    if (s == NULL || !s->tls || s->sec == NULL) return;
+    MacTLS_SetSNI(s->sec, sni);
 }
 
 /*

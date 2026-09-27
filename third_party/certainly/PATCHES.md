@@ -1274,3 +1274,151 @@ a `peer_closed` flag are read before anything is decided. The TLS 1.3
 handshake applies the same rule: a peer that has closed while the handshake
 waits on a partial record ends it at once, rather than on the 30-second
 timeout.
+
+---
+
+## §32 — adopted connections can start in TLS 1.2 for far ends without 1.3
+
+Contributed by [roytam1](https://github.com/roytam1/Gateway/tree/gw034),
+for Module 4, the generic tunnel (`src/proxy/gw_tunnel.c`). Ported by hand
+against current code; the fork's own numbering for this is §29.
+
+§29 named the remedy for an adopted connection that falls back to TLS 1.2 as
+"enable TLS 1.3 on the far end", and the tunnel's own use case cannot: an
+SSH endpoint behind a stunnel built against a pre-1.3 OpenSSL. For an
+adopted connection the 1.3 ClientHello buys nothing there — only the
+fallback that §29 shows cannot run through a proxy tunnel or a STARTTLS
+prologue either — so the library now offers to skip it entirely.
+
+`MacTLS_CreateOnEndpointTLS12()` adopts the socket exactly like
+`MacTLS_CreateOnEndpoint()`, resets BearSSL's 1.2 engine onto it directly
+(hostname for SNI, as the fallback path does after re-arming it — see
+§34 for what "hostname" now means), and sets `force_tls12`, which keeps
+both TLS 1.3 branches of `MacTLS_Pump()` from ever starting:
+
+```c
+if (!ctx->force_tls12 &&
+    !ctx->tls13_started && ctx->hs13.is_tls13 == false &&
+    ctx->hs13.state == kTLS13_SendClientHello) {
+```
+
+Everything below that — record I/O, version reporting, close — is the same
+engine path §29's fallback already uses, so `MacTLS_GetVersion()` reports 12
+on success with no further special cases. The tunnel selects it with
+`tunnel_tls12 = 1`, in `gw_tunnel.c`'s `begin_tls_or_splice()`; the default
+path, and every other module, is untouched.
+
+## §33 — a trust-any validator for testing against unvalidatable far ends
+
+Contributed by [roytam1](https://github.com/roytam1/Gateway/tree/gw034),
+for the tunnel's `tunnel_insecure` pref. Ported by hand; the fork's own
+numbering for this is §30. The fork's patch defined the same context struct
+twice — once in `certainly.c` as a local `InsecureCtx`, once in
+`certainly_internal.h` as `MacTLS_InsecureCtx` — kept in sync only by a
+comment saying so. That is fixed here: `MacTLS_InsecureCtx` is defined once,
+in `certainly_internal.h`, and `certainly.c` uses that type directly.
+
+The first far end past the tunnel failed validation rather than the
+handshake: a publicly trusted chain for another name (`TLS 56`), on a host
+whose certificate cannot be fixed from here. The library had no way to say
+"encrypt without authenticating" — `MacTLS_ConfigAddCA` is still a stub, so
+not even a private CA can be installed — which left testing fully blocked
+behind a correct rejection.
+
+`MacTLS_SetInsecure()` swaps both validation paths (BearSSL's 1.2 engine and
+the 1.3 state machine's shared `x509_ctx`) onto a trust-any engine that
+decodes only the end-entity certificate, for its public key, and accepts
+everything else without checking. It is modelled on BearSSL's own knownkey
+engine, except the key comes out of the peer's certificate through the
+decoder instead of being configured in advance; an undecodable certificate
+fails the chain with the decoder's own error, so the engine reports a
+handshake failure rather than dereferencing a NULL key. Both key usages are
+reported permitted, as in BearSSL's test tool. This bypasses the §34 guard
+entirely rather than routing through it — there is no host left to defend
+once nothing is being checked.
+
+Deliberately narrow: the setter must run before the first Pump, the tunnel
+logs a WARNING naming the pref every time it takes effect, and the mail
+module has no path to it whatever the prefs say.
+
+## §34 — the SNI name is overridable, without ever weakening validation
+
+Contributed by [roytam1](https://github.com/roytam1/Gateway/tree/gw034),
+for `tunnel_sni`, and substantially rewritten here. The fork's own numbering
+for this is §31; its approach is not what ships.
+
+**The problem it addresses.** Through one corporate proxy (BlueCoat-style,
+`Via: 1.1 wcg`), a handshake carrying no SNI completed while an otherwise
+identical one carrying the far hostname stalled past the 30-second timeout:
+the CONNECT was accepted in both cases, and a nameless TLS 1.2 ClientHello
+flowed where Gateway's SNI-bearing one did not. Nothing in the failure says
+so — it reads as the same empty-handed handshake failure as §29.
+
+**The fork's approach, and why it is not ported as-is.** The fork's
+`MacTLS_SetSNI()` replaced one name with another everywhere: the ClientHello
+extension, *and* the name passed to `xc->start_chain()` for certificate
+validation, on both the 1.2 and 1.3 paths. `tunnel_sni = none` passes `NULL`
+as that single name, and BearSSL's `xm_start_chain()`
+(`bearssl/src/x509/x509_minimal.c`) treats a `NULL` or empty `server_name`
+as "perform no hostname check at all" — `cc->server_name = NULL`, read back
+later by the name-matching step. An override name is validated *instead of*
+the real host, and no SNI means no validation of any name whatsoever. That
+turns a diagnostic knob into a way to accept a certificate for anyone, or no
+name check at all, on the one module (the tunnel) that most needs the check
+to hold — it is the only leg with no application-layer authentication of its
+own to fall back on.
+
+**What ships instead.** `tunnel_sni` (and `MacTLS_SetSNI()`) now control
+*only* what the ClientHello's SNI extension carries. Certificate validation
+is handled by a separate mechanism that never sees the override: an X.509
+vtable wrapper, `sni_guard` (`certainly.c`, `certainly_internal.h`
+`MacTLS_SniGuardCtx`), installed in `setup_bearssl()` in place of `xc` on
+both `br_ssl_engine_set_x509()` (the 1.2 path) and `hs13.x509_ctx` (the 1.3
+state machine, which shares one validator with the 1.2 engine already).
+Every vtable call but `start_chain()` forwards straight through to the real
+validator (`xc`) unchanged — ordinary chain validation, trust anchors,
+signatures, dates, the name check itself, are all untouched. `start_chain()`
+alone ignores whatever name it is handed and substitutes `ctx->host` — the
+real, dialled remote host — always:
+
+```c
+static void sniguard_start_chain(const br_x509_class **ctx,
+                                 const char *server_name)
+{
+    MacTLS_SniGuardCtx *gc = (MacTLS_SniGuardCtx *)(void *)ctx;
+    const br_x509_class **real =
+        (const br_x509_class **)(void *)&gc->owner->xc.vtable;
+
+    (void)server_name;   /* ignored on purpose */
+    (*real)->start_chain(real, gc->owner->host);
+}
+```
+
+This is the same wrapper shape §33's `insecure_vtable` uses — a vtable
+struct whose first field is the `br_x509_class *`, cast back to reach the
+owning context — except `sni_guard` forwards to the *real* validator instead
+of replacing it, so ordinary certificate checking still happens; only the
+name fed into it is pinned.
+
+`eff_sni()` is the one place that reads `sni_mode`/`sni_override` and is used
+purely to shape the wire: the 1.3 ClientHello builder (through
+`tls13_handshake_step()`'s `hostname` parameter) and every
+`br_ssl_client_reset()` call site (`MacTLS_CreateOnEndpointTLS12()`, the
+fallback's `client_first_record_compat()`, and `MacTLS_SetSNI()`'s own
+re-arm). None of those call sites reach `start_chain()` — `sni_guard` sits
+between the engines and `xc` for that — so changing what `eff_sni()` returns
+changes only what goes out, never what is checked.
+
+`tls13_build_client_hello()`'s one `strlen(hostname)` assumed a name always
+exists, which an omitted SNI disproves on the first handshake; it now treats
+`NULL` (and empty, matching BearSSL) as "omit the extension" and skips the
+SNI block entirely rather than writing a zero-length name.
+
+**Result.** `tunnel_sni = none` sends a nameless ClientHello, exactly as
+before, for the SNI-policing proxies this exists for — but the certificate
+that comes back is still checked against `tunnel_remote_host`, in every
+case, on both the TLS 1.2 and TLS 1.3 paths, unless `tunnel_insecure` has
+turned checking off entirely (§33, which bypasses `sni_guard` on purpose,
+since there is nothing left to defend once nothing is being checked). An
+override name changes only the extension; it is never treated as the
+identity to verify against.
