@@ -1505,7 +1505,16 @@ static void step_tunnel_connect(GWHttpSession *s)
     static const char kEstablished[] =
         "HTTP/1.0 200 Connection Established\r\n\r\n";
 
-    if (!session_queue(s, kEstablished, sizeof(kEstablished) - 1)) {
+    /*
+     * Queue the 200 exactly once. A partial flush leaves the state at
+     * kHPTunnelConnect and this runs again next tick; re-queueing then would
+     * put a second 200 on the wire, which the client reads as the start of
+     * its tunneled response. Anything still queued means the first copy is
+     * already there, so the short-circuit skips session_queue entirely.
+     */
+    if (s->outLen == 0 &&
+        !session_queue(s, kEstablished, sizeof(kEstablished) - 1)) {
+        gw_log("#%ld dropping a CONNECT: its 200 would not fit", s->id);
         s->state = kHPDone;
         return;
     }
