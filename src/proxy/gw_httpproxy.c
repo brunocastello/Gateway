@@ -101,6 +101,14 @@
 #define GW_POOL_SIZE    6
 #define GW_POOL_IDLE    (45 * 60)   /* ticks: drop after 45 seconds idle */
 #define GW_IDLE_TIMEOUT (45 * 60)           /* ticks: 45 seconds */
+/*
+ * How much longer a backpressured session may live with no byte moving
+ * either way. Four further windows: about three minutes of complete
+ * standstill. A slow-but-alive client resets the allowance every time any
+ * byte moves; only a client that is gone without closing runs it out. See
+ * the idle check in session_step().
+ */
+#define GW_IDLE_GRACE   (4 * GW_IDLE_TIMEOUT)
 
 typedef enum {
     kHPFree = 0,
@@ -190,6 +198,12 @@ typedef struct {
     long          reqBodyLeft;
     int           status;
     unsigned long lastActivity;
+    /*
+     * When the idle exemption below started covering this session; 0 while
+     * bytes are moving. Bounds waiting_on_client so an abandoned transfer
+     * cannot hold its slot forever.
+     */
+    unsigned long exemptAt;
 } GWHttpSession;
 
 typedef struct {
@@ -1725,6 +1739,15 @@ static void session_step(GWHttpSession *s)
      * connected is not idle: it is waiting, which is what backpressure looks
      * like from this side. GWStream_PeerGone still ends it if the browser
      * actually leaves, so a slot cannot be held by a client that is gone.
+     *
+     * But "waiting" cannot mean forever. A client that stops reading without
+     * closing -- a downloader that timed out and abandoned the socket, say
+     * -- is indistinguishable from a slow one by GWStream_PeerGone, and
+     * refreshing lastActivity unconditionally here used to let that session
+     * hold its slot for good, with nothing in the log to say why. exemptAt
+     * marks when the exemption started; it is cleared the moment a byte
+     * moves again, so a genuinely slow client never runs it out, and only a
+     * standstill lasting the whole grace period ends the session.
      */
     if (GWNet_Ticks() - s->lastActivity > GW_IDLE_TIMEOUT) {
         int waiting_on_client = (s->outLen > s->outSent ||
@@ -1735,8 +1758,17 @@ static void session_step(GWHttpSession *s)
             gw_log("#%ld idle timeout", s->id);
             s->state = kHPDone;
         } else {
-            s->lastActivity = GWNet_Ticks();
+            unsigned long now = GWNet_Ticks();
+
+            if (s->exemptAt == 0) s->exemptAt = now;
+            if (now - s->exemptAt > GW_IDLE_GRACE) {
+                gw_log("#%ld client stalled, dropping (%u bytes unsent)",
+                       s->id, (unsigned)(s->outLen - s->outSent));
+                s->state = kHPDone;
+            }
         }
+    } else {
+        s->exemptAt = 0;
     }
 
     GWStream_Pump(&s->cli);
