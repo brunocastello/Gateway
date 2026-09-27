@@ -1158,6 +1158,40 @@ static void step_recv_head(GWHttpSession *s)
         return;
     }
 
+    /*
+     * An interim response is not the answer -- discard it and keep waiting.
+     *
+     * A client that sent `Expect: 100-continue` (carried upstream verbatim;
+     * it is not hop-by-hop) is answered by one of these before the origin's
+     * real response, and treating it as final would strand both sides: the
+     * client holds its body for a 100 Gateway already consumed, while the
+     * origin holds its final response for a body that never arrives. The
+     * head is dropped from uhead here and the session stays in kHPRecvHead
+     * for the final status.
+     *
+     * The client hop is always HTTP/1.0 here (see CLAUDE.md), and RFC 9110
+     * §15.2 says a proxy "MUST NOT forward a 1xx response to an HTTP/1.0
+     * client" -- 1.0 has no informational status class of its own, so a
+     * forwarded one would read to a 1997 browser as a malformed, bodyless
+     * final response rather than the "keep waiting" it means. So this
+     * swallows the interim rather than relaying it, which is simpler than
+     * relaying anyway: nothing is queued to the client, so there is no
+     * partial-flush case to hold state over.
+     *
+     * Everything 1xx except 101 Switching Protocols, which is final by
+     * definition (and unreachable anyway -- the Upgrade header it answers
+     * never leaves here).
+     */
+    if (res.status >= 100 && res.status < 200 && res.status != 101) {
+        gw_log("#%ld <- %d %s (interim, not forwarded to an HTTP/1.0 client)",
+               s->id, res.status, s->req.url.host);
+        s->lastActivity = GWNet_Ticks();
+        s->uheadLen -= res.head_len;
+        if (s->uheadLen > 0)
+            memmove(s->uhead, s->uhead + res.head_len, s->uheadLen);
+        return;
+    }
+
     s->status = res.status;
     GW_SetStatus("TLS %s  HTTP %d  %s",
                  s->up.tls ? (GWStream_TlsVersion(&s->up) == 13 ? "1.3" :
