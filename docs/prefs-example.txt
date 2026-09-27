@@ -1,11 +1,8 @@
 # Gateway Prefs
-#
 # Copy into the System Preferences folder, named "Gateway Prefs".
-# Reference for every setting: docs/prefs.md
+# Every setting is described in docs/prefs.md.
 
-
-# ------------------------------------------------------------ Application
-
+# Application
 show_window     = 1
 http_enabled    = 1
 mail_enabled    = 1
@@ -14,10 +11,9 @@ tunnel_enabled  = 0
 max_sessions    = 12
 max_connects    = 8
 log_file        = 0
+log_debug       = 0
 
-
-# ------------------------------------------------------------- Web proxy
-
+# Web proxy
 http_port        = 8765
 follow_redirects = auto
 max_body_mb      = 0
@@ -25,21 +21,16 @@ rewrite_https    = 1
 connect_mitm     = 0
 allow_sslv3      = 1
 
-
-# --------------------------------------------------------- Wayback proxy
-
+# Wayback proxy
 wayback_port      = 8888
-wayback_connects = 1
+wayback_connects  = 1
 wayback_date      = 20011231
 wayback_tolerance = 730
 wayback_geocities = 1
 wayback_settings  = 1
 wayback_cache     = 1
 
-# Hosts fetched live instead of from the archive. Repeat the key; * and ? work.
-# A plain host name covers the site and everything under it, so
-# "frogfind.com" also matches "www.frogfind.com". A pattern with * or ? is
-# a glob and means only what it says.
+# Hosts fetched live, not from the archive (one per line; * and ? work)
 wayback_live = frogfind.com
 wayback_live = 68k.news
 wayback_live = macintoshgarden.org
@@ -49,66 +40,45 @@ wayback_live = floodgap.com
 wayback_live = cornica.org
 wayback_live = lite.cnn.com
 
-
-# ------------------------------------------------------------------ Mail
-
+# Mail
 imap_port      = 1993
 pop_port       = 1995
 smtp_port      = 1587
 local_password = change-me
+provider       = outlook
 
-provider = outlook
-
-# Run get-email-token.py on a modern computer; it prints these four lines.
+# Printed by get-email-token.py
 oauth_user          = you@example.com
 oauth_client_id     = 00000000-0000-0000-0000-000000000000
 oauth_client_secret =
 refresh_token       = paste-your-refresh-token-here
 
+# Other providers: provider = custom, then
+# imap_host          = imap.example.com
+# imap_upstream_port = 993
+# pop_host           = pop.example.com
+# pop_upstream_port  = 995
+# smtp_host          = smtp.example.com
+# smtp_upstream_port = 587
+# smtp_starttls      = 1
+# oauth_host         = login.example.com
+# oauth_path         = /oauth2/v2.0/token
+# oauth_scope        = offline_access mail.read mail.send
 
-# ---------------------------------------------------------------- Tunnel
-#
-# Module 4: a generic TLS tunnel. A local application connects in plaintext
-# and Gateway carries the far leg, optionally through a forward proxy,
-# optionally in TLS:
-#
-#   local_app --plain--> :tunnel_local_port --TLS--> [proxy] --> remote:port
-#
-# For SSH: point the client at tunnel_local_port; the far side unwraps TLS
-# (stunnel and friends) and hands the SSH stream to sshd. No local auth of
-# its own, so keep tunnel_local_port behind the machine's own boundary.
+# Tunnel (turn on with tunnel_enabled above)
+tunnel_local_port  = 2222
+tunnel_remote_host = ssh.example.com
+tunnel_remote_port = 443
+tunnel_tls         = 1
+# tunnel_tls12       = 1
+# tunnel_insecure    = 1
+# tunnel_sni         = none
 
-tunnel_enabled      = 0
-tunnel_local_port   = 2222
-tunnel_remote_host  = ssh.example.com
-tunnel_remote_port  = 443
-tunnel_tls          = 1
-# tunnel_tls12      = 1  # only when the far end has no TLS 1.3 (old stunnel)
-# tunnel_insecure   = 1  # testing only: accept any far-end certificate
-# tunnel_sni        = none  # diagnosis: what SNI sends, never what is checked
-
-# None of: tunnel_proxy = none | http | socks5. http sends CONNECT (with
-# Proxy-Authorization when tunnel_proxy_user is set); socks5 is no-auth only.
-# tunnel_proxy_port defaults to 8080 for http, 1080 for socks5.
-# tunnel_proxy        = none
-# tunnel_proxy_host   = proxy.example.com
-# tunnel_proxy_port   = 8080
-# tunnel_host_header  = 0  # omit Host: from CONNECT, like socat
-# tunnel_settle_ms    = 0  # diagnosis: wait this long before starting TLS
-# tunnel_proxy_user   =
-# tunnel_proxy_pass   =
-
-
-# Any other provider: set provider = custom and fill these in.
-#
-# provider            = custom
-# imap_host           = imap.example.com
-# imap_upstream_port  = 993
-# pop_host            = pop.example.com
-# pop_upstream_port   = 995
-# smtp_host           = smtp.example.com
-# smtp_upstream_port  = 587
-# smtp_starttls       = 1
-# oauth_host          = login.example.com
-# oauth_path          = /oauth2/v2.0/token
-# oauth_scope         = offline_access mail.read mail.send
+# Tunnel proxy (none, http or socks5)
+# tunnel_proxy       = none
+# tunnel_proxy_host  = proxy.example.com
+# tunnel_proxy_port  = 8080
+# tunnel_proxy_user  =
+# tunnel_proxy_pass  =
+# tunnel_host_header = 0
+# tunnel_settle_ms   = 0
