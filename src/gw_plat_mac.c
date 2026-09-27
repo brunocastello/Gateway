@@ -67,13 +67,16 @@ int GWPlat_WritePrefs(const char *buf, long len)
     long  count = len;
 
     if (!sHaveSpec) {
-        gw_log("cannot save settings: no prefs file to write to");
+        gw_logc("G23", "settings could not be saved: there is no prefs "
+                "file to write to");
         return 0;
     }
 
     err = FSpOpenDF(&sSpec, fsRdWrPerm, &refNum);
     if (err != noErr) {
-        gw_log("cannot save settings: prefs file would not open (%d)", (int)err);
+        gw_logc("G24", "settings could not be saved: the prefs file would "
+                "not open");
+        gw_logd("FSpOpenDF %d", (int)err);
         return 0;
     }
 
@@ -83,7 +86,9 @@ int GWPlat_WritePrefs(const char *buf, long len)
     FSClose(refNum);
 
     if (err != noErr) {
-        gw_log("cannot save settings: write failed (%d)", (int)err);
+        gw_logc("G25", "settings could not be saved: writing the prefs file "
+                "failed");
+        gw_logd("write %d", (int)err);
         return 0;
     }
 
@@ -114,14 +119,18 @@ int GWPlat_OpenLog(const char *want)
     err = FindFolder(kOnSystemDisk, kApplicationSupportFolderType,
                      kCreateFolder, &vRefNum, &dirID);
     if (err != noErr) {
-        gw_log("log file: no Application Support folder (%d)", (int)err);
+        gw_logc("G40", "the log file could not be opened, so the log is "
+                "kept in this window only");
+        gw_logd("FindFolder %d", (int)err);
         return 0;
     }
 
     /* dupFNErr just means someone got here first, on an earlier run. */
     err = DirCreate(vRefNum, dirID, "\pGateway", &gwDir);
     if (err != noErr && err != dupFNErr) {
-        gw_log("log file: could not make the Gateway folder (%d)", (int)err);
+        gw_logc("G40", "the log file could not be opened, so the log is "
+                "kept in this window only");
+        gw_logd("DirCreate %d", (int)err);
         return 0;
     }
 
@@ -129,13 +138,17 @@ int GWPlat_OpenLog(const char *want)
     if (err == fnfErr)
         err = FSpCreate(&spec, 'GT9A', 'TEXT', 0 /* smRoman: ASCII name */);
     if (err != noErr) {
-        gw_log("log file: could not create it (%d)", (int)err);
+        gw_logc("G40", "the log file could not be opened, so the log is "
+                "kept in this window only");
+        gw_logd("FSpCreate %d", (int)err);
         return 0;
     }
 
     err = FSpOpenDF(&spec, fsWrPerm, &refNum);
     if (err != noErr) {
-        gw_log("log file: could not open it (%d)", (int)err);
+        gw_logc("G40", "the log file could not be opened, so the log is "
+                "kept in this window only");
+        gw_logd("FSpOpenDF %d", (int)err);
         return 0;
     }
 
@@ -248,13 +261,15 @@ int GWPlat_WriteFile(const char *leaf, const void *buf, long len)
      */
     err = FSpCreate(&spec, 'GT9A', 'BINA', 0 /* smRoman */);
     if (err != noErr && err != dupFNErr) {
-        gw_log("cannot create %s: %d", leaf, (int)err);
+        gw_logc("G41", "%s could not be saved", leaf);
+        gw_logd("FSpCreate %d", (int)err);
         return 0;
     }
 
     err = FSpOpenDF(&spec, fsRdWrPerm, &refNum);
     if (err != noErr) {
-        gw_log("cannot open %s: %d", leaf, (int)err);
+        gw_logc("G41", "%s could not be saved", leaf);
+        gw_logd("FSpOpenDF %d", (int)err);
         return 0;
     }
 
@@ -263,7 +278,8 @@ int GWPlat_WriteFile(const char *leaf, const void *buf, long len)
     FSClose(refNum);
 
     if (err != noErr || count != len) {
-        gw_log("cannot write %s: %d", leaf, (int)err);
+        gw_logc("G41", "%s could not be saved", leaf);
+        gw_logd("write %d", (int)err);
         return 0;
     }
     return 1;

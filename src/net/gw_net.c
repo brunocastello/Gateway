@@ -502,7 +502,9 @@ GWListener *GWListener_Open(UInt16 port, int backlog)
 
     l->ep = OTOpenEndpoint(cfg, 0, NULL, &err);
     if (err != noErr) {
-        gw_log("listen %u: OTOpenEndpoint %d", (unsigned)port, (int)err);
+        gw_logc("G30", "Gateway could not listen on port %u",
+                (unsigned)port);
+        gw_logd("OTOpenEndpoint %d", (int)err);
         DisposePtr((Ptr)l);
         return NULL;
     }
@@ -521,7 +523,9 @@ GWListener *GWListener_Open(UInt16 port, int backlog)
 
     err = OTBind(l->ep, &bindReq, &bindRet);
     if (err != noErr) {
-        gw_log("listen %u: OTBind %d", (unsigned)port, (int)err);
+        gw_logc("G31", "port %u could not be claimed: is something else "
+                "using it?", (unsigned)port);
+        gw_logd("OTBind %d", (int)err);
         OTCloseProvider(l->ep);
         DisposePtr((Ptr)l);
         return NULL;
@@ -531,7 +535,9 @@ GWListener *GWListener_Open(UInt16 port, int backlog)
     if (err == noErr) err = OTSetAsynchronous(l->ep);
     if (err == noErr) err = OTSetNonBlocking(l->ep);
     if (err != noErr) {
-        gw_log("listen %u: async setup %d", (unsigned)port, (int)err);
+        gw_logc("G32", "Gateway could not listen on port %u",
+                (unsigned)port);
+        gw_logd("async setup %d", (int)err);
         OTRemoveNotifier(l->ep);
         OTCloseProvider(l->ep);
         DisposePtr((Ptr)l);
@@ -571,8 +577,9 @@ GWConn *GWListener_Poll(GWListener *l, int accepting)
             return c;
         }
         if (st == kGWConnError || st == kGWConnClosed) {
-            gw_log("port %u: accept failed %d", (unsigned)l->port,
-                   (int)l->pending->err);
+            gw_logc("G33", "a connection on port %u could not be accepted",
+                    (unsigned)l->port);
+            gw_logd("accept %d", (int)l->pending->err);
             GWConn_Destroy(l->pending);
             l->pending = NULL;
             l->fAcceptDone = false;
@@ -595,7 +602,9 @@ GWConn *GWListener_Poll(GWListener *l, int accepting)
     err = OTListen(l->ep, &l->call);
     if (err == kOTNoDataErr) return NULL;
     if (err != noErr) {
-        gw_log("port %u: OTListen %d", (unsigned)l->port, (int)err);
+        gw_logc("G34", "a connection on port %u could not be accepted",
+                (unsigned)l->port);
+        gw_logd("OTListen %d", (int)err);
         return NULL;
     }
 
@@ -603,7 +612,8 @@ GWConn *GWListener_Poll(GWListener *l, int accepting)
     if (l->pending == NULL) {
         /* No room for another endpoint: refuse this one rather than hang. */
         OTSndDisconnect(l->ep, &l->call);
-        gw_log("port %u: out of memory, refused a connection", (unsigned)l->port);
+        gw_logc("G36", "out of memory: a connection on port %u was refused",
+                (unsigned)l->port);
         return NULL;
     }
     l->pending->remote = l->callAddr;
@@ -625,7 +635,9 @@ GWConn *GWListener_Poll(GWListener *l, int accepting)
                 return NULL;
             }
         }
-        gw_log("port %u: OTAccept %d", (unsigned)l->port, (int)err);
+        gw_logc("G35", "a connection on port %u could not be accepted",
+                (unsigned)l->port);
+        gw_logd("OTAccept %d", (int)err);
         GWConn_Destroy(l->pending);
         l->pending = NULL;
         return NULL;

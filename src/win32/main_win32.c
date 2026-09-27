@@ -182,7 +182,8 @@ static void startup_set(int on)
 
     n = GetModuleFileNameA(NULL, exe, sizeof(exe));
     if (n == 0 || n >= sizeof(exe)) {
-        gw_log("start with Windows: could not find my own path");
+        gw_logc("G42", "Start with Windows could not be set: Gateway could "
+                "not find its own path");
         return;
     }
 
@@ -190,7 +191,8 @@ static void startup_set(int on)
      * ordinary case on Windows 95 with profiles off. */
     if (!startup_write(HKEY_CURRENT_USER, exe) &&
         !startup_write(HKEY_LOCAL_MACHINE, exe))
-        gw_log("start with Windows: the registry would not take the entry");
+        gw_logc("G43", "Start with Windows could not be set: the registry "
+                "refused the entry");
 }
 
 /* ------------------------------------------------------------------ */
@@ -331,7 +333,8 @@ static void toggle_running(void)
     if (GW_IsRunning())
         GW_Stop();
     else if (!GW_Start())
-        gw_log("could not start: the ports may still be in use");
+        gw_logc("G05", "Gateway could not start: the ports may still be "
+                "in use");
     tray_set_icon();
 }
 

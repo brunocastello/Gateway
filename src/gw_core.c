@@ -311,7 +311,9 @@ int GW_Init(void)
 
     err = GWNet_Init();
     if (err != noErr) {
-        gw_log("InitOpenTransport failed (%d)", (int)err);
+        gw_logc("G02", "Open Transport could not be started, so Gateway "
+                "cannot run");
+        gw_logd("InitOpenTransport %d", (int)err);
         GW_SetStatus("Open Transport unavailable");
         return 0;
     }
@@ -346,7 +348,7 @@ int GW_Init(void)
     {
         const char *rng = MacTLS_EntropySource();
         if (rng != NULL)
-            gw_log("entropy: system PRNG %s", rng);
+            gw_log("random numbers are seeded from the system's %s", rng);
     }
 
     {
@@ -368,9 +370,12 @@ int GW_Init(void)
          * works is noise; a line saying it does not is the only thing worth
          * reading in the log, because nothing above it can be trusted.
          */
-        if (st != 0)
-            gw_log("crypto self-test FAILED (%s) -- TLS will not work",
-                   (st >= 1 && st <= 4) ? why[st] : "unknown");
+        if (st != 0) {
+            gw_logc("G03", "Gateway's encryption failed its self-test, so "
+                    "TLS will not work: report it");
+            gw_logd("self-test: %s",
+                    (st >= 1 && st <= 4) ? why[st] : "unknown");
+        }
     }
     if (sProxyOn || sWaybackOn) GWProxy_Init();
     if (sMailOn) {
@@ -445,7 +450,8 @@ static int listeners_open(void)
          * is otherwise indistinguishable from one that has failed. Gateway
          * keeps running so the window can be read and the prefs corrected.
          */
-        gw_log("every module is disabled in the prefs; nothing to serve");
+        gw_logc("G04", "every module is turned off in the prefs, so there "
+                "is nothing to serve");
         GW_SetStatus("all modules disabled");
         sRunning = 1;
         return 1;
@@ -565,8 +571,8 @@ void GW_Poll(void)
         int canAccept = GWProxy_CanAccept();
 
         if (!canAccept && !wasFull) {
-            gw_log("all %d sessions busy; connections are waiting",
-                   GW_MaxSessions());
+            gw_logc("H26", "all %d proxy connections are in use; new ones "
+                    "wait for a free one", GW_MaxSessions());
             wasFull = 1;
         } else if (canAccept && wasFull) {
             wasFull = 0;
@@ -586,7 +592,8 @@ void GW_Poll(void)
     if (sImap != NULL) {
         c = GWListener_Poll(sImap, 1);
         if (c != NULL && !GWMail_AcceptImap(c)) {
-            gw_log("mail busy, dropped an IMAP connection");
+            gw_logc("M24", "mail is busy, so an IMAP connection was turned "
+                    "away");
             GWConn_Destroy(c);
         }
     }
@@ -594,7 +601,8 @@ void GW_Poll(void)
     if (sPop != NULL) {
         c = GWListener_Poll(sPop, 1);
         if (c != NULL && !GWMail_AcceptPop(c)) {
-            gw_log("mail busy, dropped a POP connection");
+            gw_logc("M24", "mail is busy, so a POP connection was turned "
+                    "away");
             GWConn_Destroy(c);
         }
     }
@@ -602,7 +610,8 @@ void GW_Poll(void)
     if (sSmtp != NULL) {
         c = GWListener_Poll(sSmtp, 1);
         if (c != NULL && !GWMail_AcceptSmtp(c)) {
-            gw_log("mail busy, dropped an SMTP connection");
+            gw_logc("M24", "mail is busy, so an SMTP connection was turned "
+                    "away");
             GWConn_Destroy(c);
         }
     }
@@ -610,7 +619,8 @@ void GW_Poll(void)
     if (sTunnel != NULL) {
         c = GWListener_Poll(sTunnel, GWTunnel_CanAccept());
         if (c != NULL && !GWTunnel_Accept(c)) {
-            gw_log("tunnel busy, dropped a connection");
+            gw_logc("N30", "the tunnel is busy, so a connection was turned "
+                    "away");
             GWConn_Destroy(c);
         }
     }

@@ -80,8 +80,8 @@ void GWConfig_Load(void)
      * cost an evening.
      */
     if (sLen >= GW_PREFS_MAX - 1)
-        gw_log("WARNING: prefs file is larger than %d bytes and was TRUNCATED",
-               (int)GW_PREFS_MAX - 1);
+        gw_logc("G20", "the prefs file is larger than %d bytes; the rest of "
+                "it was ignored", (int)GW_PREFS_MAX - 1);
     else
         gw_log("read %ld bytes of prefs", sLen);
 
@@ -92,7 +92,8 @@ void GWConfig_Load(void)
      * password -- so the log has to distinguish the two.
      */
     if (GWConfig_Str("local_password", "")[0] == '\0')
-        gw_log("WARNING: no local_password in prefs; mail logins will fail");
+        gw_logc("G21", "the prefs file has no local_password, so mail "
+                "sign-ins will fail");
     else
         gw_log("local_password is set; mail logins will be checked against it");
 }
@@ -203,8 +204,8 @@ int GWConfig_Set(const char *key, const char *value)
     n = gw_prefs_set(sText, (size_t)sLen, key, value,
                      updated, sizeof(updated));
     if (n == 0) {
-        gw_log("cannot save %s: prefs file would exceed %d bytes",
-               key, (int)GW_PREFS_MAX);
+        gw_logc("G22", "%s could not be saved: the prefs file would be "
+                "larger than %d bytes", key, (int)GW_PREFS_MAX);
         return 0;
     }
 

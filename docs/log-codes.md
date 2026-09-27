@@ -32,7 +32,35 @@ free number.
 
 | Code | Sentence | What it means |
 |---|---|---|
-| `G01` | Gateway has no certificate authority to hand out | The browser asked for `gateway-ca.crt` and the authority could not be made or loaded. The lines from its creation say why. |
+| `G01` | Gateway has no certificate authority to hand out | The browser asked for `gateway-ca.crt` and the authority could not be made or loaded. A `G1x` line from its creation says why. |
+| `G02` | Open Transport could not be started, so Gateway cannot run | Check TCP/IP is configured and Open Transport is installed. |
+| `G03` | Gateway's encryption failed its self-test, so TLS will not work | Gateway's fault, or the machine's. Report it with the build number from the first line of the log. |
+| `G04` | every module is turned off in the prefs, so there is nothing to serve | |
+| `G05` | Gateway could not start: the ports may still be in use | The lines before it name the port. |
+| `G10` | the certificate authority is too large to keep | Gateway's fault. Report it. |
+| `G11` | the certificate authority's key could not be made | Usually memory. |
+| `G12` | the certificate authority's certificate could not be built | |
+| `G13` | the certificate authority's certificate could not be signed | |
+| `G14` | the certificate authority was made but not saved | The next launch makes a new one, and browsers must install that one again. The line before it says why the save failed. |
+| `G20` | the prefs file is larger than … bytes; the rest of it was ignored | Settings past that point are not read. |
+| `G21` | the prefs file has no local_password, so mail sign-ins will fail | |
+| `G22` | … could not be saved: the prefs file would be larger than … bytes | |
+| `G23` | settings could not be saved: there is no prefs file to write to | |
+| `G24` | settings could not be saved: the prefs file would not open | The error is under `log_debug`. |
+| `G25` | settings could not be saved: writing the prefs file failed | The disk may be full or locked. |
+| `G26` | settings could not be saved: … is marked read-only | Windows. Clear the file's read-only attribute. |
+| `G27` | settings could not be saved: … is on a read-only drive | Windows. Copy Gateway to the hard disk. |
+| `G30` | Gateway could not listen on port … | The network stack refused an endpoint. The error is under `log_debug`. |
+| `G31` | port … could not be claimed: is something else using it? | Another program, or a Gateway still running, has the port. |
+| `G32` | Gateway could not listen on port … | As `G30`, at a later step of the setup. |
+| `G33` | a connection on port … could not be accepted | The connection failed while being accepted. |
+| `G34` | a connection on port … could not be accepted | As `G33`, at the listen step. |
+| `G35` | a connection on port … could not be accepted | As `G33`, at the accept step. |
+| `G36` | out of memory: a connection on port … was refused | Raise Gateway's partition in Get Info. |
+| `G40` | the log file could not be opened, so the log is kept in this window only | The step and error are under `log_debug`. |
+| `G41` | … could not be saved | A file beside the prefs, such as `Gateway CA`. The step and error are under `log_debug`. |
+| `G42` | Start with Windows could not be set: Gateway could not find its own path | |
+| `G43` | Start with Windows could not be set: the registry refused the entry | |
 
 ## H — the HTTP proxy
 
@@ -63,6 +91,7 @@ free number.
 | `H23` | nothing moved for … seconds, so the connection was closed | The idle timeout. |
 | `H24` | the browser stopped reading, so the connection was dropped | The browser left data unread for the whole grace period. |
 | `H25` | out of memory: a browser's connection was refused | Raise Gateway's partition in Get Info. |
+| `H26` | all … proxy connections are in use; new ones wait for a free one | Written once each time the proxy fills up. Connections wait in the backlog rather than being refused. |
 
 ## M — the mail splice and the token refresh
 
@@ -88,6 +117,7 @@ connection itself names the fault.
 | `M21` | the mail server … closed the connection during the TLS handshake | |
 | `M22` | the mail server … closed the connection during sign-in | |
 | `M23` | out of memory: a mail client's connection was refused | Raise Gateway's partition in Get Info. |
+| `M24` | mail is busy, so an … connection was turned away | Every mail session is in use. |
 | `M30` | the prefs file has no oauth_client_id or refresh_token | Run `tools/get-email-token.py` and paste the lines it prints into the prefs file. |
 | `M31` | the refresh request could not be built | A prefs value is too long for the request. |
 | `M32` | out of memory | |
@@ -136,6 +166,7 @@ carries a `T` code when the connection itself names the fault.
 | `N27` | tunnel_remote_host is empty, so a client was turned away | |
 | `N28` | tunnel_remote_port is not a port number, so a client was turned away | |
 | `N29` | tunnel_proxy must be none, http or socks5, so a client was turned away | |
+| `N30` | the tunnel is busy, so a connection was turned away | Every tunnel session is in use. |
 
 ## S — TLS towards the browser
 

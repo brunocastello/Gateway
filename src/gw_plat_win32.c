@@ -83,7 +83,8 @@ int GWPlat_WritePrefs(const char *buf, long len)
     size_t n;
 
     if (!sHavePath) {
-        gw_log("cannot save settings: no prefs file to write to");
+        gw_logc("G23", "settings could not be saved: there is no prefs "
+                "file to write to");
         return 0;
     }
 
@@ -101,21 +102,24 @@ int GWPlat_WritePrefs(const char *buf, long len)
             DWORD attr = GetFileAttributesA(sPrefsPath);
 
             if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY))
-                gw_log("cannot save settings: %s is marked read-only",
-                       sPrefsPath);
+                gw_logc("G26", "settings could not be saved: %s is marked "
+                        "read-only", sPrefsPath);
             else
-                gw_log("cannot save settings: %s is on a read-only drive; "
-                       "copy Gateway to the hard disk", sPrefsPath);
+                gw_logc("G27", "settings could not be saved: %s is on a "
+                        "read-only drive; copy Gateway to the hard disk",
+                        sPrefsPath);
         } else {
-            gw_log("cannot save settings: %s would not open (error %lu)",
-                   sPrefsPath, (unsigned long)why);
+            gw_logc("G24", "settings could not be saved: %s would not open",
+                    sPrefsPath);
+            gw_logd("fopen, error %lu", (unsigned long)why);
         }
         return 0;
     }
 
     n = fwrite(buf, 1, (size_t)len, f);
     if (fclose(f) != 0 || n != (size_t)len) {
-        gw_log("cannot save settings: write failed");
+        gw_logc("G25", "settings could not be saved: writing the prefs file "
+                "failed");
         return 0;
     }
     return 1;
@@ -145,7 +149,8 @@ int GWPlat_OpenLog(const char *want)
 
     sLogFile = fopen(path, "ab");
     if (sLogFile == NULL) {
-        gw_log("log file: could not open %s", path);
+        gw_logc("G40", "the log file %s could not be opened, so the log is "
+                "kept in this window only", path);
         return 0;
     }
     gw_log("logging to %s", path);
@@ -206,7 +211,10 @@ int GWPlat_WriteFile(const char *leaf, const void *buf, long len)
 
     f = fopen(path, "wb");
     if (f == NULL) {
-        gw_log("cannot write %s: %lu", path, (unsigned long)GetLastError());
+        DWORD why = GetLastError();     /* before the log's file write */
+
+        gw_logc("G41", "%s could not be saved", path);
+        gw_logd("fopen, error %lu", (unsigned long)why);
         return 0;
     }
 
@@ -214,8 +222,8 @@ int GWPlat_WriteFile(const char *leaf, const void *buf, long len)
     fclose(f);
 
     if (n != (size_t)len) {
-        gw_log("cannot write %s: %lu of %ld bytes written",
-               path, (unsigned long)n, len);
+        gw_logc("G41", "%s could not be saved", path);
+        gw_logd("%lu of %ld bytes written", (unsigned long)n, len);
         return 0;
     }
     return 1;
