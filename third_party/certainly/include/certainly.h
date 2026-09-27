@@ -274,6 +274,37 @@ int            MacTLS_ServerLastError(const MacTLS_Server *s);
  * when that comparison is what failed. Set as the hello is parsed; 0 before
  * that, and 0 if the hello never arrived. */
 unsigned int   MacTLS_ServerClientVersion(const MacTLS_Server *s);
+/*
+ * How far the client got, for the host's log, which is where the lines about
+ * a handshake are written: only the host knows which of its sessions this
+ * is (PATCHES.md §35). Read it once the server has closed or failed.
+ *
+ *   Nothing      no bytes arrived at all
+ *   Hello        a hello arrived; the client left before we answered it
+ *   Certificate  our first flight went out and nothing came back
+ *   Replied      the client answered our certificate, then left
+ *   Finished     the client completed its second flight, then left
+ *   Done         the handshake completed
+ */
+typedef enum {
+    kMacTLS_StageNothing = 0,
+    kMacTLS_StageHello,
+    kMacTLS_StageCertificate,
+    kMacTLS_StageReplied,
+    kMacTLS_StageFinished,
+    kMacTLS_StageDone
+} MacTLS_ServerStage;
+MacTLS_ServerStage MacTLS_ServerGetStage(const MacTLS_Server *s);
+/* One line of engineer's detail: hello framing, version and suite chosen,
+ * byte counts, the engine's record state. */
+void           MacTLS_ServerDescribe(const MacTLS_Server *s, char *out, size_t cap);
+/* The first bytes the client sent (up to 24), in hex. They name the protocol
+ * it is really speaking, which is the whole diagnosis when a handshake goes
+ * nowhere. Empty when nothing arrived. */
+void           MacTLS_ServerHelloHex(const MacTLS_Server *s, char *out, size_t cap);
+/* The version the handshake settled on (0x0300 = SSL 3.0 ...), or 0 before it
+ * completed. */
+unsigned int   MacTLS_ServerSessionVersion(const MacTLS_Server *s);
 /* 1 while the engine still holds encrypted bytes that have not reached the
  * socket. MacTLS_ServerWrite() only stages plaintext -- the records leave in
  * MacTLS_ServerPump() -- so a caller that writes and then closes discards

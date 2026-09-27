@@ -1424,3 +1424,30 @@ turned checking off entirely (§33, which bypasses `sni_guard` on purpose,
 since there is nothing left to defend once nothing is being checked). An
 override name changes only the extension; it is never treated as the
 identity to verify against.
+
+## §35 — the server says how far the browser got, and the host writes the line
+
+Gateway's readable log (0.3.7) writes one sentence per event with the
+session's number, `#N`, and a code. Certainly's server side had been writing
+its own lines — `MITM client hello: …`, `MITM handshake abandoned by the
+browser: …`, `… failed: BearSSL …`, `… done: …` — with no session number,
+because it has none, and the proxy then wrote a second line of its own that
+could only say "see the line above". With several tunnels opening at once
+the two were not reliably adjacent.
+
+`server.c` now writes none of those lines. It keeps what they said and
+hands it over:
+
+- `MacTLS_ServerGetStage()` — how far the client got: nothing, a hello,
+  our certificate with no reply, a reply then gone, its second flight
+  finished, or done. This is what the old line's bracketed "no client reply
+  after our certificate" said, as a value.
+- `MacTLS_ServerDescribe()` — the rest of the old line: hello framing,
+  version and suite, byte counts, record type, `incrypt`.
+- `MacTLS_ServerHelloHex()` — the first 24 bytes the client sent, kept in
+  the struct (`helloHead`) rather than logged on the first read.
+- `MacTLS_ServerSessionVersion()` — the version agreed, for the line that
+  says the handshake completed.
+
+The `GW_DEBUG_IO` hex dumps are untouched: they are the developer's build
+flag, not the log a user reads.

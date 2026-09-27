@@ -1633,14 +1633,150 @@ static void step_tunnel_connect(GWHttpSession *s)
  * over along with the socket. So the request buffer starts empty and the
  * session reads a fresh request, as if the browser had just connected.
  */
+/*
+ * The engineer's lines under a MITM outcome: BearSSL's number, what the hello
+ * and the engine said, and the first bytes the browser sent. Only with
+ * log_debug on; the sentence above them carries the diagnosis without.
+ */
+static void log_mitm_detail(GWHttpSession *s, int err)
+{
+    char line[160];
+
+    if (!gw_log_debug())
+        return;
+    if (err >= 512)
+        gw_logd("BearSSL %d: we sent alert %d", err, err - 512);
+    else if (err >= 256)
+        gw_logd("BearSSL %d: the browser sent alert %d", err, err - 256);
+    else if (err != 0)
+        gw_logd("BearSSL %d", err);
+    GWStream_ServerDescribe(&s->cli, line, sizeof line);
+    if (line[0] != '\0')
+        gw_logd("%s", line);
+    GWStream_ServerHelloHex(&s->cli, line, sizeof line);
+    if (line[0] != '\0')
+        gw_logd("first bytes: %s", line);
+}
+
+/*
+ * One sentence for a browser handshake that did not complete. The BearSSL
+ * number is the diagnosis, and with a client this old it cannot be reported
+ * any other way: an error page would have to travel down the connection that
+ * just failed. So each number that means something gets its own sentence and
+ * code (docs/log-codes.md), and the number itself goes under log_debug.
+ */
+static void log_mitm_failure(GWHttpSession *s)
+{
+    int err = GWStream_ServerError(&s->cli);
+
+    if (err == 0) {
+        /*
+         * Not an error: the browser closed the connection. Where it was when
+         * it did is the whole diagnosis -- a browser that walks away on our
+         * certificate is one that did not trust it, or Internet Explorer
+         * probing with a hello it never meant to finish.
+         */
+        switch (GWStream_ServerStage(&s->cli)) {
+        case kGWStageNothing:
+            gw_logc("S01", "#%ld the browser closed the secure connection "
+                    "without starting it", s->id);
+            break;
+        case kGWStageHello:
+            gw_logc("S02", "#%ld the browser left before Gateway answered "
+                    "its hello", s->id);
+            break;
+        case kGWStageCertificate:
+            gw_logc("S03", "#%ld the browser gave up after seeing our "
+                    "certificate", s->id);
+            break;
+        case kGWStageReplied:
+            gw_logc("S04", "#%ld the browser answered our certificate, "
+                    "then gave up", s->id);
+            break;
+        default:
+            gw_logc("S05", "#%ld the browser finished its side of the "
+                    "handshake, then closed", s->id);
+            break;
+        }
+    }
+    /*
+     * 3 was, until PATCHES.md §22, what every Internet Explorer produced:
+     * BearSSL threw out the SSL 2.0 record framing that IE sends by default
+     * before it read a field. That framing is accepted now, which leaves 3
+     * meaning what it says -- the hello itself asked for a version below
+     * 3.0, so the browser has SSL 3.0 and TLS 1.0 both off, or has neither.
+     */
+    else if (err == 3)
+        gw_logc("S10", "#%ld the browser asked for SSL 2.0, which Gateway "
+                "does not speak: tick \"Use TLS 1.0\" in its options", s->id);
+    /*
+     * 70 is protocol_version, and which direction it went matters. Sent by
+     * us, Gateway is refusing a hello below its minimum, and the version the
+     * browser offered is the whole diagnosis. Sent by the browser, it is
+     * refusing our answer.
+     */
+    else if (err == 512 + 70) {
+        unsigned int ver  = GWStream_ClientHelloVersion(&s->cli);
+        const char  *name = tls_version_name(ver);
+
+        if (ver == 0x0300 && !GW_AllowSSLv3())
+            gw_logc("S11", "#%ld the browser speaks SSL 3.0 at best, and "
+                    "allow_sslv3 is off", s->id);
+        else if (name != NULL)
+            gw_logc("S12", "#%ld the browser speaks %s at best, older than "
+                    "Gateway will", s->id, name);
+        else
+            gw_logc("S12", "#%ld the browser speaks version 0x%04X, which "
+                    "Gateway does not", s->id, ver);
+    }
+    else if (err == 256 + 70)
+        gw_logc("S13", "#%ld the browser refused the version Gateway "
+                "answered with", s->id);
+    else if (err == 16)
+        gw_logc("S14", "#%ld the browser and Gateway have no cipher in "
+                "common (a 40-bit browser?)", s->id);
+    else if (err == 4)
+        gw_logc("S15", "#%ld the browser's records did not match the "
+                "version it asked for", s->id);
+    else if (err == 8)
+        gw_logc("S16", "#%ld Gateway had no randomness for the handshake, "
+                "which is Gateway's fault", s->id);
+    /* bad_certificate, certificate_unknown, unknown_ca */
+    else if (err == 256 + 42 || err == 256 + 46 || err == 256 + 48)
+        gw_logc("S17", "#%ld the browser rejected our certificate: is "
+                "Gateway's authority installed?", s->id);
+    else if (err > 512)
+        gw_logc("S18", "#%ld Gateway refused the browser's handshake", s->id);
+    else if (err > 256)
+        gw_logc("S19", "#%ld the browser refused the handshake", s->id);
+    else
+        gw_logc("S20", "#%ld the handshake with the browser failed", s->id);
+
+    log_mitm_detail(s, err);
+}
+
+/*
+ * Wait for the browser's handshake to finish, then rejoin the ordinary path.
+ *
+ * Everything the client sent before this point was the CONNECT head, and the
+ * bytes after it were its ClientHello -- which Certainly has already taken
+ * over along with the socket. So the request buffer starts empty and the
+ * session reads a fresh request, as if the browser had just connected.
+ */
 static void step_mitm_wait(GWHttpSession *s)
 {
     switch (GWStream_Pump(&s->cli)) {
-    case kGWStreamReady:
+    case kGWStreamReady: {
+        const char *name = tls_version_name(GWStream_ServerVersion(&s->cli));
+
+        gw_log("#%ld secure connection with the browser, %s", s->id,
+               name != NULL ? name : "unknown version");
+        log_mitm_detail(s, 0);
         s->cheadLen = 0;
         s->cheadSent = 0;
         s->state = kHPRecvRequest;
         break;
+    }
 
     case kGWStreamError:
     case kGWStreamClosed:
@@ -1650,81 +1786,15 @@ static void step_mitm_wait(GWHttpSession *s)
          * is nothing to send an error page down -- the connection it would go
          * on is the one that just failed.
          */
-        /*
-         * The number is the diagnosis, so it goes in the line. With a client
-         * this old the ones that matter are 3 and the protocol_version alert,
-         * both meaning the browser cannot reach TLS 1.0 and neither saying so
-         * in the same way, and 16, meaning it offered no cipher suite BearSSL
-         * implements, which an export-grade build will not. None of them can
-         * be reported any other way: an error page would have to travel down
-         * the connection that just failed.
-         */
-        {
-            int         err = GWStream_ServerError(&s->cli);
-            const char *why = "";
-            char        why_buf[128];
-
-            /*
-             * 3 was, until PATCHES.md §22, what every Internet Explorer
-             * produced: BearSSL threw out the SSL 2.0 record framing that IE
-             * sends by default before it read a field, so the box marked
-             * "Use SSL 2.0" had to be unticked whatever the hello inside
-             * asked for. That framing is accepted now, which leaves 3
-             * meaning what it says -- the hello itself asked for a version
-             * below 3.0, so the browser has SSL 3.0 and TLS 1.0 both off,
-             * or has neither to turn on.
-             */
-            if (err == 3)
-                why = ": its hello asked for SSL 2.0, which has no "
-                      "implementation here -- tick \"Use TLS 1.0\" in "
-                      "Internet Options > Advanced";
-            /*
-             * 70 is protocol_version, and which direction it went matters.
-             * Sent by us, BearSSL is refusing a hello below its TLS 1.0
-             * minimum, and the version the browser offered is the whole
-             * diagnosis. Sent by the browser, it is refusing our answer.
-             */
-            else if (err == 512 + 70 || err == 256 + 70) {
-                unsigned int ver = GWStream_ClientHelloVersion(&s->cli);
-                const char *name = tls_version_name(ver);
-                const char *dir = (err > 512)
-                    ? "we refused its hello" : "it refused our answer";
-
-                if (name != NULL)
-                    snprintf(why_buf, sizeof why_buf,
-                        ": it offered %s at best and TLS 1.0 is the floor "
-                        "(%s)", name, dir);
-                else
-                    snprintf(why_buf, sizeof why_buf,
-                        ": it offered version 0x%04X and TLS 1.0 is the "
-                        "floor (%s)", ver, dir);
-                why = why_buf;
-            }
-            else if (err == 0)
-                why = ": the browser closed it, which is not an error "
-                      "-- see the line above for what it was offered";
-            else if (err == 16)
-                why = ": no cipher suite in common (a 40-bit browser?)";
-            else if (err == 4)
-                why = ": record version did not match the handshake";
-            else if (err == 8)
-                why = ": the engine had no randomness, which is our fault";
-            else if (err > 512)
-                why = ": we sent a fatal alert";
-            else if (err > 256)
-                why = ": the browser sent a fatal alert";
-
-            gw_log("#%ld handshake with the browser %s for %s "
-                   "(BearSSL %d%s)", s->id,
-                   err == 0 ? "was abandoned" : "failed",
-                   s->mitmHost, err, why);
-        }
+        log_mitm_failure(s);
         s->state = kHPDone;
         break;
 
     default:
         if (GWNet_Ticks() - s->cli.startTicks > GW_IDLE_TIMEOUT) {
-            gw_log("#%ld handshake with the browser timed out", s->id);
+            gw_logc("S21", "#%ld the browser's handshake stalled and was "
+                    "dropped", s->id);
+            log_mitm_detail(s, 0);
             s->state = kHPDone;
         }
         break;

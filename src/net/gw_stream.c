@@ -333,6 +333,41 @@ unsigned int GWStream_ClientHelloVersion(const GWStream *s)
     return MacTLS_ServerClientVersion(s->srv);
 }
 
+int GWStream_ServerStage(const GWStream *s)
+{
+    if (s == NULL || !s->tls || s->srv == NULL) return kGWStageNothing;
+    switch (MacTLS_ServerGetStage(s->srv)) {
+    case kMacTLS_StageHello:       return kGWStageHello;
+    case kMacTLS_StageCertificate: return kGWStageCertificate;
+    case kMacTLS_StageReplied:     return kGWStageReplied;
+    case kMacTLS_StageFinished:    return kGWStageFinished;
+    case kMacTLS_StageDone:        return kGWStageDone;
+    default:                       return kGWStageNothing;
+    }
+}
+
+void GWStream_ServerDescribe(const GWStream *s, char *out, size_t cap)
+{
+    if (out == NULL || cap == 0) return;
+    out[0] = '\0';
+    if (s != NULL && s->tls && s->srv != NULL)
+        MacTLS_ServerDescribe(s->srv, out, cap);
+}
+
+void GWStream_ServerHelloHex(const GWStream *s, char *out, size_t cap)
+{
+    if (out == NULL || cap == 0) return;
+    out[0] = '\0';
+    if (s != NULL && s->tls && s->srv != NULL)
+        MacTLS_ServerHelloHex(s->srv, out, cap);
+}
+
+unsigned int GWStream_ServerVersion(const GWStream *s)
+{
+    if (s == NULL || !s->tls || s->srv == NULL) return 0;
+    return MacTLS_ServerSessionVersion(s->srv);
+}
+
 int GWStream_FallbackNoRoute(const GWStream *s)
 {
     if (s == NULL || !s->tls || s->sec == NULL) return 0;

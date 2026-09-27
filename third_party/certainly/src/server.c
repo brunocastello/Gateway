@@ -71,14 +71,15 @@ struct MacTLS_Server {
     size_t                 rxTotal;
     size_t                 rxAtFirstFlight;
     int                    firstFlightSeen;
-    /* Set once the opening bytes of the client's hello have been logged. A
+    /* The opening bytes of the client's hello, kept for the host's log. A
      * handshake that never completes, never fails through BearSSL and never
      * times out -- IE 3 on Windows 95 does exactly this -- otherwise leaves no
      * trace of what the client sent. The first bytes name the protocol: 16 03
      * is a TLS/SSL 3 record, 80.. an SSLv2-framed hello (version at byte 3-4),
      * and an 80.. hello whose version is 80 01 is Microsoft PCT, which is not
-     * SSL and is not served. */
-    int                    helloLogged;
+     * SSL and is not served. See MacTLS_ServerHelloHex(). */
+    unsigned char          helloHead[24];
+    size_t                 helloHeadLen;
 };
 
 MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
@@ -155,39 +156,72 @@ MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
 }
 
 /*
- * What the connection settled on, for the log. Which framing the hello
- * arrived in is worth a word: a browser that speaks the SSLv2-compatible
+ * How far the browser got, for the host's log. Certainly writes no log lines
+ * of its own for this: only the host knows which of its sessions this
+ * connection is, and a line without that is a line nobody can place.
+ *
+ * incrypt is the receive-side crypto flag, set only after the client's
+ * ChangeCipherSpec, so it marks a client that finished its own second
+ * flight. Short of that, bytes received after our first flight separate a
+ * client that answered our certificate with a ClientKeyExchange from one
+ * that never replied at all -- the distinction that says where an SSL 3.0
+ * client (IE 3/4, Netscape) stops if it does.
+ */
+MacTLS_ServerStage MacTLS_ServerGetStage(const MacTLS_Server *s)
+{
+    if (s == NULL || s->rxTotal == 0)
+        return kMacTLS_StageNothing;
+    if (s->handshook)
+        return kMacTLS_StageDone;
+    if (s->sc.eng.incrypt)
+        return kMacTLS_StageFinished;
+    if (!s->firstFlightSeen)
+        return kMacTLS_StageHello;
+    if (s->rxTotal > s->rxAtFirstFlight)
+        return kMacTLS_StageReplied;
+    return kMacTLS_StageCertificate;
+}
+
+/*
+ * What the connection settled on, as engineer's detail. Which framing the
+ * hello arrived in is worth a word: a browser that speaks the SSLv2-compatible
  * form is a browser that predates the one Gateway would otherwise assume.
  */
-static void describe_hello(MacTLS_Server *s, char *out, size_t cap)
+void MacTLS_ServerDescribe(const MacTLS_Server *s, char *out, size_t cap)
 {
-    size_t      rx_after = s->rxTotal - s->rxAtFirstFlight;
-    const char *reached;
+    size_t rx_after;
 
-    /*
-     * How far the browser got, stated as a plain fact rather than a verdict:
-     * this describes the "done" line as well as the "abandoned" and "failed"
-     * ones, so the surrounding log verb supplies the outcome. incrypt is the
-     * receive-side crypto flag, set only after the client's ChangeCipherSpec,
-     * so it marks a client that finished its own second flight. Short of that,
-     * rx_after separates a client that answered our certificate with a
-     * ClientKeyExchange from one that never replied at all -- the distinction
-     * that says where an SSL 3.0 client (IE 3/4, Netscape) stops if it does.
-     */
-    if (s->sc.eng.incrypt)
-        reached = "client completed its second flight";
-    else if (rx_after > 0)
-        reached = "client replied, no ChangeCipherSpec";
-    else
-        reached = "no client reply after our certificate";
-
+    if (out == NULL || cap == 0) return;
+    if (s == NULL) { out[0] = '\0'; return; }
+    rx_after = s->firstFlightSeen ? s->rxTotal - s->rxAtFirstFlight : 0;
     snprintf(out, cap,
-             "%s hello, version %04x, suite %04x "
-             "[%s; rx %lu, rx-after-flight %lu, in-rectype %u, incrypt %u]",
+             "%s hello, version %04x, suite %04x, rx %lu, "
+             "rx after our flight %lu, in-rectype %u, incrypt %u",
              s->sc.eng.ssl2_hello ? "SSLv2" : "native",
              s->sc.eng.session.version, s->sc.eng.session.cipher_suite,
-             reached, (unsigned long)s->rxTotal, (unsigned long)rx_after,
+             (unsigned long)s->rxTotal, (unsigned long)rx_after,
              s->sc.eng.record_type_in, s->sc.eng.incrypt);
+}
+
+void MacTLS_ServerHelloHex(const MacTLS_Server *s, char *out, size_t cap)
+{
+    size_t k, p = 0;
+
+    if (out == NULL || cap == 0) return;
+    out[0] = '\0';
+    if (s == NULL) return;
+    for (k = 0; k < s->helloHeadLen; k++) {
+        int n = snprintf(out + p, cap - p, "%s%02x", k ? " " : "",
+                         s->helloHead[k]);
+        if (n < 0 || (size_t)n >= cap - p) break;
+        p += (size_t)n;
+    }
+}
+
+unsigned int MacTLS_ServerSessionVersion(const MacTLS_Server *s)
+{
+    if (s == NULL || !s->handshook) return 0;
+    return s->sc.eng.session.version;
 }
 
 MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
@@ -240,29 +274,14 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
             /*
              * A clean close. Ordinary at the end of a session -- but a
              * browser that walks away mid-handshake lands here too, with no
-             * error to report and, until now, nothing in the log. That is
-             * the shape of a client that opens a connection and abandons it,
-             * and the only way to tell which version it had been offered is
-             * to say so here.
+             * error to report. The host tells the two apart, and says how
+             * far the browser got, with MacTLS_ServerGetStage().
              */
-            if (!s->handshook) {
-                char hello[384];
-                describe_hello(s, hello, sizeof(hello));
-                gw_log("MITM handshake abandoned by the browser: %s", hello);
-            }
             s->state = kMacTLS_Closed;
         } else {
             s->state = kMacTLS_Error;
             s->error = kMacTLS_ErrHandshake;
             {
-                char hello[384];
-                describe_hello(s, hello, sizeof(hello));
-                if (err >= BR_ERR_SEND_FATAL_ALERT) {
-                    gw_log("MITM handshake failed: BearSSL %d (alert %d), %s",
-                           err, err - BR_ERR_SEND_FATAL_ALERT, hello);
-                } else {
-                    gw_log("MITM handshake failed: BearSSL %d, %s", err, hello);
-                }
 #ifdef GW_DEBUG_IO
                 if (s->sc.client_suites_num == 0 && s->sc.eng.hbuf_in && s->sc.eng.hlen_in >= 6) {
                     char raw[193];
@@ -364,19 +383,11 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
                  * a handshake then goes nowhere. Capped at 24 bytes so it is
                  * one line, and only on the very first read so it is the hello.
                  */
-                if (!s->helloLogged) {
-                    char hex[3 * 24 + 1];
-                    size_t k, dump, p = 0;
-                    s->helloLogged = 1;
-                    dump = (size_t)n > 24 ? 24 : (size_t)n;
-                    for (k = 0; k < dump; k++) {
-                        int hn = snprintf(hex + p, sizeof(hex) - p, "%s%02x",
-                                          k ? " " : "", buf[k]);
-                        if (hn < 0) break;
-                        p += (size_t)hn;
-                    }
-                    gw_log("MITM client hello: %d bytes, first: %s",
-                           n, hex);
+                if (s->helloHeadLen < sizeof(s->helloHead)) {
+                    size_t take = sizeof(s->helloHead) - s->helloHeadLen;
+                    if (take > (size_t)n) take = (size_t)n;
+                    memcpy(s->helloHead + s->helloHeadLen, buf, take);
+                    s->helloHeadLen += take;
                 }
 #ifdef GW_DEBUG_IO
                 if (s->logged_raw < 10 && n >= 2) {
@@ -401,13 +412,10 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
             } else if (ct_transport_peer_closed(s->transport)) {
                 /*
                  * The peer hung up. Ordinary at the end of a session, but a
-                 * browser that does it mid-handshake lands here too -- and
-                 * this is the path it actually takes, ahead of the
-                 * BR_SSL_CLOSED branch below, so the description has to be
-                 * here as well to be of any use. What it says is how far
-                 * the handshake had got: a chosen suite of 0000/0000 means
-                 * it left before we answered its hello, anything else means
-                 * it left after seeing our certificate.
+                 * browser that does it mid-handshake lands here too -- this
+                 * is the path it actually takes, ahead of the BR_SSL_CLOSED
+                 * branch below. The host reads how far it got from
+                 * MacTLS_ServerGetStage().
                  *
                  * This has to be its own arm rather than nested inside
                  * n < 0: OT reports the hangup as n < 0 once ordRel has
@@ -417,11 +425,6 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
                  * then rode out the 30-second timeout on Windows builds
                  * instead of closing here (PATCHES.md §31).
                  */
-                if (!s->handshook) {
-                    char hello[384];
-                    describe_hello(s, hello, sizeof(hello));
-                    gw_log("MITM handshake abandoned by the browser: %s", hello);
-                }
                 br_ssl_engine_close(&s->sc.eng);
                 s->state = kMacTLS_Closed;
                 return s->state;
@@ -469,12 +472,7 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
     }
 #endif
     if (st & (BR_SSL_SENDAPP | BR_SSL_RECVAPP)) {
-        if (!s->handshook) {
-            char hello[384];
-            s->handshook = 1;
-            describe_hello(s, hello, sizeof(hello));
-            gw_log("MITM handshake done: %s", hello);
-        }
+        s->handshook = 1;
         s->state = kMacTLS_Connected;
     }
     else if (st & (BR_SSL_SENDREC | BR_SSL_RECVREC)) {
