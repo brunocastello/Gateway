@@ -122,6 +122,7 @@ int         GW_HttpPort(void);
 int         GW_ImapPort(void);
 int         GW_PopPort(void);
 int         GW_SmtpPort(void);
+int         GW_TunnelPort(void);
 
 #ifdef __cplusplus
 }

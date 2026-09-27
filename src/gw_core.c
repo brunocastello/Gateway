@@ -22,6 +22,7 @@
 #include "proxy/gw_httpproxy.h"
 #include "proxy/gw_mail.h"
 #include "proxy/gw_token.h"
+#include "proxy/gw_tunnel.h"
 
 static GWListener *sHttp;
 static GWListener *sWayback;
@@ -30,12 +31,14 @@ static GWWaybackSettings sWaybackSet;
 static GWListener *sImap;
 static GWListener *sPop;
 static GWListener *sSmtp;
+static GWListener *sTunnel;
 static char        sStatus[128];
-static int         sHttpPort, sImapPort, sPopPort, sSmtpPort;
+static int         sHttpPort, sImapPort, sPopPort, sSmtpPort, sTunnelPort;
 
 /* Which modules the prefs asked for: http_enabled, mail_enabled,
- * wayback_enabled. A module that is off is never initialised at all. */
-static int         sProxyOn, sMailOn, sWaybackOn;
+ * wayback_enabled, tunnel_enabled. A module that is off is never
+ * initialised at all. */
+static int         sProxyOn, sMailOn, sWaybackOn, sTunnelOn;
 
 void GW_LoadSettings(void)
 {
@@ -281,6 +284,7 @@ int GW_Start(void)
         GWMail_Init();
         GWToken_Init();
     }
+    if (sTunnelOn) GWTunnel_Init();
     return listeners_open();
 }
 
@@ -325,6 +329,7 @@ int GW_Init(void)
     sProxyOn   = GWConfig_Num("http_enabled", 1) != 0;
     sMailOn    = GWConfig_Num("mail_enabled", 1) != 0;
     sWaybackOn = GWConfig_Num("wayback_enabled", 1) != 0;
+    sTunnelOn  = GWConfig_Num("tunnel_enabled", 0) != 0;
 
     MacTLS_Init();
 
@@ -369,11 +374,13 @@ int GW_Init(void)
         GWMail_Init();
         GWToken_Init();
     }
+    if (sTunnelOn) GWTunnel_Init();
 
     sHttpPort = (int)GWConfig_Num("http_port", 8765);
     sImapPort = (int)GWConfig_Num("imap_port", 1993);
     sPopPort  = (int)GWConfig_Num("pop_port", 1995);
     sSmtpPort = (int)GWConfig_Num("smtp_port", 1587);
+    sTunnelPort = (int)GWConfig_Num("tunnel_local_port", 2222);
 
     /* Module 3's settings start from prefs and are then edited, at runtime,
      * only through the settings page. */
@@ -416,8 +423,19 @@ static int listeners_open(void)
         sPop  = GWListener_Open((UInt16)sPopPort, 2);
         sSmtp = GWListener_Open((UInt16)sSmtpPort, 2);
     }
+    if (sTunnelOn) {
+        sTunnel = GWListener_Open((UInt16)sTunnelPort,
+                                  GW_MAX_TUNNEL_SESSIONS * 2);
+        if (sTunnel != NULL)
+            gw_log("tunnel: local :%d to %s:%ld%s%s", sTunnelPort,
+                   GWConfig_Str("tunnel_remote_host", "?"),
+                   GWConfig_Num("tunnel_remote_port", 443),
+                   GWConfig_Num("tunnel_tls", 1) ? " via TLS" : " plain",
+                   gw_stricmp(GWConfig_Str("tunnel_proxy", "none"), "none") == 0
+                       ? "" : " via proxy");
+    }
 
-    if (!sProxyOn && !sMailOn && !sWaybackOn) {
+    if (!sProxyOn && !sMailOn && !sWaybackOn && !sTunnelOn) {
         /*
          * Deliberate, so it is not an error -- but it is worth saying out
          * loud, because an application that binds nothing and answers nothing
@@ -431,7 +449,7 @@ static int listeners_open(void)
     }
 
     if (sHttp == NULL && sWayback == NULL &&
-        sImap == NULL && sPop == NULL && sSmtp == NULL) {
+        sImap == NULL && sPop == NULL && sSmtp == NULL && sTunnel == NULL) {
         GW_SetStatus("no listener could be bound");
         return 0;
     }
@@ -464,7 +482,9 @@ static int listeners_open(void)
         if (sPop != NULL && n < (int)sizeof(line) - 1)
             n += snprintf(line + n, sizeof(line) - n, "pop :%d  ", sPopPort);
         if (sSmtp != NULL && n < (int)sizeof(line) - 1)
-            snprintf(line + n, sizeof(line) - n, "smtp :%d", sSmtpPort);
+            n += snprintf(line + n, sizeof(line) - n, "smtp :%d  ", sSmtpPort);
+        if (sTunnel != NULL && n < (int)sizeof(line) - 1)
+            snprintf(line + n, sizeof(line) - n, "tunnel :%d", sTunnelPort);
         GW_SetStatus("idle - %s", line);
     }
     sRunning = 1;
@@ -489,9 +509,11 @@ void GW_Stop(void)
     if (sImap)    { GWListener_Close(sImap);    sImap = NULL; }
     if (sPop)     { GWListener_Close(sPop);     sPop = NULL; }
     if (sSmtp)    { GWListener_Close(sSmtp);    sSmtp = NULL; }
+    if (sTunnel)  { GWListener_Close(sTunnel);  sTunnel = NULL; }
 
     GWProxy_Shutdown();
     GWMail_Shutdown();
+    GWTunnel_Shutdown();
 
     sRunning = 0;
     gw_log("gateway stopped");
@@ -507,9 +529,11 @@ void GW_Shutdown(void)
     if (sImap) { GWListener_Close(sImap); sImap = NULL; }
     if (sPop)  { GWListener_Close(sPop);  sPop  = NULL; }
     if (sSmtp) { GWListener_Close(sSmtp); sSmtp = NULL; }
+    if (sTunnel) { GWListener_Close(sTunnel); sTunnel = NULL; }
 
     GWProxy_Shutdown();
     GWMail_Shutdown();
+    GWTunnel_Shutdown();
     GWToken_Shutdown();
     MacTLS_Shutdown();
     GWNet_Shutdown();
@@ -580,9 +604,18 @@ void GW_Poll(void)
         }
     }
 
+    if (sTunnel != NULL) {
+        c = GWListener_Poll(sTunnel, GWTunnel_CanAccept());
+        if (c != NULL && !GWTunnel_Accept(c)) {
+            gw_log("tunnel busy, dropped a connection");
+            GWConn_Destroy(c);
+        }
+    }
+
     GWToken_Poll();
     GWProxy_Poll();
     GWMail_Poll();
+    GWTunnel_Poll();
 }
 
 int         GW_LogCount(void)        { return gw_log_count(); }
@@ -592,10 +625,12 @@ int         GW_HttpPort(void)        { return sHttpPort; }
 int         GW_ImapPort(void)        { return sImapPort; }
 int         GW_PopPort(void)         { return sPopPort; }
 int         GW_SmtpPort(void)        { return sSmtpPort; }
+int         GW_TunnelPort(void)      { return sTunnelPort; }
 
 int GW_ActiveSessions(void)
 {
-    return GWProxy_ActiveCount() + GWMail_ActiveCount();
+    return GWProxy_ActiveCount() + GWMail_ActiveCount() +
+           GWTunnel_ActiveCount();
 }
 
 void GW_Log(const char *fmt, ...)

@@ -49,11 +49,11 @@ typedef struct {
     const char *key, *label, *fallback, *hint;  /* hint lines split on '\n' */
 } Field;
 
-#define PANES 8
+#define PANES 9
 
 static const char *const kPanes[PANES] = {
     "Modules", "Web proxy", "Wayback", "Wayback sites",
-    "Mail", "Mail upstream", "OAuth", "Log"
+    "Mail", "Mail upstream", "OAuth", "Tunnel", "Log"
 };
 
 /* Standing text at the top of a pane, above its first row. */
@@ -66,6 +66,8 @@ static const char *const kIntro[PANES] = {
     "Empty host fields use the selected provider's defaults.",
     "Obtain the refresh token outside Gateway, then paste it here.\n"
     "Long values scroll horizontally. Tokens may rotate while running.",
+    "No local authentication: keep this port behind the machine's own\n"
+    "boundary. Stop and start Gateway after changing it.",
     "",
 };
 
@@ -74,6 +76,7 @@ static const Field kFields[] = {
     { 0, Check, "http_enabled", "&Web proxy", "1", "Browse modern sites through the web proxy." },
     { 0, Check, "mail_enabled", "&Mail", "1", "Connect a mail client to IMAP, POP and SMTP." },
     { 0, Check, "wayback_enabled", "Wa&yback proxy", "1", "Browse archived pages from the Wayback Machine." },
+    { 0, Check, "tunnel_enabled", "Tu&nnel", "0", "A generic TLS relay for one local port; SSH is the use case." },
     { 1, Number, "http_port", "Port:", "8765", "" },
     { 1, Check, "rewrite_https", "&Rewrite https:// links to http://", "1",
       "For browsers without modern TLS support." },
@@ -120,10 +123,36 @@ static const Field kFields[] = {
     { 6, Text, "oauth_client_id", "Client ID:", "", "" },
     { 6, Text, "oauth_client_secret", "Client secret:", "", "" },
     { 6, Text, "refresh_token", "Refresh token:", "", "" },
-    { 7, Check, "show_window", "Show the &log window at launch", "1",
+    { 7, Number, "tunnel_local_port", "Local port:", "2222", "" },
+    { 7, Text, "tunnel_remote_host", "Remote host:", "",
+      "Required. Also the certificate identity checked on the far leg,\n"
+      "always, whatever the SNI setting below sends." },
+    { 7, Number, "tunnel_remote_port", "Remote port:", "443", "" },
+    { 7, Check, "tunnel_tls", "&Wrap the far leg in TLS", "1",
+      "Off relays plaintext -- only for a far leg that is already safe." },
+    { 7, Check, "tunnel_tls12", "Speak only &TLS 1.2 on the far leg", "0",
+      "For far ends with no TLS 1.3 (an old stunnel)." },
+    { 7, Check, "tunnel_insecure", "&Accept any far-end certificate", "0",
+      "Testing only. Proves bytes flow, not who they flow to." },
+    { 7, Text, "tunnel_sni", "SNI override:", "",
+      "Empty sends the remote host; \"none\" omits SNI. Changes only\n"
+      "what is sent -- the certificate is always checked against the\n"
+      "remote host above." },
+    { 7, Text, "tunnel_proxy", "Forward proxy:", "none",
+      "none, http (CONNECT) or socks5 (no auth)." },
+    { 7, Text, "tunnel_proxy_host", "Proxy host:", "", "" },
+    { 7, Number, "tunnel_proxy_port", "Proxy port:", "8080",
+      "8080 for http, 1080 for socks5." },
+    { 7, Text, "tunnel_proxy_user", "Proxy user:", "", "" },
+    { 7, Text, "tunnel_proxy_pass", "Proxy password:", "", "" },
+    { 7, Check, "tunnel_host_header", "Send &Host: in the CONNECT request", "1",
+      "Off omits it, like socat, for a proxy that answers that form." },
+    { 7, Number, "tunnel_settle_ms", "Settle before TLS (ms):", "0",
+      "Diagnosis only. 0 starts TLS immediately." },
+    { 8, Check, "show_window", "Show the &log window at launch", "1",
       "Off starts with the notification area icon only. Where there is no\n"
       "notification area the window always appears." },
-    { 7, Check, "log_file", "Also &write the log to a file", "0",
+    { 8, Check, "log_file", "Also &write the log to a file", "0",
       "The window keeps the last 200 lines.\n"
       "The log file keeps everything." },
 };
@@ -505,7 +534,8 @@ static int save_values(void)
                 valid = valid && num <= 65535 &&
                         (num > 0 || strcmp(f->key, "wayback_port") == 0);
             else if (strcmp(f->key, "max_body_mb") != 0 &&
-                     strcmp(f->key, "wayback_tolerance") != 0)
+                     strcmp(f->key, "wayback_tolerance") != 0 &&
+                     strcmp(f->key, "tunnel_settle_ms") != 0)
                 valid = valid && num > 0;
         }
         if (!valid) { reject(i); return 0; }
