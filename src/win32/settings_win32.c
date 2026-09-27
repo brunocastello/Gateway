@@ -49,14 +49,17 @@ typedef struct {
     const char *key, *label, *fallback, *hint;  /* hint lines split on '\n' */
 } Field;
 
-#define PANES 9
+#define PANES 10
 
 static const char *const kPanes[PANES] = {
     "Modules", "Web proxy", "Wayback", "Wayback sites",
-    "Mail", "Mail upstream", "OAuth", "Tunnel", "Log"
+    "Mail", "Mail upstream", "OAuth", "Tunnel", "Tunnel proxy", "Log"
 };
 
-/* Standing text at the top of a pane, above its first row. */
+/* Standing text at the top of a pane, above its first row. The Tunnel pane's
+ * former intro (no local authentication on the listening port) now lives as
+ * tunnel_local_port's own hint below -- keeping it as a pane intro pushed
+ * this pane past the Web proxy pane, the previous tallest. */
 static const char *const kIntro[PANES] = {
     "Stop and start Gateway after changing listeners.",
     "",
@@ -66,8 +69,8 @@ static const char *const kIntro[PANES] = {
     "Empty host fields use the selected provider's defaults.",
     "Obtain the refresh token outside Gateway, then paste it here.\n"
     "Long values scroll horizontally. Tokens may rotate while running.",
-    "No local authentication: keep this port behind the machine's own\n"
-    "boundary. Stop and start Gateway after changing it.",
+    "",
+    "",
     "",
 };
 
@@ -123,10 +126,10 @@ static const Field kFields[] = {
     { 6, Text, "oauth_client_id", "Client ID:", "", "" },
     { 6, Text, "oauth_client_secret", "Client secret:", "", "" },
     { 6, Text, "refresh_token", "Refresh token:", "", "" },
-    { 7, Number, "tunnel_local_port", "Local port:", "2222", "" },
-    { 7, Text, "tunnel_remote_host", "Remote host:", "",
-      "Required. Also the certificate identity checked on the far leg,\n"
-      "always, whatever the SNI setting below sends." },
+    { 7, Number, "tunnel_local_port", "Local port:", "2222",
+      "No local authentication: keep this port behind the machine's own\n"
+      "boundary. Stop and start Gateway after changing it." },
+    { 7, Text, "tunnel_remote_host", "Remote host:", "", "Required." },
     { 7, Number, "tunnel_remote_port", "Remote port:", "443", "" },
     { 7, Check, "tunnel_tls", "&Wrap the far leg in TLS", "1",
       "Off relays plaintext -- only for a far leg that is already safe." },
@@ -135,24 +138,23 @@ static const Field kFields[] = {
     { 7, Check, "tunnel_insecure", "&Accept any far-end certificate", "0",
       "Testing only. Proves bytes flow, not who they flow to." },
     { 7, Text, "tunnel_sni", "SNI override:", "",
-      "Empty sends the remote host; \"none\" omits SNI. Changes only\n"
-      "what is sent -- the certificate is always checked against the\n"
-      "remote host above." },
-    { 7, Text, "tunnel_proxy", "Forward proxy:", "none",
+      "Empty sends the remote host; \"none\" omits SNI.\n"
+      "The certificate is always checked against the remote host." },
+    { 8, Text, "tunnel_proxy", "Forward proxy:", "none",
       "none, http (CONNECT) or socks5 (no auth)." },
-    { 7, Text, "tunnel_proxy_host", "Proxy host:", "", "" },
-    { 7, Number, "tunnel_proxy_port", "Proxy port:", "8080",
+    { 8, Text, "tunnel_proxy_host", "Proxy host:", "", "" },
+    { 8, Number, "tunnel_proxy_port", "Proxy port:", "8080",
       "8080 for http, 1080 for socks5." },
-    { 7, Text, "tunnel_proxy_user", "Proxy user:", "", "" },
-    { 7, Text, "tunnel_proxy_pass", "Proxy password:", "", "" },
-    { 7, Check, "tunnel_host_header", "Send &Host: in the CONNECT request", "1",
+    { 8, Text, "tunnel_proxy_user", "Proxy user:", "", "" },
+    { 8, Text, "tunnel_proxy_pass", "Proxy password:", "", "" },
+    { 8, Check, "tunnel_host_header", "Send &Host: in the CONNECT request", "1",
       "Off omits it, like socat, for a proxy that answers that form." },
-    { 7, Number, "tunnel_settle_ms", "Settle before TLS (ms):", "0",
+    { 8, Number, "tunnel_settle_ms", "Settle before TLS (ms):", "0",
       "Diagnosis only. 0 starts TLS immediately." },
-    { 8, Check, "show_window", "Show the &log window at launch", "1",
+    { 9, Check, "show_window", "Show the &log window at launch", "1",
       "Off starts with the notification area icon only. Where there is no\n"
       "notification area the window always appears." },
-    { 8, Check, "log_file", "Also &write the log to a file", "0",
+    { 9, Check, "log_file", "Also &write the log to a file", "0",
       "The window keeps the last 200 lines.\n"
       "The log file keeps everything." },
 };

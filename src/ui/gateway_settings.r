@@ -34,6 +34,7 @@ data 'MENU' (200, "Preferences panes", purgeable) {
     $"0D" "Mail upstream" $"00 00 00 00"
     $"05" "OAuth" $"00 00 00 00"
     $"06" "Tunnel" $"00 00 00 00"
+    $"0C" "Tunnel proxy" $"00 00 00 00"
     $"03" "Log" $"00 00 00 00"
     $"00"
 };
