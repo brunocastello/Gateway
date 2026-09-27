@@ -1147,3 +1147,45 @@ instead of the generic handshake-failed text. Falling back across STARTTLS
 would mean re-running the plaintext SMTP prologue from inside the TLS
 library, which does not know it, so that stays unimplemented rather than
 silently wrong.
+
+## §30 — the 1.2 ClientHello record went out as 03 03 instead of 03 01
+
+Contributed by [roytam1](https://github.com/roytam1/Gateway/tree/gw034).
+
+`br_ssl_client_reset()` stamps `version_min` into `version_out`, and the
+1.2-only pin in `setup_bearssl()` (`br_ssl_engine_set_versions(&ctx->sc.eng,
+BR_TLS12, BR_TLS12)`) makes that 0x0303 — so BearSSL's ClientHello record on
+the TLS 1.2 fallback path reads `16 03 03` where OpenSSL, browsers, and
+Certainly's own TLS 1.3 stack all send `16 03 01`. A version-intolerant
+middlebox that only forwards 03 01 first records drops it silently: same
+destination, the TCP handshake completes, then nothing, while an OpenSSL
+hello through the same path flows. The direct path never showed it because
+servers accept either.
+
+**Why the stamp has to ride inside the reset.** The first shape of this fix
+set `version_out` *after* `br_ssl_client_reset()` returned, and the tap kept
+showing `03 03`. It had to: `br_ssl_client_reset()` does not just reset
+state, it runs `jump_handshake()` (`ssl_engine.c:1476`) before returning, and
+that processor never leaves an unfinished outgoing record — so the
+ClientHello is assembled and `flush-record()` bakes its 5-byte header
+through `sendpld_flush()` using `version_out` at that instant
+(`ssl_engine.c:1101`). By the time a post-reset stamp ran, the header bytes
+were already fixed in the output buffer; setting a field the header has
+already copied is a no-op on the wire.
+
+So `client_first_record_compat()` is the reset itself: it drops
+`version_min` to `BR_TLS10` across the `br_ssl_client_reset()` call, then
+restores it to `BR_TLS12`. `version_min` is the only lever the header reads
+while the reset runs (`ssl_client.c:48`). Its sole other client-side
+consumer is the `read-ServerHello` range check (`ssl_hs_client.t0:656`),
+which runs long after this returns, so the 1.2-only pin ends up exactly as
+strict as it was — a ServerHello asking for 0x0301 or 0x0302 still fails.
+`version_max` is never touched: it supplies the ClientHello's
+`legacy_version` (`ssl_hs_client.t0:462`) and the ServerHello upper bound,
+both staying 0x0303.
+
+`read-ServerHello` overwrites `version_out` with the negotiated version, so
+only the pre-negotiation flight is affected and everything after
+ServerHello is byte-identical to before. Unconditional — 03 01 first is the
+ecosystem convention, not a workaround, so every TLS 1.2 fallback
+connection gets it.
