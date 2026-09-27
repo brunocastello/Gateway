@@ -398,27 +398,34 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
                 }
 #endif
                 br_ssl_engine_recvrec_ack(&s->sc.eng, (size_t)n);
-            } else if (n < 0) {
-                if (ct_transport_peer_closed(s->transport)) {
-                    /*
-                     * The peer hung up. Ordinary at the end of a session, but
-                     * a browser that does it mid-handshake lands here too --
-                     * and this is the path it actually takes, ahead of the
-                     * BR_SSL_CLOSED branch below, so the description has to
-                     * be here as well to be of any use. What it says is how
-                     * far the handshake had got: a chosen suite of 0000/0000
-                     * means it left before we answered its hello, anything
-                     * else means it left after seeing our certificate.
-                     */
-                    if (!s->handshook) {
-                        char hello[384];
-                        describe_hello(s, hello, sizeof(hello));
-                        gw_log("MITM handshake abandoned by the browser: %s", hello);
-                    }
-                    br_ssl_engine_close(&s->sc.eng);
-                    s->state = kMacTLS_Closed;
-                    return s->state;
+            } else if (ct_transport_peer_closed(s->transport)) {
+                /*
+                 * The peer hung up. Ordinary at the end of a session, but a
+                 * browser that does it mid-handshake lands here too -- and
+                 * this is the path it actually takes, ahead of the
+                 * BR_SSL_CLOSED branch below, so the description has to be
+                 * here as well to be of any use. What it says is how far
+                 * the handshake had got: a chosen suite of 0000/0000 means
+                 * it left before we answered its hello, anything else means
+                 * it left after seeing our certificate.
+                 *
+                 * This has to be its own arm rather than nested inside
+                 * n < 0: OT reports the hangup as n < 0 once ordRel has
+                 * drained (transport_ot.c), but Win32 reports it as n == 0
+                 * instead (transport_win32.c), and nesting the test inside
+                 * n < 0 missed that -- the browser going away mid-handshake
+                 * then rode out the 30-second timeout on Windows builds
+                 * instead of closing here (PATCHES.md §31).
+                 */
+                if (!s->handshook) {
+                    char hello[384];
+                    describe_hello(s, hello, sizeof(hello));
+                    gw_log("MITM handshake abandoned by the browser: %s", hello);
                 }
+                br_ssl_engine_close(&s->sc.eng);
+                s->state = kMacTLS_Closed;
+                return s->state;
+            } else if (n < 0) {
                 s->state = kMacTLS_Error;
                 s->error = kMacTLS_ErrRead;
                 return s->state;

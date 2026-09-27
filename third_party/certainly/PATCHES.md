@@ -1189,3 +1189,74 @@ only the pre-negotiation flight is affected and everything after
 ServerHello is byte-identical to before. Unconditional — 03 01 first is the
 ecosystem convention, not a workaround, so every TLS 1.2 fallback
 connection gets it.
+
+## §31 — a peer that hung up mid-handshake waited out the 30-second timeout
+
+Contributed by [roytam1](https://github.com/roytam1/Gateway/tree/gw034), in
+`src/certainly.c` (`tls13_pump_handshake()`, `tls13_recv_records()`,
+`MacTLS_Pump()`, `MacTLS_GetVersion()`), `src/server.c`
+(`MacTLS_ServerPump()`) and `src/transport_win32.c` (`ct_transport_adopt()`,
+`ct_transport_send()`).
+
+The two transport backends disagree on how a close is reported, and every
+close test in this file had been written against only one convention. OT's
+`ct_transport_recv()` returns `n < 0` once the peer's orderly release has
+arrived and its queue is drained (`transport_ot.c`), with
+`ct_transport_peer_closed()` saying why. Win32's returns `n == 0` instead,
+with `ct_transport_peer_closed()` set the same way for both an orderly FIN
+and a `WSAECONNRESET`/`WSAECONNABORTED` (`transport_win32.c`) — its own
+header comment says so: *"The peer closed its side. The interface reports
+that through `ct_transport_peer_closed()`, not through this return value."*
+A close test that lived only inside `n < 0` therefore worked on OT and
+missed every Win32 close: recv kept answering "nothing available", the
+handshake state machine kept answering `WantRead`, and nothing observed the
+close at all.
+
+What the caller saw on Windows builds was therefore the timeout, not the
+close. `br_ssl_engine_last_error()` stays 0 — the engine never failed, it
+was waiting — so `MacTLS_GetBearSSLError()` reports 0 and
+`GWStream_Describe()` produced `TLS handshake failed [connected, OT 0,
+TLS 0, name unresolved]`. Every word of that was wrong in a different
+direction: `connected` comes from `MacTLS_GetPhase()`, which reads the
+*transport* state, and a transport that has received a FIN is still
+`kCTransport_Connected` — `peerClosed` is a separate flag; `OT 0` and
+`TLS 0` are both true, because there is genuinely no error anywhere, only a
+peer nobody asked; and `name unresolved` is `t->addr`, which
+`ct_transport_adopt()` never filled in, because an adopted socket skipped
+the resolve step that would have set it.
+
+**The fix** reads `ct_transport_peer_closed()` as its own arm rather than
+nested inside `n < 0`, at every read site that drives a handshake or the
+TLS 1.3 application-data path: `tls13_pump_handshake()`'s record read,
+`tls13_recv_records()`'s record read (missed in an earlier pass at this
+codebase's fixes, because its `n < 0` arm already read as harmless with
+`peer_closed` folded into it — the actual gap was the tail check requiring
+`tls13_recv_len == 0`, which left a trailing partial record, truncated by
+the close and unable to ever complete, waiting forever; a `waiting_for_room`
+flag keeps that from closing early on a complete record that is merely
+blocked on `tls13_app_buf` space instead), the BearSSL path's
+`BR_SSL_RECVREC` arm in `MacTLS_Pump()`, and the matching arm in
+`MacTLS_ServerPump()` (`server.c`) — which keeps its existing "MITM
+handshake abandoned by the browser" log by moving it into the new
+peer_closed arm rather than dropping it. `MacTLS_GetVersion()` also stops
+answering Unknown whenever `state` is not `Connected`: `session.version` is
+set the instant a ServerHello arrives, so a peer that sends one and then
+hangs up now reports the version it chose rather than "without answering
+the ClientHello".
+
+Two supporting changes, both in `transport_win32.c`. `ct_transport_send()`
+sets `peerClosed` on `WSAECONNRESET`/`WSAECONNABORTED`, so the send arm's
+existing close test — already correctly nested inside `n < 0`, since a send
+failure has no "0 means closed" ambiguity — can fire before a recv has ever
+run. `ct_transport_adopt()` calls `getpeername()` so an adopted connection
+(STARTTLS, or the browser-facing leg of `connect_mitm`) names its peer
+instead of reporting that nothing resolved it. The Win32 `recv()` contract
+itself — 0 for "nothing available" as well as for a close, told apart only
+by `peerClosed` — is unchanged; every fix above reads that flag rather than
+asking `recv()` to report differently.
+
+The same silence was seen from a TLS 1.2-only far end holding a TLS 1.3
+ClientHello it would never answer, and the two were indistinguishable in the
+log for the same reason — nothing had arrived to distinguish them. This is
+what makes that case readable now: the tap shows zero bytes back, and the
+log says so immediately, instead of 30 seconds later under an error name.

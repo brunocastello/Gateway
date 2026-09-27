@@ -239,6 +239,23 @@ CTransport *ct_transport_adopt(CTSocket sock)
     t->sock  = (SOCKET)sock;
     t->state = kCTransport_Connected;
     ioctlsocket(t->sock, FIONBIO, &nonblocking);
+
+    /*
+     * An adopted socket never ran the resolve step that fills t->addr, so
+     * every diagnostic naming the peer printed "name unresolved" for a
+     * connection that is plainly talking to somebody -- an adopted STARTTLS
+     * or CONNECT tunnel, not an unresolved name (PATCHES.md §31). Take the
+     * address from the socket instead.
+     */
+    {
+        struct sockaddr_in sa;
+        int alen = (int)sizeof(sa);
+
+        memset(&sa, 0, sizeof(sa));
+        if (getpeername(t->sock, (struct sockaddr *)&sa, &alen) == 0) {
+            t->addr = ntohl(sa.sin_addr.s_addr);
+        }
+    }
     return t;
 }
 
@@ -294,6 +311,18 @@ int ct_transport_send(CTransport *t, const void *buf, size_t len)
 
         /* Not an error: the send buffer is full, try the next slice. */
         if (err == WSAEWOULDBLOCK) return 0;
+        /*
+         * The peer is gone even though recv() has not reported it yet.
+         * Flag it so ct_transport_peer_closed() is already true while the
+         * caller is still looking at this -1, which is what lets the send
+         * arm's existing close test fire before a recv has ever run
+         * (PATCHES.md §31).
+         */
+        if (err == WSAECONNRESET || err == WSAECONNABORTED) {
+            t->peerClosed = 1;
+            t->lastError = err;
+            return -1;
+        }
         t->lastError = err;
         return -1;
     }

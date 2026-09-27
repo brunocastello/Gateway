@@ -400,16 +400,23 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
                               space);
         if (n > 0) {
             ctx->tls13_recv_len += (size_t)n;
-        } else if (n < 0) {
+        } else {
             /*
-             * OT reports no more data. If the peer has closed,
-             * we may still have pending data in tls13_recv_buf
-             * that needs to be processed. Don't return Closed
-             * immediately — fall through to handshake_step to
-             * drain the buffer. If there's no pending data AND
-             * no handshake work to do, the handshake code will
-             * report WantRead and we'll come back here next time
-             * with still no data — at which point we mark Closed.
+             * n == 0 means "nothing available right now" and n < 0 means a
+             * hard failure. An orderly close is reported as n == 0 with
+             * ct_transport_peer_closed() set (transport_win32.c), NOT as
+             * n < 0 -- so a close check that lived only in the n < 0 arm
+             * never fired, the handshake read WantRead forever, and it died
+             * on the 30-second timeout below instead of on the peer's FIN
+             * (PATCHES.md §31). Test peer_closed on both arms.
+             *
+             * If the peer has closed we may still have pending data in
+             * tls13_recv_buf that needs to be processed. Don't return
+             * Closed immediately — fall through to handshake_step to
+             * drain the buffer. If there's no pending data AND no
+             * handshake work to do, the handshake code will report
+             * WantRead and we'll come back here next time with still no
+             * data — at which point we mark Closed.
              */
             if (ct_transport_peer_closed(ctx->transport) &&
                 ctx->tls13_recv_len == 0 &&
@@ -417,7 +424,7 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
                 ctx->state = kMacTLS_Closed;
                 return ctx->state;
             }
-            if (!ct_transport_peer_closed(ctx->transport)) {
+            if (n < 0 && !ct_transport_peer_closed(ctx->transport)) {
                 ctx->state = kMacTLS_Error;
                 ctx->error = kMacTLS_ErrRead;
                 return ctx->state;
@@ -597,6 +604,13 @@ static int tls13_flush_out(MacTLS_Context *ctx);
 static void tls13_recv_records(MacTLS_Context *ctx)
 {
     int n;
+    /*
+     * Set when the loop below stops on a complete record it cannot decrypt
+     * yet for want of app_buf room -- as opposed to an incomplete one it is
+     * still waiting on bytes for. See the peer_closed check after the loop
+     * (PATCHES.md §31).
+     */
+    int waiting_for_room = 0;
 
     /*
      * Step 1: Read raw bytes from OT transport into recv_buf.
@@ -610,13 +624,23 @@ static void tls13_recv_records(MacTLS_Context *ctx)
                               space);
         if (n > 0) {
             ctx->tls13_recv_len += n;
-        } else if (n < 0) {
+        } else {
             /*
-             * Peer closed or error. Mark for closure AFTER processing
-             * any pending records below. Real errors (not peer close)
-             * still bail immediately.
+             * The two transports disagree on how a close is reported: OT
+             * returns n < 0 once ordRel has arrived and its queue is drained
+             * (transport_ot.c), while Win32 returns n == 0 with
+             * ct_transport_peer_closed() set instead (transport_win32.c) --
+             * so a test only in the n < 0 arm misses Win32's close and a
+             * test only on n == 0 misses OT's. Reading peer_closed on both
+             * arms handles either convention (PATCHES.md §31).
+             *
+             * Real errors (not a close) still bail immediately; a close
+             * falls through so any already-buffered records get processed,
+             * and the peer_closed decision after the loop below tells a
+             * truncated trailing record apart from one merely waiting on
+             * app_buf room.
              */
-            if (!ct_transport_peer_closed(ctx->transport)) {
+            if (n < 0 && !ct_transport_peer_closed(ctx->transport)) {
                 ctx->state = kMacTLS_Error;
                 ctx->error = kMacTLS_ErrRead;
                 return;
@@ -719,7 +743,10 @@ static void tls13_recv_records(MacTLS_Context *ctx)
                     ctx->error = kMacTLS_ErrRead;
                     return;
                 }
-                if (room < plain) break;   /* wait for the reader to drain */
+                if (room < plain) {
+                    waiting_for_room = 1;
+                    break;              /* wait for the reader to drain */
+                }
             }
         }
 
@@ -831,12 +858,24 @@ static void tls13_recv_records(MacTLS_Context *ctx)
     }
 
     /*
-     * After processing all buffered records: if the peer closed and
-     * there's no more data to read, mark as Closed. The app can still
-     * drain tls13_app_buf via MacTLS_Read in the Closed state.
+     * After processing all buffered records: the peer is gone, so no more
+     * bytes are ever coming. Requiring recv_len == 0 here left a trailing
+     * partial record -- one truncated by the close, which can never
+     * complete -- stuck forever: the next pump finds the same unfinished
+     * bytes, ct_transport_recv() reports the close again, and the loop
+     * above breaks on the same incomplete record with nothing to time it
+     * out (PATCHES.md §31, the same close-detection gap as
+     * tls13_pump_handshake and MacTLS_Pump's BearSSL read, missed here
+     * originally because this site's n < 0 arm already read as harmless).
+     *
+     * waiting_for_room is the one case where leftover bytes are not lost
+     * data: a complete record is sitting there, blocked only on app_buf
+     * space, and MacTLS_Read() draining app_buf will let a later pump
+     * finish it -- closing now would discard it instead. The app can still
+     * drain tls13_app_buf via MacTLS_Read() from the Closed state either
+     * way, so nothing already delivered is lost by closing.
      */
-    if (ct_transport_peer_closed(ctx->transport) &&
-        ctx->tls13_recv_len == 0) {
+    if (ct_transport_peer_closed(ctx->transport) && !waiting_for_room) {
         ctx->state = kMacTLS_Closed;
     }
 }
@@ -1035,13 +1074,20 @@ MacTLS_State MacTLS_Pump(MacTLS_Context *ctx)
             n = ct_transport_recv(ctx->transport, buf, len);
             if (n > 0) {
                 br_ssl_engine_recvrec_ack(&ctx->sc.eng, n);
+            } else if (ct_transport_peer_closed(ctx->transport)) {
+                /*
+                 * The peer is gone. OT reports that as n < 0 once ordRel has
+                 * drained (transport_ot.c); Win32 reports it as n == 0
+                 * instead (transport_win32.c) -- so this test has to read
+                 * peer_closed directly rather than sit inside the n < 0 arm,
+                 * or Win32's close is never seen and the handshake rides out
+                 * its 30-second timeout instead of closing on the peer's
+                 * close (PATCHES.md §31).
+                 */
+                br_ssl_engine_close(&ctx->sc.eng);
+                ctx->state = kMacTLS_Closed;
+                return ctx->state;
             } else if (n < 0) {
-                /* Recv failed — if peer closed, treat as normal close */
-                if (ct_transport_peer_closed(ctx->transport)) {
-                    br_ssl_engine_close(&ctx->sc.eng);
-                    ctx->state = kMacTLS_Closed;
-                    return ctx->state;
-                }
                 ctx->state = kMacTLS_Error;
                 ctx->error = kMacTLS_ErrRead;
                 return ctx->state;
@@ -1453,8 +1499,24 @@ MacTLS_Version MacTLS_GetVersion(const MacTLS_Context *ctx)
     /* Only meaningful once the handshake has completed. tls13_active is
      * latched true after a successful TLS 1.3 handshake; otherwise the
      * connection ran through BearSSL's T0 engine, which we pin to 1.2. */
-    if (ctx->state != kMacTLS_Connected) return kMacTLS_VersionUnknown;
-    return ctx->tls13_active ? kMacTLS_Version13 : kMacTLS_Version12;
+    if (ctx == NULL) return kMacTLS_VersionUnknown;
+    if (ctx->state == kMacTLS_Connected)
+        return ctx->tls13_active ? kMacTLS_Version13 : kMacTLS_Version12;
+    /*
+     * A peer that sends its ServerHello and then hangs up leaves state at
+     * something other than Connected, so the test above used to answer
+     * Unknown -- read by GWStream_Describe() as "without answering the
+     * ClientHello", when it plainly did (PATCHES.md §31). BearSSL writes
+     * the negotiated version into session.version the moment the
+     * ServerHello arrives, so read it from there while the engine is still
+     * around; 0 means no ServerHello was ever received, which is the case
+     * this is meant to tell apart from the one above.
+     */
+    if (!ctx->tls13_active &&
+        br_ssl_engine_get_version(&ctx->sc.eng) == BR_TLS12) {
+        return kMacTLS_Version12;
+    }
+    return kMacTLS_VersionUnknown;
 }
 
 /* ── Configuration ── */
