@@ -10,6 +10,7 @@ show_window     = 1
 http_enabled    = 1
 mail_enabled    = 1
 wayback_enabled = 1
+tunnel_enabled  = 0
 max_sessions    = 12
 max_connects    = 8
 log_file        = 0
@@ -63,6 +64,39 @@ oauth_user          = you@example.com
 oauth_client_id     = 00000000-0000-0000-0000-000000000000
 oauth_client_secret =
 refresh_token       = paste-your-refresh-token-here
+
+
+# ---------------------------------------------------------------- Tunnel
+#
+# Module 4: a generic TLS tunnel. A local application connects in plaintext
+# and Gateway carries the far leg, optionally through a forward proxy,
+# optionally in TLS:
+#
+#   local_app --plain--> :tunnel_local_port --TLS--> [proxy] --> remote:port
+#
+# For SSH: point the client at tunnel_local_port; the far side unwraps TLS
+# (stunnel and friends) and hands the SSH stream to sshd. No local auth of
+# its own, so keep tunnel_local_port behind the machine's own boundary.
+
+tunnel_enabled      = 0
+tunnel_local_port   = 2222
+tunnel_remote_host  = ssh.example.com
+tunnel_remote_port  = 443
+tunnel_tls          = 1
+# tunnel_tls12      = 1  # only when the far end has no TLS 1.3 (old stunnel)
+# tunnel_insecure   = 1  # testing only: accept any far-end certificate
+# tunnel_sni        = none  # diagnosis: what SNI sends, never what is checked
+
+# None of: tunnel_proxy = none | http | socks5. http sends CONNECT (with
+# Proxy-Authorization when tunnel_proxy_user is set); socks5 is no-auth only.
+# tunnel_proxy_port defaults to 8080 for http, 1080 for socks5.
+# tunnel_proxy        = none
+# tunnel_proxy_host   = proxy.example.com
+# tunnel_proxy_port   = 8080
+# tunnel_host_header  = 0  # omit Host: from CONNECT, like socat
+# tunnel_settle_ms    = 0  # diagnosis: wait this long before starting TLS
+# tunnel_proxy_user   =
+# tunnel_proxy_pass   =
 
 
 # Any other provider: set provider = custom and fill these in.

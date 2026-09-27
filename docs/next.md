@@ -28,6 +28,18 @@ peer that hangs up mid-handshake or mid-transfer is now caught on both
 transports' close conventions — OT's and Win32's disagree — instead of
 riding out a 30-second timeout (§31).
 
+Also landed in 0.3.7: **Module 4, the generic TLS tunnel** (`:2222`, off by
+default), ported from roytam1's `gw034` fork -- a plaintext local port
+relayed to a fixed far end over TLS, optionally through an HTTP CONNECT or
+SOCKS5 proxy. SSH is the motivating use, not the protocol. `tunnel_tls12`
+(PATCHES.md §32) and `tunnel_insecure` (§33) came from the fork mostly as
+written; `tunnel_sni` (§34) did not -- the fork's version let an overridden
+or omitted SNI change what was validated, up to skipping the hostname check
+entirely, and was rewritten around an X.509 vtable guard so `tunnel_sni`
+changes only the wire and the certificate is always checked against
+`tunnel_remote_host`. See `docs/prefs.md`'s Tunnel section and
+`third_party/certainly/PATCHES.md` §32-§34.
+
 ---
 
 ## 1. TLS session resumption

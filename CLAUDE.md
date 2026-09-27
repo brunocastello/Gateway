@@ -60,6 +60,20 @@
   (`src/portable/gw_wayback.c`, host-tested).
 * Design, decisions and prior verification: **`docs/module3-wayback.md`**.
 
+### Module 4 — Tunnel (`:2222`, built in 0.3.7)
+* A generic stunnel-style relay: a plaintext local port to a fixed far end
+  over TLS, optionally through an HTTP `CONNECT` or SOCKS5 (no-auth) proxy.
+  SSH is the use case, not the protocol — Gateway forwards whatever bytes
+  the local port receives.
+* Off by default (`tunnel_enabled 0`). It has no local authentication of its
+  own, so whoever can reach `tunnel_local_port` can use it: keep that port
+  behind the machine's own boundary.
+* `tunnel_sni` changes only what the ClientHello's SNI extension sends —
+  the certificate is always checked against `tunnel_remote_host`, never
+  against an override and never skipped for an omitted SNI, unless
+  `tunnel_insecure` turns off validation entirely (testing only).
+* Every setting is in `docs/prefs.md`'s Tunnel section.
+
 ---
 
 ## Non-Goals
