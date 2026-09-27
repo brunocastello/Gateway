@@ -1260,3 +1260,17 @@ ClientHello it would never answer, and the two were indistinguishable in the
 log for the same reason — nothing had arrived to distinguish them. This is
 what makes that case readable now: the tap shows zero bytes back, and the
 log says so immediately, instead of 30 seconds later under an error name.
+
+A close is not an end of stream when it cuts a record in half. In
+`tls13_recv_records()`, bytes left in `tls13_recv_buf` after the peer has
+closed — and that are not a complete record waiting only for `app_buf` room
+— are a record truncated by the close, and the connection ends in
+`kMacTLS_Error`, not `kMacTLS_Closed`. Reported as Closed, a FIN injected
+mid-record would pass a cut-off body off as complete whenever the response
+carries no length of its own to check it against. A close at a record
+boundary is still Closed, as before. The close is also honoured only on a
+pass whose read was tried and came back empty, so bytes still queued behind
+a `peer_closed` flag are read before anything is decided. The TLS 1.3
+handshake applies the same rule: a peer that has closed while the handshake
+waits on a partial record ends it at once, rather than on the 30-second
+timeout.

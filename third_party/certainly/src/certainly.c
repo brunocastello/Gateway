@@ -245,10 +245,11 @@ static void setup_bearssl(MacTLS_Context *ctx)
 static int client_first_record_compat(MacTLS_Context *ctx, const char *name)
 {
     int ok;
+    uint16_t saved_min = ctx->sc.eng.version_min;
 
     ctx->sc.eng.version_min = BR_TLS10;
     ok = br_ssl_client_reset(&ctx->sc, name, 0);
-    ctx->sc.eng.version_min = BR_TLS12;
+    ctx->sc.eng.version_min = saved_min;
     return ok;
 }
 
@@ -358,6 +359,8 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
 {
     tls13_hs_result r;
     int n;
+    /* The peer has closed and this pass read nothing: no more bytes, ever. */
+    int closed_now = 0;
 
     /*
      * Step 1: If there's outgoing data in msg_buf, send it.
@@ -401,14 +404,16 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
         if (n > 0) {
             ctx->tls13_recv_len += (size_t)n;
         } else {
+            closed_now = ct_transport_peer_closed(ctx->transport);
             /*
-             * n == 0 means "nothing available right now" and n < 0 means a
-             * hard failure. An orderly close is reported as n == 0 with
-             * ct_transport_peer_closed() set (transport_win32.c), NOT as
-             * n < 0 -- so a close check that lived only in the n < 0 arm
-             * never fired, the handshake read WantRead forever, and it died
-             * on the 30-second timeout below instead of on the peer's FIN
-             * (PATCHES.md §31). Test peer_closed on both arms.
+             * The transports report an orderly close differently: Win32
+             * returns n == 0 with ct_transport_peer_closed() set
+             * (transport_win32.c), OT returns n < 0 once ordRel has arrived
+             * and its queue is drained (transport_ot.c). A close check that
+             * lived only in the n < 0 arm never fired on Win32, the
+             * handshake read WantRead forever, and it died on the 30-second
+             * timeout instead of on the peer's FIN (PATCHES.md §31). Test
+             * peer_closed on both arms.
              *
              * If the peer has closed we may still have pending data in
              * tls13_recv_buf that needs to be processed. Don't return
@@ -450,7 +455,17 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
         break;
 
     case kTLS13_WantRead:
-        /* Need more data from network */
+        /*
+         * Need more data from network -- unless the peer has already
+         * closed and this pass brought nothing, in which case the
+         * handshake is stuck on a record that can never complete, and
+         * waiting would only reach the same failure 30 seconds later.
+         */
+        if (closed_now) {
+            ctx->state = kMacTLS_Error;
+            ctx->error = kMacTLS_ErrRead;
+            break;
+        }
         ctx->state = kMacTLS_Handshaking;
         break;
 
@@ -611,6 +626,13 @@ static void tls13_recv_records(MacTLS_Context *ctx)
      * (PATCHES.md §31).
      */
     int waiting_for_room = 0;
+    /*
+     * Set when this call tried to read and got nothing. A close is honoured
+     * only then: bytes that arrived on this very pass, or a pass that
+     * skipped the read because recv_buf was full, may be followed by more
+     * still queued, whatever peer_closed already says.
+     */
+    int read_dry = 0;
 
     /*
      * Step 1: Read raw bytes from OT transport into recv_buf.
@@ -625,6 +647,7 @@ static void tls13_recv_records(MacTLS_Context *ctx)
         if (n > 0) {
             ctx->tls13_recv_len += n;
         } else {
+            read_dry = 1;
             /*
              * The two transports disagree on how a close is reported: OT
              * returns n < 0 once ordRel has arrived and its queue is drained
@@ -874,9 +897,21 @@ static void tls13_recv_records(MacTLS_Context *ctx)
      * finish it -- closing now would discard it instead. The app can still
      * drain tls13_app_buf via MacTLS_Read() from the Closed state either
      * way, so nothing already delivered is lost by closing.
+     *
+     * Leftover bytes that are not a room-blocked record are a record cut
+     * off by the close, and that is an error, not an end of stream. Called
+     * Closed, a FIN injected mid-record would pass a truncated body off as
+     * complete whenever the response has no length of its own to check it
+     * against. A close at a record boundary stays Closed, as before.
      */
-    if (ct_transport_peer_closed(ctx->transport) && !waiting_for_room) {
-        ctx->state = kMacTLS_Closed;
+    if (read_dry && ct_transport_peer_closed(ctx->transport) &&
+        !waiting_for_room) {
+        if (ctx->tls13_recv_len > 0) {
+            ctx->state = kMacTLS_Error;
+            ctx->error = kMacTLS_ErrRead;
+        } else {
+            ctx->state = kMacTLS_Closed;
+        }
     }
 }
 
