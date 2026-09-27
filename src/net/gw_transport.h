@@ -211,6 +211,15 @@ int           GWStream_SendPending(const GWStream *s);
 const char   *GWStream_ErrorText(const GWStream *s);
 
 /*
+ * 1 when a TLS handshake failure was a TLS 1.2 fallback that could not run
+ * on this stream because it was adopted (STARTTLS) rather than dialed by
+ * Certainly itself -- see MacTLS_FallbackNoRoute(). The remedy is specific
+ * (the far end needs TLS 1.3 enabled), which GWStream_Describe()'s generic
+ * failure text cannot say.
+ */
+int           GWStream_FallbackNoRoute(const GWStream *s);
+
+/*
  * A failure line with enough in it to act on: what went wrong, how far the
  * connection got, the Open Transport error number, and the address DNS
  * produced. Writes into out and returns it, so it can be passed straight to a

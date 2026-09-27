@@ -902,7 +902,21 @@ static void session_step(GWMailSession *s)
             s->state = kMSUpEhlo;
         } else if (s->up.state == kGWStreamError ||
                    s->up.state == kGWStreamClosed) {
-            {
+            /*
+             * A TLS 1.2-only mail server cannot be served here: STARTTLS
+             * hands Certainly a socket it did not dial, so the fallback has
+             * no host or port to redial and fails outright rather than
+             * silently reconnecting to port 0 (PATCHES.md §29). Name that
+             * plainly instead of the generic handshake-failed text, which
+             * reads like a network problem when the actual fix is enabling
+             * TLS 1.3 on the mail server.
+             */
+            if (GWStream_FallbackNoRoute(&s->up)) {
+                mail_fail(s, "421 4.4.1 TLS handshake with the mail server failed\r\n",
+                          "upstream chose TLS 1.2, which Gateway cannot "
+                          "redial on a STARTTLS connection -- enable TLS 1.3 "
+                          "on the mail server");
+            } else {
                 char why[160];
                 mail_fail(s, "421 4.4.1 TLS handshake with the mail server failed\r\n",
                           GWStream_Describe(&s->up, why, sizeof(why)));

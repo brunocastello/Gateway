@@ -1114,3 +1114,36 @@ a browser that can manage TLS 1.0 still gets TLS 1.0.
 the client engines that talk TLS 1.2 and 1.3 upstream and will never use it.
 At the default twelve concurrent sessions that is under 100 KB against an 8 MB
 partition, which is why it is a fixed buffer rather than an allocation.
+
+## §29 — the TLS 1.2 fallback reconnected an adopted connection to port 0
+
+Contributed by [roytam1](https://github.com/roytam1/Gateway/tree/gw034).
+
+The TLS 1.3 → 1.2 fallback in `tls13_pump_handshake()`'s `kTLS13_Fallback12`
+case reconnects: it closes the transport, dials the same host and port
+again, and lets BearSSL's T0 engine run the whole TLS 1.2 handshake over the
+fresh connection (§23 is what made that reconnect survivable at all). That
+is only possible for a transport Certainly dialed itself with
+`ct_transport_create()`. An adopted one — `ct_transport_adopt()`, which is
+how SMTP STARTTLS hands Certainly a socket already mid-conversation
+(`GWStream_UpgradeToTLS()` in `gw_stream.c`, called from `gw_mail.c`'s
+`step_up_starttls()`) — stores no host or port, so `ct_transport_port()`
+read 0, and even with them a fresh dial would bypass the plaintext SMTP
+prologue the far end is waiting on.
+
+What this used to do was dial that port 0 directly. The adopted socket was
+torn down first, so the far end logged an ordinary disconnect while Gateway
+reported an empty-handed handshake failure — no BearSSL code, no transport
+error, no resolved address — which reads like a network problem when the
+actual event is a version choice: the far end chose TLS 1.2.
+
+The fallback now checks `port == 0` before doing anything else and fails
+immediately, leaving the original connection alone rather than tearing it
+down for a redial that cannot work. `fell_back_no_route` is set on the
+context, and `MacTLS_FallbackNoRoute()` lets a caller ask whether that is
+what happened; `gw_mail.c`'s STARTTLS handshake wait (`kMSUpHandshake`)
+checks it and logs the actual remedy — the mail server needs TLS 1.3 —
+instead of the generic handshake-failed text. Falling back across STARTTLS
+would mean re-running the plaintext SMTP prologue from inside the TLS
+library, which does not know it, so that stays unimplemented rather than
+silently wrong.

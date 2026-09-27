@@ -170,6 +170,15 @@ int          MacTLS_GetTls13Error(const MacTLS_Context *ctx);
 MacTLS_Version MacTLS_GetVersion(const MacTLS_Context *ctx);
 
 /*
+ * Non-zero when a kMacTLS_ErrHandshake came from a TLS 1.2 fallback that
+ * could not run on an adopted connection (PATCHES.md §29) -- STARTTLS or
+ * any other transport Certainly did not dial itself. The remedy is
+ * specific (the far end needs TLS 1.3), which a generic handshake-failed
+ * message cannot say.
+ */
+int          MacTLS_FallbackNoRoute(const MacTLS_Context *ctx);
+
+/*
  * How far the connection got before it stopped. A failure reported only as
  * "connect failed" cannot be acted on; knowing whether the name resolved, and
  * to what, separates a DNS problem from a routing or firewall one.

@@ -436,6 +436,27 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
         {
             uint16_t port = ct_transport_port(ctx->transport);
 
+            /*
+             * An adopted transport -- SMTP STARTTLS (gw_mail.c), which hands
+             * Certainly a socket already mid-conversation via
+             * ct_transport_adopt() -- has no route to redial: adopt stores
+             * no host or port, so port reads 0 here, and even with them a
+             * fresh dial would bypass the plaintext STARTTLS prologue the
+             * server is waiting on. What this used to do was dial port 0
+             * directly: the adopted socket was torn down first, so the far
+             * end saw a plain disconnect while Gateway reported an
+             * empty-handed handshake failure that read like a proxy
+             * problem, when the actual event is a version problem -- the
+             * server chose TLS 1.2 (PATCHES.md §29). Fail with the original
+             * connection intact and let fell_back_no_route name the remedy.
+             */
+            if (port == 0) {
+                ctx->fell_back_no_route = true;
+                ctx->state = kMacTLS_Error;
+                ctx->error = kMacTLS_ErrHandshake;
+                return ctx->state;
+            }
+
             /* Close and destroy the current transport */
             ct_transport_close(ctx->transport);
             ct_transport_destroy(ctx->transport);
@@ -1365,6 +1386,12 @@ int MacTLS_GetTls13Error(const MacTLS_Context *ctx)
 {
     if (ctx == NULL) return 0;
     return ctx->hs13.error;
+}
+
+int MacTLS_FallbackNoRoute(const MacTLS_Context *ctx)
+{
+    if (ctx == NULL) return 0;
+    return ctx->fell_back_no_route ? 1 : 0;
 }
 
 int MacTLS_GetBearSSLError(const MacTLS_Context *ctx)

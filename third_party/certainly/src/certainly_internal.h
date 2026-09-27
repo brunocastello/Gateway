@@ -128,6 +128,14 @@ struct MacTLS_Context {
     bool            tls13_active;
     /* True once TLS 1.3 handshake has started (ClientHello sent) */
     bool            tls13_started;
+    /*
+     * True when a TLS 1.2 fallback could not run because the transport was
+     * adopted rather than dialed by Certainly itself -- see the port == 0
+     * guard in the kTLS13_Fallback12 case of tls13_pump_handshake()
+     * (PATCHES.md §29). MacTLS_FallbackNoRoute() reads this back so the
+     * caller can name the actual remedy instead of a bare handshake error.
+     */
+    bool            fell_back_no_route;
 };
 
 struct MacTLS_Config {

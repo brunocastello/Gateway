@@ -297,6 +297,12 @@ unsigned int GWStream_ClientHelloVersion(const GWStream *s)
     return MacTLS_ServerClientVersion(s->srv);
 }
 
+int GWStream_FallbackNoRoute(const GWStream *s)
+{
+    if (s == NULL || !s->tls || s->sec == NULL) return 0;
+    return MacTLS_FallbackNoRoute(s->sec);
+}
+
 /*
  * Turn BearSSL's error number into something readable. Only the codes that
  * actually come up in the field are named; the rest fall through to the raw
