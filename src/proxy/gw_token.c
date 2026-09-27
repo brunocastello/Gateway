@@ -1,5 +1,6 @@
 #include "gw_token.h"
 
+#include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -62,14 +63,42 @@ static void token_release(GWTokenCtx *t)
     t->step = kStIdle;
 }
 
-static void token_fail(GWTokenCtx *t, const char *why)
+/*
+ * Log a plain sentence with its code (docs/log-codes.md) and give up. The
+ * sentence is kept for GWToken_Error() as well.
+ */
+static void token_fail(GWTokenCtx *t, const char *code, const char *fmt, ...)
 {
-    strncpy(t->error, why, sizeof(t->error) - 1);
-    t->error[sizeof(t->error) - 1] = '\0';
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(t->error, sizeof(t->error), fmt, ap);
+    va_end(ap);
     t->state = kGWTokenFailed;
     t->token[0] = '\0';
-    gw_log("oauth: %s", why);
+    gw_logc(code, "mail token: %s", t->error);
     token_release(t);
+}
+
+/*
+ * The connection to the token endpoint failed. Its own sentence and T code
+ * when the stream holds an error, the caller's otherwise; the bracketed
+ * detail under log_debug. Described before token_fail(), which destroys the
+ * stream.
+ */
+static void token_fail_stream(GWTokenCtx *t, const char *code,
+                              const char *fallback)
+{
+    char        why[GW_LOG_WIDTH];
+    char        desc[192];
+    const char *tcode = GWStream_Explain(&t->up, t->host, why, sizeof why);
+
+    GWStream_Describe(&t->up, desc, sizeof desc);
+    if (tcode != NULL)
+        token_fail(t, tcode, "%s", why);
+    else
+        token_fail(t, code, fallback, t->host);
+    gw_logd("%s", desc);
 }
 
 void GWToken_Request(void)
@@ -91,21 +120,23 @@ void GWToken_Request(void)
     scope    = GWConfig_Str("oauth_scope", "");
 
     if (clientId[0] == '\0' || refresh[0] == '\0') {
-        token_fail(t, "prefs are missing oauth_client_id or refresh_token");
+        token_fail(t, "M30", "the prefs file has no oauth_client_id or "
+                   "refresh_token: run get-email-token.py");
         return;
     }
 
     bodyLen = gw_oauth_refresh_body(clientId, secret, refresh, scope,
                                     body, sizeof(body));
     if (bodyLen == 0) {
-        token_fail(t, "could not build the token request body");
+        token_fail(t, "M31", "the refresh request could not be built: a "
+                   "prefs value is too long");
         return;
     }
 
     t->req  = NewPtr(GW_TOKEN_BUF);
     t->resp = NewPtr(GW_TOKEN_BUF);
     if (t->req == NULL || t->resp == NULL) {
-        token_fail(t, "out of memory");
+        token_fail(t, "M32", "out of memory");
         return;
     }
 
@@ -128,11 +159,12 @@ void GWToken_Request(void)
     t->host[sizeof(t->host) - 1] = '\0';
 
     if (!GWStream_ConnectTLS(&t->up, t->host, 443)) {
-        token_fail(t, "could not open a TLS connection to the token endpoint");
+        token_fail(t, "M33", "Gateway could not start a connection to %s",
+                   t->host);
         return;
     }
 
-    gw_log("oauth: refreshing the access token via %s", host);
+    gw_log("mail token: refreshing it at %s", host);
     t->state = kGWTokenWorking;
     t->step  = kStConnect;
 }
@@ -143,25 +175,38 @@ static void token_finish(GWTokenCtx *t)
     long       expires;
 
     if (gw_http_parse_response(t->resp, t->respLen, &res) != 1) {
-        token_fail(t, "token endpoint sent an unparsable response");
+        token_fail(t, "M38", "%s sent a response Gateway could not "
+                   "understand", t->host);
         return;
     }
     if (res.status != 200) {
-        char msg[128];
-        char err[96];
-        if (gw_json_string(t->resp + res.head_len, t->respLen - res.head_len,
-                           "error_description", err, sizeof(err)))
-            snprintf(msg, sizeof(msg), "token endpoint said %d: %s",
-                     res.status, err);
+        char        err[32];
+        char        desc[96];
+        const char *body = t->resp + res.head_len;
+        size_t      bodyLen = t->respLen - res.head_len;
+
+        /*
+         * invalid_grant is the refresh token itself refused -- expired,
+         * revoked, or its password changed -- and has one remedy, so it gets
+         * a sentence of its own. The provider's own description goes under
+         * log_debug either way.
+         */
+        if (gw_json_string(body, bodyLen, "error", err, sizeof(err)) &&
+            strcmp(err, "invalid_grant") == 0)
+            token_fail(t, "M39", "%s refused the refresh token: run "
+                       "get-email-token.py for a new one", t->host);
         else
-            snprintf(msg, sizeof(msg), "token endpoint said %d", res.status);
-        token_fail(t, msg);
+            token_fail(t, "M40", "%s refused to refresh the token (HTTP %d)",
+                       t->host, res.status);
+        if (gw_json_string(body, bodyLen, "error_description",
+                           desc, sizeof(desc)))
+            gw_logd("%s", desc);
         return;
     }
 
     if (!gw_json_string(t->resp + res.head_len, t->respLen - res.head_len,
                         "access_token", t->token, sizeof(t->token))) {
-        token_fail(t, "no access_token in the response");
+        token_fail(t, "M41", "%s answered without an access token", t->host);
         return;
     }
 
@@ -177,7 +222,8 @@ static void token_finish(GWTokenCtx *t)
                            "refresh_token", rotated, sizeof(rotated))) {
             if (strcmp(rotated, GWConfig_Str("refresh_token", "")) != 0) {
                 if (GWConfig_Set("refresh_token", rotated))
-                    gw_log("oauth: saved the rotated refresh token");
+                    gw_log("mail token: saved the new refresh token the "
+                           "provider sent");
             }
         }
     }
@@ -187,7 +233,7 @@ static void token_finish(GWTokenCtx *t)
     if (expires < 60) expires = 3600;
     t->expiresAt = GWNet_Ticks() + (unsigned long)(expires * 60) - GW_TOKEN_SLACK;
 
-    gw_log("oauth: got an access token, good for %ld s", expires);
+    gw_log("mail token: refreshed, good for %ld minutes", expires / 60);
     t->state = kGWTokenReady;
     token_release(t);
 }
@@ -206,8 +252,7 @@ void GWToken_Poll(void)
             t->step = kStSend;
         } else if (t->up.state == kGWStreamError ||
                    t->up.state == kGWStreamClosed) {
-            char why[160];
-            token_fail(t, GWStream_Describe(&t->up, why, sizeof(why)));
+            token_fail_stream(t, "M34", "%s closed the connection");
         }
         break;
 
@@ -215,7 +260,11 @@ void GWToken_Poll(void)
         while (t->reqSent < t->reqLen) {
             long n = GWStream_Write(&t->up, t->req + t->reqSent,
                                     t->reqLen - t->reqSent);
-            if (n < 0) { token_fail(t, "TLS write failed"); return; }
+            if (n < 0) {
+                token_fail_stream(t, "M35", "%s closed the connection before "
+                                  "taking the request");
+                return;
+            }
             if (n == 0) return;
             t->reqSent += (size_t)n;
         }
@@ -226,7 +275,8 @@ void GWToken_Poll(void)
         long n;
 
         if (t->respLen >= (size_t)GW_TOKEN_BUF - 1) {
-            token_fail(t, "token response exceeded 8K");
+            token_fail(t, "M36", "%s sent a response larger than 8 KB",
+                       t->host);
             return;
         }
         n = GWStream_Read(&t->up, t->resp + t->respLen,
@@ -238,9 +288,8 @@ void GWToken_Poll(void)
         if (n == 0) return;
         /* EOF or error: Connection: close means EOF is the end of the body. */
         if (t->respLen == 0) {
-            char why[160];
-
-            token_fail(t, GWStream_Describe(&t->up, why, sizeof(why)));
+            token_fail_stream(t, "M37", "%s closed the connection without "
+                              "answering");
             return;
         }
         t->resp[t->respLen] = '\0';

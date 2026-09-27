@@ -64,6 +64,43 @@ free number.
 | `H24` | the browser stopped reading, so the connection was dropped | The browser left data unread for the whole grace period. |
 | `H25` | out of memory: a browser's connection was refused | Raise Gateway's partition in Get Info. |
 
+## M — the mail splice and the token refresh
+
+Mail lines start `mail #N`, token refresh lines `mail token:`. A failure to
+reach the mail server or the token endpoint carries a `T` code when the
+connection itself names the fault.
+
+| Code | Sentence | What it means |
+|---|---|---|
+| `M01` | … sign-in refused: the prefs file has no local_password | Gateway never read a `local_password`: check the prefs file is where Gateway looks. |
+| `M02` | … sign-in refused: the password does not match local_password | The mail client's password is not the prefs file's `local_password`. |
+| `M10` | the XOAUTH2 sign-in could not be built | No access token, or the user name and token together are too long. |
+| `M11` | the … server … refused the session at its greeting | The mail server's first line was a refusal. |
+| `M12` | the SMTP server … rejected EHLO | |
+| `M13` | the SMTP server … refused STARTTLS | Check `smtp_upstream_port` and `smtp_starttls`: port 465 is TLS from the first byte, 587 uses STARTTLS. |
+| `M14` | the SMTP server sent data before the TLS handshake | Something between Gateway and the server is injecting text. Gateway stops rather than trust it. |
+| `M15` | Gateway could not start TLS on the connection to … | Usually memory. |
+| `M16` | the mail server … refused the access token | The token is expired or revoked, or has the wrong scope, and `get-email-token.py` gives a new one. But a provider can also refuse a valid token on its own side, and then every client gets the same refusal. Under `log_debug`, the server's own words tell the two apart. |
+| `M17` | nothing moved for … minutes, so the connection was closed | The idle timeout. |
+| `M18` | Gateway could not start a connection to … | Before the network was involved. Usually memory. |
+| `M19` | there is no access token to sign in with | The token refresh failed. The `mail token:` line before it says why. |
+| `M20` | the mail server … closed the connection | While connecting, with no error to name. |
+| `M21` | the mail server … closed the connection during the TLS handshake | |
+| `M22` | the mail server … closed the connection during sign-in | |
+| `M23` | out of memory: a mail client's connection was refused | Raise Gateway's partition in Get Info. |
+| `M30` | the prefs file has no oauth_client_id or refresh_token | Run `tools/get-email-token.py` and paste the lines it prints into the prefs file. |
+| `M31` | the refresh request could not be built | A prefs value is too long for the request. |
+| `M32` | out of memory | |
+| `M33` | Gateway could not start a connection to … | As `M18`, for the token endpoint. |
+| `M34` | … closed the connection | The token endpoint, while connecting. |
+| `M35` | … closed the connection before taking the request | |
+| `M36` | … sent a response larger than 8 KB | |
+| `M37` | … closed the connection without answering | |
+| `M38` | … sent a response Gateway could not understand | |
+| `M39` | … refused the refresh token | `invalid_grant`: the refresh token is expired or revoked, or the account's password changed. Run `get-email-token.py` again. |
+| `M40` | … refused to refresh the token (HTTP …) | Any other refusal. The provider's description is under `log_debug`. |
+| `M41` | … answered without an access token | |
+
 ## S — TLS towards the browser
 
 Written when `connect_mitm` answers a browser's handshake and the handshake
