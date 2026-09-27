@@ -204,6 +204,9 @@ static void start_file_log(void)
 {
     const char *want = GWConfig_Str("log_file", "0");
 
+    /* The engineer's lines, behind gw_logd(); see gw_log.h. */
+    gw_log_set_debug(GWConfig_Num("log_debug", 0) != 0);
+
     if (want == NULL || want[0] == '\0' ||
         gw_stricmp(want, "0") == 0 || gw_stricmp(want, "no") == 0 ||
         gw_stricmp(want, "off") == 0 || gw_stricmp(want, "false") == 0)

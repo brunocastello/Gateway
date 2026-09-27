@@ -14,6 +14,7 @@
 #include "gw_chunked.h"
 #include "gw_fwd.h"
 #include "gw_http.h"
+#include "gw_log.h"
 #include "gw_mailcmd.h"
 #include "gw_oauth.h"
 #include "gw_pac.h"
@@ -1845,6 +1846,46 @@ static void test_whitelist_edit(void)
     check_str(value, "a;b", "normalization is idempotent");
 }
 
+static void test_log_codes(void)
+{
+    char longer[300];
+
+    printf("log codes\n");
+    gw_log_reset();
+    gw_log_set_debug(0);
+
+    gw_logc("H12", "#%d the browser gave up", 2);
+    check(strcmp(gw_log_line(gw_log_count() - 1),
+                 "#2 the browser gave up (H12)") == 0,
+          "a coded line ends with its code");
+
+    memset(longer, 'x', sizeof(longer) - 1);
+    longer[sizeof(longer) - 1] = '\0';
+    gw_logc("M03", "%s", longer);
+    {
+        const char *l = gw_log_line(gw_log_count() - 1);
+        size_t n = strlen(l);
+
+        check(n == GW_LOG_WIDTH - 1, "an overlong coded line fills the width");
+        check(n >= 6 && strcmp(l + n - 6, " (M03)") == 0,
+              "the code survives when the sentence is cut");
+    }
+
+    {
+        int before = gw_log_count();
+
+        gw_logd("rx %d", 54);
+        check(gw_log_count() == before, "debug lines are silent by default");
+        gw_log_set_debug(1);
+        gw_logd("rx %d", 54);
+        check(gw_log_count() == before + 1 &&
+              strcmp(gw_log_line(gw_log_count() - 1), "  rx 54") == 0,
+              "log_debug shows the detail, indented");
+        gw_log_set_debug(0);
+    }
+    gw_log_reset();
+}
+
 static void test_fwd(void)
 {
     char req[512];
@@ -1975,6 +2016,7 @@ int main(void)
     test_wayback_api();
     test_pac();
     test_fwd();
+    test_log_codes();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;

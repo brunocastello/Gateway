@@ -23,6 +23,7 @@ static long sGeneration;
  * like the preferences are. The platform supplies the sink; see gw_core.c.
  */
 static GWLogSink sSink;
+static int       sDebug;      /* the log_debug preference */
 
 void gw_log_reset(void)
 {
@@ -31,14 +32,14 @@ void gw_log_reset(void)
     sGeneration++;
 }
 
-void gw_log(const char *fmt, ...)
+/* The slot about to be written, and committing it once it holds a line. */
+static char *next_slot(void)
 {
-    va_list ap;
-    char *slot = sLines[sHead];
+    return sLines[sHead];
+}
 
-    va_start(ap, fmt);
-    vsnprintf(slot, GW_LOG_WIDTH, fmt, ap);
-    va_end(ap);
+static void commit_slot(char *slot)
+{
     slot[GW_LOG_WIDTH - 1] = '\0';
 
     sHead = (sHead + 1) % GW_LOG_LINES;
@@ -46,6 +47,69 @@ void gw_log(const char *fmt, ...)
     sGeneration++;
 
     if (sSink != NULL) sSink(slot);
+}
+
+void gw_log(const char *fmt, ...)
+{
+    va_list ap;
+    char *slot = next_slot();
+
+    va_start(ap, fmt);
+    vsnprintf(slot, GW_LOG_WIDTH, fmt, ap);
+    va_end(ap);
+    commit_slot(slot);
+}
+
+void gw_logc(const char *code, const char *fmt, ...)
+{
+    va_list ap;
+    char   *slot = next_slot();
+    size_t  tail, room, len;
+
+    if (code == NULL) code = "";
+    /*
+     * " (" + code + ")" is reserved first, so that however long the
+     * sentence, the code survives: it is the part a screenshot needs.
+     */
+    tail = strlen(code) + 3;
+    if (tail >= GW_LOG_WIDTH) tail = 0;         /* absurd code: drop it */
+    room = GW_LOG_WIDTH - tail;
+
+    va_start(ap, fmt);
+    vsnprintf(slot, room, fmt, ap);
+    va_end(ap);
+
+    if (tail > 0) {
+        len = strlen(slot);
+        snprintf(slot + len, GW_LOG_WIDTH - len, " (%s)", code);
+    }
+    commit_slot(slot);
+}
+
+void gw_logd(const char *fmt, ...)
+{
+    va_list ap;
+    char   *slot;
+
+    if (!sDebug) return;
+
+    slot = next_slot();
+    slot[0] = ' ';
+    slot[1] = ' ';
+    va_start(ap, fmt);
+    vsnprintf(slot + 2, GW_LOG_WIDTH - 2, fmt, ap);
+    va_end(ap);
+    commit_slot(slot);
+}
+
+void gw_log_set_debug(int on)
+{
+    sDebug = on != 0;
+}
+
+int gw_log_debug(void)
+{
+    return sDebug;
 }
 
 void gw_log_set_sink(GWLogSink sink)

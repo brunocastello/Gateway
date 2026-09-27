@@ -138,6 +138,9 @@ const Field kFields[] = {
     { 9, Check, "log_file", "Also write the log to a file", "0",
       "The window keeps the last 200 lines.\n"
       "The log file keeps everything." },
+    { 9, Check, "log_debug", "Show engineering detail in the log", "0",
+      "Byte counts, hello bytes and library error numbers,\n"
+      "under each line. For reporting a problem." },
 };
 const int kFieldCount = sizeof(kFields) / sizeof(kFields[0]);
 const char *const kRedirects[] = { "auto", "always", "never" };
