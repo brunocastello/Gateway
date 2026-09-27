@@ -10,6 +10,26 @@ and is not worth trying again.
 
 ---
 
+## 0.3.7 — six fixes ported from roytam1's fork
+
+Independent of the readable-log work in item 4 below: six bug fixes from
+roytam1's `gw034` fork, re-applied by hand against current code rather than
+cherry-picked (the fork branched at fa64f91, long before this file existed).
+An idle-but-open session no longer holds its slot forever — a backpressured
+client now gets a bounded grace period rather than an unconditional clock
+refresh. A partial flush of a CONNECT's `200 Connection Established` can no
+longer queue a second copy behind the first. A 1xx interim response is now
+swallowed rather than treated as the final answer: RFC 9110 §15.2 says a
+proxy must not forward one to an HTTP/1.0 client, which the client hop
+always is here. On the Certainly side, the TLS 1.2 fallback no longer tries
+to redial an adopted STARTTLS connection on port 0 (PATCHES.md §29); its
+ClientHello record now goes out as `03 01` rather than `03 03` (§30); and a
+peer that hangs up mid-handshake or mid-transfer is now caught on both
+transports' close conventions — OT's and Win32's disagree — instead of
+riding out a 30-second timeout (§31).
+
+---
+
 ## 1. TLS session resumption
 
 **The evidence.** IE 5.1.7 for Mac OS 9 loading howsmyssl.com with
