@@ -1186,6 +1186,13 @@ static void step_recv_head(GWHttpSession *s)
         gw_log("#%ld <- %d %s (interim, not forwarded to an HTTP/1.0 client)",
                s->id, res.status, s->req.url.host);
         s->lastActivity = GWNet_Ticks();
+        /*
+         * An interim response proves the origin has the request, and the
+         * client's body may already be spent on it. A pooled connection
+         * dropped after this point must fail, not be retried on a fresh one
+         * with the head alone.
+         */
+        s->upPooled = 0;
         s->uheadLen -= res.head_len;
         if (s->uheadLen > 0)
             memmove(s->uhead, s->uhead + res.head_len, s->uheadLen);
@@ -1931,7 +1938,8 @@ static void session_step(GWHttpSession *s)
          *
          * It cannot hang. A browser that stops reading leaves bytes pending,
          * which counts as waiting on the client in the idle check above, and
-         * that ends the session on the ordinary timeout.
+         * that ends the session once GW_IDLE_GRACE runs out on top of the
+         * ordinary timeout.
          */
         if (r < 0) {
             s->state = kHPDone;
