@@ -531,6 +531,120 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
     return out;
 }
 
+/*
+ * A certificate BearSSL refused, in words. The numbers are the same ones
+ * gw_tls_error_text() names for the debug line; here each gets a sentence of
+ * its own and a code, because which one it was is the remedy.
+ */
+static const char *explain_certificate(int err, const char *host,
+                                       char *out, size_t cap)
+{
+    switch (err) {
+    case 62:
+        snprintf(out, cap, "the certificate for %s is not from an authority "
+                 "Gateway trusts", host);
+        return "T10";
+    case 54:
+        snprintf(out, cap, "the certificate for %s has expired", host);
+        return "T11";
+    case 56:
+        snprintf(out, cap, "the certificate %s sent is for another name", host);
+        return "T12";
+    case 55:
+        snprintf(out, cap, "%s sent its certificate chain out of order", host);
+        return "T13";
+    case 51:
+        snprintf(out, cap, "the certificate for %s has a bad signature", host);
+        return "T14";
+    case 34:
+        snprintf(out, cap, "%s sent no certificate", host);
+        return "T15";
+    case 52:
+        snprintf(out, cap, "Gateway could not check the dates on the "
+                 "certificate for %s: is the clock set?", host);
+        return "T16";
+    case 57:
+        snprintf(out, cap, "the certificate chain for %s has an intermediate "
+                 "that is not an authority", host);
+        return "T17";
+    case 59:
+        snprintf(out, cap, "the certificate for %s has a key too weak to "
+                 "trust", host);
+        return "T18";
+    default:
+        return NULL;
+    }
+}
+
+const char *GWStream_Explain(const GWStream *s, const char *host,
+                             char *out, size_t cap)
+{
+    const char *code;
+
+    if (out == NULL || cap == 0) return NULL;
+    out[0] = '\0';
+    if (s == NULL) return NULL;
+    if (host == NULL || host[0] == '\0') host = "the far end";
+
+    if (s->tls && s->sec != NULL) {
+        int err = MacTLS_GetBearSSLError(s->sec);
+
+        switch (MacTLS_GetError(s->sec)) {
+        case kMacTLS_ErrMemory:
+            snprintf(out, cap, "Gateway ran out of memory connecting to %s",
+                     host);
+            return "T01";
+        case kMacTLS_ErrDNS:
+            snprintf(out, cap, "the name %s could not be looked up", host);
+            return "T02";
+        case kMacTLS_ErrConnect:
+            snprintf(out, cap, "%s did not accept a connection", host);
+            return "T03";
+        case kMacTLS_ErrHandshake:
+        case kMacTLS_ErrCertificate:
+            code = explain_certificate(err, host, out, cap);
+            if (code != NULL)
+                return code;
+            /* PATCHES.md §29: an adopted socket has no route to redial. */
+            if (MacTLS_FallbackNoRoute(s->sec)) {
+                snprintf(out, cap, "%s speaks only TLS 1.2, which this "
+                         "connection cannot fall back to", host);
+                return "T20";
+            }
+            if (MacTLS_GetAlert(s->sec) != 0) {
+                snprintf(out, cap, "%s refused the secure connection", host);
+                return "T21";
+            }
+            snprintf(out, cap, "the secure connection to %s failed", host);
+            return "T22";
+        case kMacTLS_ErrRead:
+            snprintf(out, cap, "the secure connection to %s broke while "
+                     "reading", host);
+            return "T23";
+        case kMacTLS_ErrWrite:
+            snprintf(out, cap, "the secure connection to %s broke while "
+                     "sending", host);
+            return "T24";
+        case kMacTLS_ErrOT:
+            snprintf(out, cap, "the network failed while talking to %s", host);
+            return "T04";
+        default:                /* OK, or the far end closed: the caller's */
+            return NULL;
+        }
+    }
+
+    if (s->plain != NULL && GWConn_LastError(s->plain) != 0) {
+        /* The address is filled in once DNS has answered, on both stacks. */
+        if (GWConn_PeerIPv4(s->plain) == 0) {
+            snprintf(out, cap, "the name %s could not be looked up", host);
+            return "T02";
+        }
+        snprintf(out, cap, "%s did not accept a connection", host);
+        return "T03";
+    }
+    return NULL;
+}
+
 int GWStream_SendPending(const GWStream *s)
 {
     if (s == NULL || !s->tls) return 0;

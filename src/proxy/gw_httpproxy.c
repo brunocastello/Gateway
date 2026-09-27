@@ -16,6 +16,7 @@
 
 #include "gw_httpproxy.h"
 
+#include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -377,9 +378,12 @@ static void session_reset(GWHttpSession *s)
     s->state = kHPFree;
 }
 
-/* Queue a NUL-terminated status line for the client and stop talking upstream. */
+/*
+ * Queue a NUL-terminated status line for the client and stop talking upstream.
+ * The reason is a plain sentence with its code (docs/log-codes.md).
+ */
 static void session_fail(GWHttpSession *s, const char *statusLine,
-                         const char *reason)
+                         const char *code, const char *fmt, ...)
 {
     /*
      * Spliced into every error Gateway generates itself.
@@ -403,7 +407,15 @@ static void session_fail(GWHttpSession *s, const char *statusLine,
     const char  *rest;
     size_t       head, tail;
 
-    gw_log("#%ld %s", s->id, reason);
+    {
+        char    reason[GW_LOG_WIDTH];
+        va_list ap;
+
+        va_start(ap, fmt);
+        vsnprintf(reason, sizeof reason, fmt, ap);
+        va_end(ap);
+        gw_logc(code, "#%ld %s", s->id, reason);
+    }
 
     rest = strstr(statusLine, "\r\n");
     head = (rest != NULL) ? (size_t)(rest - statusLine) + 2 : 0;
@@ -529,7 +541,7 @@ static int wayback_settings(GWHttpSession *s)
         if (gw_wayback_apply_query(query, strlen(query), set,
                                    target, sizeof(target))) {
             GW_WaybackSave();
-            gw_log("#%ld wayback: %s, going to %.40s",
+            gw_log("#%ld the Wayback date is now %s; back to %.40s",
                    s->id, set->date, target);
             session_redirect(s, target);
             return 1;
@@ -541,7 +553,8 @@ static int wayback_settings(GWHttpSession *s)
     if (n == 0) {
         session_fail(s, "HTTP/1.0 500 Internal Server Error\r\n"
                         "Connection: close\r\n\r\n",
-                     "settings page would not fit");
+                     "W01", "the Wayback settings page did not fit its "
+                     "buffer");
         return 1;
     }
     session_serve(s, "text/html", page, n);
@@ -602,7 +615,8 @@ static void session_serve_pac(GWHttpSession *s)
     if (n == 0) {
         session_fail(s, "HTTP/1.0 500 Internal Server Error\r\n"
                         "Connection: close\r\n\r\n",
-                     "auto-configuration script would not fit");
+                     "H01", "the auto-configuration script did not fit its "
+                     "buffer");
         return;
     }
     gw_log("#%ld proxy.pac for %s: %s", s->id, s->req.url.host,
@@ -633,7 +647,8 @@ static void session_serve_ca(GWHttpSession *s)
     if (!GWCa_Init() || (ca = GWCa_Cert(&caLen)) == NULL || caLen == 0) {
         session_fail(s, "HTTP/1.0 503 Service Unavailable\r\n"
                         "Connection: close\r\n\r\n",
-                     "no certificate authority to serve");
+                     "G01", "Gateway has no certificate authority to hand "
+                     "out");
         return;
     }
     gw_log("#%ld serving the authority certificate, %lu bytes",
@@ -698,7 +713,8 @@ static int wayback_prepare(GWHttpSession *s)
         return wayback_settings(s);
 
     if (GW_WaybackHostIsLive(s->req.url.host)) {
-        gw_log("#%ld live: %s", s->id, s->req.url.host);
+        gw_logc("W04", "#%ld %s is on wayback_live, so it comes from the "
+                "live web", s->id, s->req.url.host);
         return 0;
     }
 
@@ -712,7 +728,8 @@ static int wayback_prepare(GWHttpSession *s)
      * the shipped prefs list both for every host. Naming the host that missed
      * puts the answer next to the question.
      */
-    gw_log("#%ld archive: %s is not on wayback_live", s->id, s->req.url.host);
+    gw_logc("W05", "#%ld %s is not on wayback_live, so it comes from the "
+            "archive", s->id, s->req.url.host);
 
     /* GeoCities is not in the archive so much as at its successor. */
     if (set->geocities &&
@@ -721,7 +738,8 @@ static int wayback_prepare(GWHttpSession *s)
         s->req.url.tls = 1;
         s->req.url.port = 443;
         s->target = s->req.url;
-        gw_log("#%ld geocities -> %s", s->id, host);
+        gw_logc("W06", "#%ld GeoCities is served by its successor, %s",
+                s->id, host);
         return 0;
     }
 
@@ -729,7 +747,7 @@ static int wayback_prepare(GWHttpSession *s)
     if (gw_wayback_path(set->date, &s->waybackOrigin, path, sizeof(path)) == 0) {
         session_fail(s, "HTTP/1.0 414 URI Too Long\r\n"
                         "Connection: close\r\n\r\n",
-                     "archived URL would not fit");
+                     "W02", "the archived address for this page is too long");
         return 1;
     }
 
@@ -757,14 +775,26 @@ static int wayback_prepare(GWHttpSession *s)
  * ok" as a failure reason says nothing at all. The observation and the error
  * are different facts and the line now carries both.
  */
-static const char *upstream_why(GWHttpSession *s, const char *what,
-                                char *out, size_t cap)
+/*
+ * A failure talking to the far end. When the stream holds an error, the
+ * sentence and code are the stream's own (the T table), which name the
+ * actual fault -- a certificate, a name that did not resolve. Otherwise it
+ * closed on us, and the caller's sentence and code say when. The stream's
+ * bracketed detail goes under log_debug either way.
+ */
+static void session_fail_upstream(GWHttpSession *s, const char *statusLine,
+                                  const char *host, const char *code,
+                                  const char *fallback)
 {
-    char desc[192];
+    char        why[GW_LOG_WIDTH];
+    char        desc[192];
+    const char *tcode = GWStream_Explain(&s->up, host, why, sizeof why);
 
-    snprintf(out, cap, "%s %s: %s", s->upHost[0] ? s->upHost : "upstream",
-             what, GWStream_Describe(&s->up, desc, sizeof(desc)));
-    return out;
+    if (tcode != NULL)
+        session_fail(s, statusLine, tcode, "%s", why);
+    else
+        session_fail(s, statusLine, code, fallback, host);
+    gw_logd("%s", GWStream_Describe(&s->up, desc, sizeof desc));
 }
 
 static void session_start_upstream(GWHttpSession *s)
@@ -776,7 +806,7 @@ static void session_start_upstream(GWHttpSession *s)
     if (s->ureqLen == 0) {
         session_fail(s, "HTTP/1.0 502 Bad Gateway\r\nConnection: close\r\n\r\n"
                         "Gateway: request headers too large.\r\n",
-                     "request headers too large");
+                     "H02", "the request's headers are too large to forward");
         return;
     }
     s->ureqSent = 0;
@@ -820,7 +850,8 @@ static void session_start_upstream(GWHttpSession *s)
     if (!ok) {
         session_fail(s, "HTTP/1.0 502 Bad Gateway\r\nConnection: close\r\n\r\n"
                         "Gateway: could not start the upstream connection.\r\n",
-                     "upstream connect failed to start");
+                     "H03", "Gateway could not start a connection to %s",
+                     s->upHost);
         return;
     }
     s->state = kHPConnect;
@@ -835,7 +866,7 @@ static int session_retry_fresh(GWHttpSession *s)
 {
     if (!s->upPooled) return 0;
 
-    gw_log("#%ld pooled connection was stale, reconnecting", s->id);
+    gw_logd("#%ld pooled connection was stale, reconnecting", s->id);
     GWStream_Destroy(&s->up);
     s->upPooled = 0;
     s->ureqSent = 0;
@@ -879,7 +910,7 @@ static void step_recv_request(GWHttpSession *s)
     if (s->cheadLen >= (size_t)GW_HEAD_MAX) {
         session_fail(s, "HTTP/1.0 431 Request Header Fields Too Large\r\n"
                         "Connection: close\r\n\r\n",
-                     "client head exceeded 16K");
+                     "H04", "the browser's request is larger than 16 KB");
         return;
     }
 
@@ -900,7 +931,7 @@ static void step_recv_request(GWHttpSession *s)
     if (parsed < 0) {
         session_fail(s, "HTTP/1.0 400 Bad Request\r\nConnection: close\r\n\r\n"
                         "Gateway: could not parse that request.\r\n",
-                     "malformed request");
+                     "H05", "the browser's request could not be understood");
         return;
     }
 
@@ -967,7 +998,8 @@ static void step_recv_request(GWHttpSession *s)
         if (!GWStream_ConnectPlain(&s->up, s->req.url.host, s->req.url.port)) {
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
-                         "CONNECT upstream failed to start");
+                         "H06", "Gateway could not start a tunnel to %s",
+                         s->req.url.host);
             return;
         }
         /* Anything the client already sent past the request head is tunnel
@@ -989,9 +1021,11 @@ static void step_send_request(GWHttpSession *s)
                                 s->ureqLen - s->ureqSent);
         if (n < 0) {
             if (session_retry_fresh(s)) return;
-            session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                            "Connection: close\r\n\r\n",
-                         "upstream write failed");
+            session_fail_upstream(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                     "Connection: close\r\n\r\n",
+                                  s->upHost, "H07",
+                                  "%s closed the connection before taking "
+                                  "the request");
             return;
         }
         if (n == 0) return;
@@ -1008,9 +1042,11 @@ static void step_send_request(GWHttpSession *s)
             if ((long)take > s->reqBodyLeft) take = (size_t)s->reqBodyLeft;
             n = GWStream_Write(&s->up, s->chead + s->cheadSent, take);
             if (n < 0) {
-                session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                                "Connection: close\r\n\r\n",
-                             "upstream body write failed");
+                session_fail_upstream(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                         "Connection: close\r\n\r\n",
+                                      s->upHost, "H08",
+                                      "%s closed the connection during the "
+                                      "upload");
                 return;
             }
             if (n > 0) {
@@ -1029,9 +1065,11 @@ static void step_send_request(GWHttpSession *s)
             {
                 long w = GWStream_Write(&s->up, s->raw, (size_t)n);
                 if (w < 0) {
-                    session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                                    "Connection: close\r\n\r\n",
-                                 "upstream body write failed");
+                    session_fail_upstream(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                             "Connection: close\r\n\r\n",
+                                          s->upHost, "H08",
+                                          "%s closed the connection during "
+                                          "the upload");
                     return;
                 }
                 s->reqBodyLeft -= w;
@@ -1042,9 +1080,6 @@ static void step_send_request(GWHttpSession *s)
 
     s->state = kHPRecvHead;
 }
-
-static void session_fail(GWHttpSession *s, const char *statusLine,
-                         const char *reason);
 
 /*
  * Whether to chase this redirect ourselves.
@@ -1071,14 +1106,14 @@ static int redirect_should_follow(GWHttpSession *s, const GWResponse *res)
         int n;
 
         if (!gw_wayback_in_tolerance(set->date, stamp, set->tolerance)) {
-            gw_log("#%ld snapshot %.8s is outside +%ld days of %s",
-                   s->id, stamp, set->tolerance, set->date);
             session_fail(s, "HTTP/1.0 404 Not Found\r\n"
                             "Content-Type: text/html\r\n"
                             "Connection: close\r\n\r\n"
                             "<html><body><p>No snapshot of this page near the "
                             "date Gateway is set to.</p></body></html>\r\n",
-                         "snapshot outside the tolerance");
+                         "W03", "the archive has no snapshot within %ld days "
+                         "of %s; the nearest is %.8s",
+                         set->tolerance, set->date, stamp);
             return 0;
         }
 
@@ -1112,8 +1147,6 @@ static void step_recv_head(GWHttpSession *s)
             s->uheadLen += (size_t)n;
             s->lastActivity = GWNet_Ticks();
         } else if (n == -1) {
-            char why[320];
-
             if (s->uheadLen == 0 && session_retry_fresh(s)) return;
             /*
              * This path reported nothing but the fact of failure, which left
@@ -1121,9 +1154,9 @@ static void step_recv_head(GWHttpSession *s)
              * identical -- and they are set from the same place inside the TLS
              * library, so the distinction has to come from here.
              */
-            session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                            "Connection: close\r\n\r\n",
-                         upstream_why(s, "read failed", why, sizeof(why)));
+            session_fail_upstream(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                     "Connection: close\r\n\r\n",
+                                  s->upHost, "H09", "%s stopped answering");
             return;
         }
     }
@@ -1133,10 +1166,9 @@ static void step_recv_head(GWHttpSession *s)
         if (s->uheadLen >= (size_t)GW_HEAD_MAX)
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
-                         "response head exceeded 16K");
+                         "H10", "%s sent response headers larger than 16 KB",
+                         s->upHost);
         else if (s->up.eof) {
-            char why[320];
-
             if (s->uheadLen == 0 && session_retry_fresh(s)) return;
             /*
              * Describe rather than assert. "Closed before sending a response"
@@ -1144,17 +1176,19 @@ static void step_recv_head(GWHttpSession *s)
              * alert, a socket error and an orderly close all reach here
              * looking identical.
              */
-            session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                            "Connection: close\r\n\r\n",
-                         upstream_why(s, "closed before responding",
-                                      why, sizeof(why)));
+            session_fail_upstream(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                     "Connection: close\r\n\r\n",
+                                  s->upHost, "H11",
+                                  "%s closed the connection without "
+                                  "answering");
         }
         return;
     }
     if (parsed < 0) {
         session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                         "Connection: close\r\n\r\n",
-                     "unparsable response head");
+                     "H12", "%s sent a response Gateway could not "
+                     "understand", s->upHost);
         return;
     }
 
@@ -1183,7 +1217,7 @@ static void step_recv_head(GWHttpSession *s)
      * never leaves here).
      */
     if (res.status >= 100 && res.status < 200 && res.status != 101) {
-        gw_log("#%ld <- %d %s (interim, not forwarded to an HTTP/1.0 client)",
+        gw_logd("#%ld <- %d %s (interim, not forwarded to an HTTP/1.0 client)",
                s->id, res.status, s->req.url.host);
         s->lastActivity = GWNet_Ticks();
         /*
@@ -1222,8 +1256,8 @@ static void step_recv_head(GWHttpSession *s)
             gw_copy_n(range, sizeof(range), cr, crLen);
             gw_log("#%ld <- 206 %s %s", s->id, s->req.url.host, range);
         } else {
-            gw_log("#%ld <- 206 %s with no Content-Range, which is a fault",
-                   s->id, s->req.url.host);
+            gw_logc("H17", "#%ld %s sent part of a file without saying "
+                    "which part", s->id, s->req.url.host);
         }
     } else if (res.has_content_length)
         gw_log("#%ld <- %d %s %ld bytes", s->id, res.status,
@@ -1257,7 +1291,8 @@ static void step_recv_head(GWHttpSession *s)
             session_fail(s, "HTTP/1.0 508 Loop Detected\r\n"
                             "Connection: close\r\n\r\n"
                             "Gateway: too many redirects.\r\n",
-                         "redirect limit reached");
+                         "H13", "the page redirected %d times, so Gateway "
+                         "stopped following", s->redirects);
             return;
         }
         {
@@ -1360,7 +1395,8 @@ static void step_recv_head(GWHttpSession *s)
         if (filtered == 0) {
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
-                         "rewritten response head too large");
+                         "H14", "the response headers from %s are too large "
+                         "once rewritten", s->upHost);
             return;
         }
         s->outLen = filtered;
@@ -1466,8 +1502,8 @@ static void step_body(GWHttpSession *s)
     if (flushed == 0) return;                /* client is flow controlled */
 
     if (s->bodyCap > 0 && s->bodyBytes > s->bodyCap) {
-        gw_log("#%ld body hit the %ld MiB cap, truncating",
-               s->id, s->bodyCap / (1024L * 1024L));
+        gw_logc("H18", "#%ld the page is larger than max_body_mb (%ld MB), "
+                "so it was cut short", s->id, s->bodyCap / (1024L * 1024L));
         s->upReusable = 0;                   /* the rest is still on the wire */
         session_finish_body(s);
         return;
@@ -1477,8 +1513,8 @@ static void step_body(GWHttpSession *s)
     if (s->uheadLen > 0) {
         long used = body_emit(s, s->uhead, s->uheadLen);
         if (used < 0) {
-            gw_log("#%ld malformed chunked body after %ld bytes",
-                   s->id, s->bodyBytes);
+            gw_logc("H19", "#%ld %s sent a broken body; the page was cut "
+                    "short after %ld bytes", s->id, s->upHost, s->bodyBytes);
             s->upReusable = 0;
             session_finish_body(s);
             return;
@@ -1524,8 +1560,8 @@ static void step_body(GWHttpSession *s)
     {
         long used = body_emit(s, s->raw, (size_t)n);
         if (used < 0) {
-            gw_log("#%ld malformed chunked body after %ld bytes",
-                   s->id, s->bodyBytes);
+            gw_logc("H19", "#%ld %s sent a broken body; the page was cut "
+                    "short after %ld bytes", s->id, s->upHost, s->bodyBytes);
             s->upReusable = 0;
             session_finish_body(s);
             return;
@@ -1555,7 +1591,8 @@ static void step_tunnel_connect(GWHttpSession *s)
      */
     if (s->outLen == 0 &&
         !session_queue(s, kEstablished, sizeof(kEstablished) - 1)) {
-        gw_log("#%ld dropping a CONNECT: its 200 would not fit", s->id);
+        gw_logc("H20", "#%ld a CONNECT was dropped: Gateway had no room to "
+                "answer it", s->id);
         s->state = kHPDone;
         return;
     }
@@ -1610,14 +1647,15 @@ static void step_tunnel_connect(GWHttpSession *s)
              * the request inside will say what to fetch, and it may not even
              * be this host once redirects are followed. */
             GWStream_Destroy(&s->up);
-            gw_log("#%ld terminating TLS for %s:%u", s->id, s->mitmHost,
-                   (unsigned)s->mitmPort);
+            gw_logc("H21", "#%ld Gateway answers the browser's secure "
+                    "connection to %s:%u itself", s->id, s->mitmHost,
+                    (unsigned)s->mitmPort);
             s->state = kHPMitmWait;
             return;
         }
 
-        gw_log("#%ld no certificate for %s -- tunnelling instead",
-               s->id, s->req.url.host);
+        gw_logc("H22", "#%ld no certificate could be made for %s, so the "
+                "tunnel stays encrypted", s->id, s->req.url.host);
     }
 
     gw_log("#%ld tunnel open to %s:%u", s->id, s->req.url.host,
@@ -1875,15 +1913,18 @@ static void session_step(GWHttpSession *s)
                                 !GWStream_PeerGone(&s->cli);
 
         if (!waiting_on_client) {
-            gw_log("#%ld idle timeout", s->id);
+            gw_logc("H23", "#%ld nothing moved for %d seconds, so the "
+                    "connection was closed", s->id, GW_IDLE_TIMEOUT / 60);
             s->state = kHPDone;
         } else {
             unsigned long now = GWNet_Ticks();
 
             if (s->exemptAt == 0) s->exemptAt = now;
             if (now - s->exemptAt > GW_IDLE_GRACE) {
-                gw_log("#%ld client stalled, dropping (%u bytes unsent)",
-                       s->id, (unsigned)(s->outLen - s->outSent));
+                gw_logc("H24", "#%ld the browser stopped reading, so the "
+                        "connection was dropped", s->id);
+                gw_logd("%u bytes unsent",
+                        (unsigned)(s->outLen - s->outSent));
                 s->state = kHPDone;
             }
         }
@@ -1935,14 +1976,11 @@ static void session_step(GWHttpSession *s)
                 s->state = kHPRetryWait;
                 break;
             }
-            {
-                char why[320];
-                session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                                "Connection: close\r\n\r\n"
-                                "Gateway: could not reach the origin server.\r\n",
-                             upstream_why(s, "could not be reached",
-                                          why, sizeof(why)));
-            }
+            session_fail_upstream(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                     "Connection: close\r\n\r\n"
+                                     "Gateway: could not reach the origin "
+                                     "server.\r\n",
+                                  s->upHost, "H15", "%s could not be reached");
         }
         break;
 
@@ -1955,8 +1993,9 @@ static void session_step(GWHttpSession *s)
 
     case kHPRetryWait:
         if (GWNet_Ticks() >= s->retryAt) {
-            gw_log("#%ld retrying (%d of %d)", s->id, s->retries,
-                   GW_WB_RETRIES);
+            gw_logc("W07", "#%ld %s refused the connection; trying again "
+                    "(%d of %d)", s->id, s->upHost, s->retries,
+                    GW_WB_RETRIES);
             s->lastActivity = GWNet_Ticks();
             session_start_upstream(s);
         }
@@ -1979,9 +2018,10 @@ static void session_step(GWHttpSession *s)
             step_tunnel_connect(s);
         } else if (s->up.state == kGWStreamError ||
                    s->up.state == kGWStreamClosed) {
-            session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                            "Connection: close\r\n\r\n",
-                         "CONNECT upstream unreachable");
+            session_fail_upstream(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                     "Connection: close\r\n\r\n",
+                                  s->req.url.host, "H16",
+                                  "%s closed the tunnel before it opened");
         }
         break;
 
@@ -2066,7 +2106,8 @@ int GWProxy_Accept(GWConn *c, int wayback)
 
         memset(s, 0, sizeof(*s));
         if (!session_alloc_buffers(s)) {
-            gw_log("out of memory accepting a connection");
+            gw_logc("H25", "out of memory: a browser's connection was "
+                    "refused");
             return 0;
         }
         GWStream_Adopt(&s->cli, c);

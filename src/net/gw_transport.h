@@ -274,4 +274,18 @@ void          GWStream_SetSNI(GWStream *s, const char *sni);
  */
 const char   *GWStream_Describe(const GWStream *s, char *out, size_t cap);
 
+/*
+ * The readable half of the same diagnosis: one plain sentence naming the far
+ * end ("the certificate for mail.example.com has expired") written into out,
+ * and its code (docs/log-codes.md, the T table) returned for gw_logc().
+ * GWStream_Describe() is then the log_debug line under it.
+ *
+ * NULL, with out empty, when the stream holds no error to explain -- a far end
+ * that simply closed, or one that never started -- so the caller says what
+ * happened in its own words and with its own code. host is the name to put in
+ * the sentence; NULL reads "the far end".
+ */
+const char   *GWStream_Explain(const GWStream *s, const char *host,
+                               char *out, size_t cap);
+
 #endif /* GW_TRANSPORT_H */
