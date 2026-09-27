@@ -23,6 +23,7 @@
 #include "gw_tunnel.h"
 
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 
 #include "../gw_config.h"
@@ -63,6 +64,7 @@ typedef struct {
     int           useTls;
     char          remoteHost[GW_NET_HOST_MAX];
     UInt16        remotePort;
+    char          dialHost[GW_NET_HOST_MAX];  /* the proxy, or remoteHost */
 
     char          tx[GW_TUNNEL_TX];     /* handshake bytes still to send */
     size_t        txLen, txSent;
@@ -184,9 +186,17 @@ static void session_reset(GWTunnelSession *s)
     s->state = kTNLFree;
 }
 
-static void tunnel_fail(GWTunnelSession *s, const char *reason)
+/* Log a plain sentence with its code (docs/log-codes.md) and give up. */
+static void tunnel_fail(GWTunnelSession *s, const char *code,
+                        const char *fmt, ...)
 {
-    gw_log("tunnel #%ld %s", s->id, reason);
+    char    reason[GW_LOG_WIDTH];
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(reason, sizeof reason, fmt, ap);
+    va_end(ap);
+    gw_logc(code, "tunnel #%ld %s", s->id, reason);
     if (s->conn != NULL) {
         GWConn_Destroy(s->conn);
         s->conn = NULL;
@@ -224,19 +234,22 @@ static int build_handshake(GWTunnelSession *s)
              * as a 407, which reads as a wrong password. */
             if (strlen(user) >= sizeof(userCopy) ||
                 strlen(pass) >= sizeof(passCopy)) {
-                gw_log("tunnel #%ld proxy user or password longer than %u",
-                       s->id, (unsigned)(sizeof(userCopy) - 1));
+                gw_logc("N01", "tunnel #%ld tunnel_proxy_user or "
+                        "tunnel_proxy_pass is longer than %u characters",
+                        s->id, (unsigned)(sizeof(userCopy) - 1));
                 return 0;
             }
             gw_copy_n(userCopy, sizeof(userCopy), user, strlen(user));
             gw_copy_n(passCopy, sizeof(passCopy), pass, strlen(pass));
             if (strlen(userCopy) + 1 + strlen(passCopy) >= sizeof(creds)) {
-                gw_log("tunnel #%ld proxy credentials too long", s->id);
+                gw_logc("N01", "tunnel #%ld tunnel_proxy_user and "
+                        "tunnel_proxy_pass are too long together", s->id);
                 return 0;
             }
             snprintf(creds, sizeof(creds), "%s:%s", userCopy, passCopy);
             if (gw_b64_encode(creds, strlen(creds), b64, sizeof(b64)) == 0) {
-                gw_log("tunnel #%ld cannot encode proxy credentials", s->id);
+                gw_logc("N02", "tunnel #%ld the proxy credentials could not "
+                        "be encoded", s->id);
                 return 0;
             }
             auth = b64;
@@ -258,7 +271,9 @@ static int build_handshake(GWTunnelSession *s)
             s->txLen = gw_fwd_connect_req_bare(s->remoteHost, s->remotePort,
                                                auth, s->tx, sizeof(s->tx));
         if (s->txLen == 0) {
-            gw_log("tunnel #%ld cannot shape CONNECT request", s->id);
+            gw_logc("N03", "tunnel #%ld the CONNECT request for the proxy "
+                    "could not be built: is tunnel_remote_host too long?",
+                    s->id);
             return 0;
         }
         /*
@@ -271,7 +286,7 @@ static int build_handshake(GWTunnelSession *s)
 
             while (eol < s->txLen && s->tx[eol] != '\r' && s->tx[eol] != '\n')
                 eol++;
-            gw_log("tunnel #%ld sending %.*s%s%s", s->id, (int)eol, s->tx,
+            gw_logd("tunnel #%ld sending %.*s%s%s", s->id, (int)eol, s->tx,
                    bare ? " (bare)" : "", auth ? " +auth" : "");
             /* Request line first, headers next pump (see conn_flush()). */
             if (eol + 2 < s->txLen) s->txSplit = eol + 2;
@@ -284,8 +299,8 @@ static int build_handshake(GWTunnelSession *s)
          * a proxy that simply does not ask.
          */
         if (GWConfig_Str("tunnel_proxy_user", "")[0] != '\0') {
-            gw_log("tunnel #%ld SOCKS5 username/password is not implemented",
-                   s->id);
+            gw_logc("N04", "tunnel #%ld a SOCKS5 login is not supported: "
+                    "clear tunnel_proxy_user, or use an HTTP proxy", s->id);
             return 0;
         }
         s->txLen = 0;
@@ -293,7 +308,8 @@ static int build_handshake(GWTunnelSession *s)
             unsigned char *tx = (unsigned char *)s->tx;
             size_t n = gw_fwd_socks_greet(tx, sizeof(s->tx));
             if (n == 0) {
-                gw_log("tunnel #%ld cannot shape SOCKS greeting", s->id);
+                gw_logc("N05", "tunnel #%ld the SOCKS5 request could not be "
+                        "built", s->id);
                 return 0;
             }
             s->txLen = n;
@@ -308,7 +324,7 @@ static void begin_far_leg(GWTunnelSession *s)
 {
     const char *host;
     long        port;
-    char        dialHost[GW_NET_HOST_MAX];
+    const char *dialHost;
 
     if (s->proxyKind == GW_FWD_NONE) {
         host = s->remoteHost;
@@ -318,12 +334,14 @@ static void begin_far_leg(GWTunnelSession *s)
         port = GWConfig_Num("tunnel_proxy_port",
                             s->proxyKind == GW_FWD_SOCKS5 ? 1080 : 8080);
         if (host[0] == '\0') {
-            gw_log("tunnel #%ld no tunnel_proxy_host in prefs", s->id);
+            gw_logc("N06", "tunnel #%ld tunnel_proxy is set but "
+                    "tunnel_proxy_host is empty", s->id);
             s->state = kTNLDone;
             return;
         }
         if (port <= 0 || port > 65535) {
-            gw_log("tunnel #%ld bad tunnel_proxy_port", s->id);
+            gw_logc("N07", "tunnel #%ld tunnel_proxy_port is not a port "
+                    "number", s->id);
             s->state = kTNLDone;
             return;
         }
@@ -331,12 +349,13 @@ static void begin_far_leg(GWTunnelSession *s)
 
     /* Copy before connecting: the resolver reads the name asynchronously
      * off the GWConn, and the config slot it came in may be reused. */
-    gw_copy_n(dialHost, sizeof(dialHost), host, strlen(host));
+    gw_copy_n(s->dialHost, sizeof(s->dialHost), host, strlen(host));
+    dialHost = s->dialHost;
 
     s->conn = GWConn_Connect(dialHost, (UInt16)port);
     if (s->conn == NULL) {
-        gw_log("tunnel #%ld cannot start connect to %s:%ld", s->id,
-               dialHost, port);
+        gw_logc("N08", "tunnel #%ld Gateway could not start a connection "
+                "to %s:%ld", s->id, dialHost, port);
         s->state = kTNLDone;
         return;
     }
@@ -354,11 +373,12 @@ static void begin_tls_or_splice(GWTunnelSession *s)
     GWStream_Adopt(&s->up, s->conn);
     s->conn = NULL;             /* Adopt owns it now, either way */
     if (s->up.state != kGWStreamReady) {
-        tunnel_fail(s, "far leg broke before the handoff");
+        tunnel_fail(s, "N11", "the connection to %s broke before TLS could "
+                    "start", s->dialHost);
         return;
     }
     if (!s->useTls) {
-        gw_log("tunnel #%ld plain relay to %s:%u", s->id,
+        gw_log("tunnel #%ld relaying to %s:%u without TLS", s->id,
                s->remoteHost, (unsigned)s->remotePort);
         s->state = kTNLSplice;
         return;
@@ -377,11 +397,13 @@ static void begin_tls_or_splice(GWTunnelSession *s)
      */
     if (GWConfig_Num("tunnel_tls12", 0) != 0) {
         if (!GWStream_UpgradeToTLS12(&s->up, s->remoteHost)) {
-            tunnel_fail(s, "cannot start TLS 1.2 on the far leg");
+            tunnel_fail(s, "N12", "Gateway could not start TLS 1.2 to %s",
+                        s->remoteHost);
             return;
         }
     } else if (!GWStream_UpgradeToTLS(&s->up, s->remoteHost)) {
-        tunnel_fail(s, "cannot start TLS on the far leg");
+        tunnel_fail(s, "N12", "Gateway could not start TLS to %s",
+                    s->remoteHost);
         return;
     }
     /*
@@ -392,8 +414,9 @@ static void begin_tls_or_splice(GWTunnelSession *s)
      */
     if (GWConfig_Num("tunnel_insecure", 0) != 0) {
         GWStream_SetInsecure(&s->up);
-        gw_log("tunnel #%ld WARNING: TLS certificate validation DISABLED "
-               "(tunnel_insecure)", s->id);
+        gw_logc("N09", "tunnel #%ld WARNING: the certificate is not being "
+                "checked (tunnel_insecure), so anyone on the path can read "
+                "this", s->id);
     }
     /*
      * Diagnosis for SNI-policing middleboxes: socat's handshake carries no
@@ -409,10 +432,12 @@ static void begin_tls_or_splice(GWTunnelSession *s)
             gw_copy_n(sni, sizeof(sni), want, strlen(want));
             if (gw_stricmp(sni, "none") == 0 || strcmp(sni, "-") == 0) {
                 GWStream_SetSNI(&s->up, NULL);
-                gw_log("tunnel #%ld SNI omitted (tunnel_sni)", s->id);
+                gw_log("tunnel #%ld sending no server name (tunnel_sni)",
+                       s->id);
             } else {
                 GWStream_SetSNI(&s->up, sni);
-                gw_log("tunnel #%ld SNI %s (tunnel_sni)", s->id, sni);
+                gw_log("tunnel #%ld sending the server name %s (tunnel_sni)",
+                       s->id, sni);
             }
         }
     }
@@ -443,11 +468,9 @@ static int keep_leftover(GWTunnelSession *s, size_t used, const char *what)
     if (s->rxLen <= used) return 1;
     extra = s->rxLen - used;
     if (s->useTls) {
-        char why[64];
-
-        snprintf(why, sizeof(why), "proxy sent %u bytes past its %s reply",
-                 (unsigned)extra, what);
-        tunnel_fail(s, why);
+        tunnel_fail(s, "N13", "the proxy sent data after its %s reply, "
+                    "before TLS began, so the tunnel was refused", what);
+        gw_logd("%u bytes past the reply", (unsigned)extra);
         return 0;
     }
     memcpy(s->ubuf, s->rx + used, extra);   /* rx is far smaller than ubuf */
@@ -469,9 +492,19 @@ static void step_proxy_connect(GWTunnelSession *s)
     case kGWConnError:
     case kGWConnClosed: {
         char peer[64];
+
+        /*
+         * The same distinction GWStream_Explain() draws, and the same T
+         * codes: the address is filled in only once DNS has answered.
+         */
+        if (GWConn_PeerIPv4(s->conn) == 0)
+            gw_logc("T02", "tunnel #%ld the name %s could not be looked up",
+                    s->id, s->dialHost);
+        else
+            gw_logc("T03", "tunnel #%ld %s did not accept a connection",
+                    s->id, s->dialHost);
         GWConn_PeerText(s->conn, peer, sizeof(peer));
-        gw_log("tunnel #%ld connect failed to %s (OT %ld)", s->id, peer,
-               GWConn_LastError(s->conn));
+        gw_logd("%s, error %ld", peer, GWConn_LastError(s->conn));
         GWConn_Destroy(s->conn);
         s->conn = NULL;
         s->state = kTNLDone;
@@ -489,18 +522,21 @@ static void step_http_hello(GWTunnelSession *s)
     int    r;
 
     if (conn_flush(s) < 0) {
-        tunnel_fail(s, "proxy broke while sending CONNECT");
+        tunnel_fail(s, "N14", "the proxy dropped the connection during "
+                    "CONNECT");
         return;
     }
     if (s->txSent < s->txLen) return;       /* flow controlled: next slice */
 
     r = (int)conn_fill(s);
     if (r == -1) {
-        tunnel_fail(s, "proxy broke during CONNECT reply");
+        tunnel_fail(s, "N14", "the proxy dropped the connection during "
+                    "CONNECT");
         return;
     }
     if (r == -2) {
-        tunnel_fail(s, "proxy closed the connection during CONNECT");
+        tunnel_fail(s, "N14", "the proxy closed the connection during "
+                    "CONNECT");
         return;
     }
 
@@ -508,22 +544,24 @@ static void step_http_hello(GWTunnelSession *s)
                                  &head_len, &code)) {
     case 0:
         if (s->rxLen >= sizeof(s->rx)) {
-            gw_log("tunnel #%ld proxy reply too long (%u bytes, no head)",
-                   s->id, (unsigned)s->rxLen);
-            tunnel_fail(s, "proxy reply overflowed the buffer");
+            tunnel_fail(s, "N15", "the proxy's reply to CONNECT is too "
+                        "long");
+            gw_logd("%u bytes and no end of head", (unsigned)s->rxLen);
         }
         return;
     case 1:
         break;
     default:
-        tunnel_fail(s, "proxy reply is not an HTTP status line");
+        tunnel_fail(s, "N16", "the proxy's reply to CONNECT is not HTTP");
         return;
     }
 
     if (code != 200) {
-        gw_log("tunnel #%ld proxy refused CONNECT (%ld)%s", s->id, code,
-               code == 407 ? ": proxy authentication required" : "");
-        tunnel_fail(s, "proxy refused the CONNECT request");
+        if (code == 407)
+            tunnel_fail(s, "N18", "the proxy wants a login: set "
+                        "tunnel_proxy_user and tunnel_proxy_pass");
+        else
+            tunnel_fail(s, "N17", "the proxy refused CONNECT with %ld", code);
         return;
     }
     if (!keep_leftover(s, head_len, "CONNECT"))
@@ -542,10 +580,10 @@ static void step_http_hello(GWTunnelSession *s)
         via = gw_header_find((const char *)s->rx, head_len, "Via", &viaLen);
         if (via != NULL && viaLen > 0) {
             gw_copy_n(node, sizeof(node), via, viaLen);
-            gw_log("tunnel #%ld proxy said: %s (Via: %s)", s->id, status,
-                   node);
+            gw_logd("tunnel #%ld proxy said: %s (Via: %s)", s->id, status,
+                    node);
         } else {
-            gw_log("tunnel #%ld proxy said: %s", s->id, status);
+            gw_logd("tunnel #%ld proxy said: %s", s->id, status);
         }
     }
     proxy_ready(s);
@@ -557,18 +595,18 @@ static void step_socks_hello(GWTunnelSession *s)
     size_t used = 0;
 
     if (conn_flush(s) < 0) {
-        tunnel_fail(s, "proxy broke while sending SOCKS request");
+        tunnel_fail(s, "N19", "the SOCKS5 proxy dropped the connection");
         return;
     }
     if (s->txSent < s->txLen) return;
 
     r = (int)conn_fill(s);
     if (r == -1) {
-        tunnel_fail(s, "proxy broke during SOCKS reply");
+        tunnel_fail(s, "N19", "the SOCKS5 proxy dropped the connection");
         return;
     }
     if (r == -2) {
-        tunnel_fail(s, "proxy closed the connection during SOCKS");
+        tunnel_fail(s, "N19", "the SOCKS5 proxy closed the connection");
         return;
     }
 
@@ -577,7 +615,8 @@ static void step_socks_hello(GWTunnelSession *s)
         case 0: return;         /* still arriving */
         case 1: break;
         default:
-            tunnel_fail(s, "SOCKS proxy refused no-auth (needs login?)");
+            tunnel_fail(s, "N20", "the SOCKS5 proxy requires a login, which "
+                        "Gateway does not support");
             return;
         }
         {
@@ -585,7 +624,8 @@ static void step_socks_hello(GWTunnelSession *s)
                                             (unsigned char *)s->tx,
                                             sizeof(s->tx));
             if (n == 0) {
-                tunnel_fail(s, "cannot shape SOCKS connect request");
+                tunnel_fail(s, "N05", "the SOCKS5 request could not be "
+                            "built");
                 return;
             }
             s->txLen = n;
@@ -601,15 +641,14 @@ static void step_socks_hello(GWTunnelSession *s)
     case 0: return;
     case 1: break;
     default:
-        gw_log("tunnel #%ld SOCKS proxy refused %s:%u (REP %u)", s->id,
-               s->remoteHost, (unsigned)s->remotePort,
-               s->rxLen >= 2 ? (unsigned)s->rx[1] : 99);
-        tunnel_fail(s, "SOCKS proxy refused the connection");
+        tunnel_fail(s, "N21", "the SOCKS5 proxy would not reach %s:%u",
+                    s->remoteHost, (unsigned)s->remotePort);
+        gw_logd("REP %u", s->rxLen >= 2 ? (unsigned)s->rx[1] : 99);
         return;
     }
     if (!keep_leftover(s, used, "SOCKS"))
         return;
-    gw_log("tunnel #%ld SOCKS proxy to %s:%u established", s->id,
+    gw_log("tunnel #%ld the SOCKS5 proxy reached %s:%u", s->id,
            s->remoteHost, (unsigned)s->remotePort);
     proxy_ready(s);
 }
@@ -631,7 +670,7 @@ static void proxy_ready(GWTunnelSession *s)
     if (s->proxyKind != GW_FWD_NONE && ms > 0) {
         s->settleUntil = GWNet_Ticks() + (unsigned long)(ms * 60 / 1000);
         s->lastActivity = GWNet_Ticks();
-        gw_log("tunnel #%ld letting the tunnel settle %ldms", s->id, ms);
+        gw_logd("tunnel #%ld letting the tunnel settle %ldms", s->id, ms);
         s->state = kTNLSettleWait;
         return;
     }
@@ -709,8 +748,12 @@ static void session_step(GWTunnelSession *s)
      * that stops reading cannot hold the slot. */
     if (s->state != kTNLSplice &&
         GWNet_Ticks() - s->lastActivity > GW_TUNNEL_HANDSHAKE) {
-        tunnel_fail(s, s->state == kTNLFlushClose ? "final flush timed out"
-                                                   : "handshake timed out");
+        if (s->state == kTNLFlushClose)
+            tunnel_fail(s, "N23", "the last data could not be delivered "
+                        "within %d seconds", GW_TUNNEL_HANDSHAKE / 60);
+        else
+            tunnel_fail(s, "N22", "setting up the tunnel stalled for %d "
+                        "seconds", GW_TUNNEL_HANDSHAKE / 60);
     }
 
     GWStream_Pump(&s->cli);
@@ -746,22 +789,29 @@ static void session_step(GWTunnelSession *s)
             s->state = kTNLSplice;
         } else if (s->up.state == kGWStreamError ||
                    s->up.state == kGWStreamClosed) {
-            char why[160];
-            gw_log("tunnel #%ld %s", s->id,
-                   GWStream_Describe(&s->up, why, sizeof(why)));
+            char        why[GW_LOG_WIDTH];
+            char        desc[192];
+            const char *tcode;
+
+            GWStream_Describe(&s->up, desc, sizeof desc);
             /*
              * The far end speaks only TLS 1.2, and falling back needs a
              * fresh connection the tunnel cannot re-open past the proxy
-             * (or would defeat the point of an adopted socket). Say so with
-             * the remedy: the diagnostics above carry no code, no address
-             * and no version, and "handshake failed" alone sends the
-             * reader to the proxy, which already did its part.
+             * (or would defeat the point of an adopted socket). The tunnel
+             * has a remedy of its own, tunnel_tls12, so it says so here
+             * rather than taking the explainer's generic T20.
              */
             if (GWStream_FallbackNoRoute(&s->up))
-                gw_log("tunnel #%ld %s:%u chose TLS 1.2 -- enable TLS 1.3 "
-                       "on the far end, or set tunnel_tls12 = 1", s->id,
-                       s->remoteHost, (unsigned)s->remotePort);
-            tunnel_fail(s, "TLS handshake with the far leg failed");
+                tunnel_fail(s, "N24", "%s speaks only TLS 1.2: set "
+                            "tunnel_tls12 1, or enable TLS 1.3 there",
+                            s->remoteHost);
+            else if ((tcode = GWStream_Explain(&s->up, s->remoteHost, why,
+                                               sizeof why)) != NULL)
+                tunnel_fail(s, tcode, "%s", why);
+            else
+                tunnel_fail(s, "N25", "%s closed the connection during the "
+                            "TLS handshake", s->remoteHost);
+            gw_logd("%s", desc);
         }
         break;
 
@@ -826,7 +876,8 @@ int GWTunnel_Accept(GWConn *c)
         if (s->cbuf == NULL || s->ubuf == NULL ||
             s->oq == NULL || s->pq == NULL) {
             session_reset(s);
-            gw_log("out of memory accepting a tunnel connection");
+            gw_logc("N26", "out of memory: a tunnel client's connection was "
+                    "refused");
             return 0;
         }
 
@@ -835,17 +886,20 @@ int GWTunnel_Accept(GWConn *c)
         kind = gw_fwd_kind(GWConfig_Str("tunnel_proxy", "none"));
         s->id = ++sNextId;
         if (remote[0] == '\0') {
-            gw_log("tunnel: no tunnel_remote_host in prefs; dropping a client");
+            gw_logc("N27", "tunnel: tunnel_remote_host is empty, so a "
+                    "client was turned away");
             session_reset(s);
             return 0;
         }
         if (remotePort <= 0 || remotePort > 65535) {
-            gw_log("tunnel: bad tunnel_remote_port; dropping a client");
+            gw_logc("N28", "tunnel: tunnel_remote_port is not a port "
+                    "number, so a client was turned away");
             session_reset(s);
             return 0;
         }
         if (kind < 0) {
-            gw_log("tunnel: unknown tunnel_proxy (want none, http or socks5)");
+            gw_logc("N29", "tunnel: tunnel_proxy must be none, http or "
+                    "socks5, so a client was turned away");
             session_reset(s);
             return 0;
         }

@@ -101,6 +101,42 @@ connection itself names the fault.
 | `M40` | … refused to refresh the token (HTTP …) | Any other refusal. The provider's description is under `log_debug`. |
 | `M41` | … answered without an access token | |
 
+## N — the tunnel
+
+Tunnel lines start `tunnel #N`. A failure to reach the far end or the proxy
+carries a `T` code when the connection itself names the fault.
+
+| Code | Sentence | What it means |
+|---|---|---|
+| `N01` | tunnel_proxy_user or tunnel_proxy_pass is too long | |
+| `N02` | the proxy credentials could not be encoded | Gateway's fault. Report it. |
+| `N03` | the CONNECT request for the proxy could not be built | Usually `tunnel_remote_host` is too long. |
+| `N04` | a SOCKS5 login is not supported | Gateway speaks SOCKS5 without authentication only. Clear `tunnel_proxy_user`, or use an HTTP proxy. |
+| `N05` | the SOCKS5 request could not be built | Usually `tunnel_remote_host` is too long. |
+| `N06` | tunnel_proxy is set but tunnel_proxy_host is empty | |
+| `N07` | tunnel_proxy_port is not a port number | |
+| `N08` | Gateway could not start a connection to … | Before the network was involved. Usually memory. |
+| `N09` | WARNING: the certificate is not being checked (tunnel_insecure) | Written for every connection while `tunnel_insecure` is 1. Testing only. |
+| `N11` | the connection to … broke before TLS could start | |
+| `N12` | Gateway could not start TLS to … | Usually memory. |
+| `N13` | the proxy sent data after its … reply, before TLS began | Bytes from the far end cannot arrive before Gateway's own ClientHello, so something on the path is speaking for it. Gateway refuses rather than trust them. |
+| `N14` | the proxy dropped the connection during CONNECT | |
+| `N15` | the proxy's reply to CONNECT is too long | |
+| `N16` | the proxy's reply to CONNECT is not HTTP | Check `tunnel_proxy`: the proxy may be SOCKS5. |
+| `N17` | the proxy refused CONNECT with … | The proxy's status line and `Via` are under `log_debug`. |
+| `N18` | the proxy wants a login | It answered 407. Set `tunnel_proxy_user` and `tunnel_proxy_pass`. |
+| `N19` | the SOCKS5 proxy dropped the connection | |
+| `N20` | the SOCKS5 proxy requires a login | |
+| `N21` | the SOCKS5 proxy would not reach … | The proxy's `REP` code is under `log_debug`. |
+| `N22` | setting up the tunnel stalled for … seconds | No progress from the proxy or the far end. |
+| `N23` | the last data could not be delivered within … seconds | The local application stopped reading after the far end closed. |
+| `N24` | … speaks only TLS 1.2 | The tunnel cannot redial for the fallback. Set `tunnel_tls12 1`, or enable TLS 1.3 on the far end. |
+| `N25` | … closed the connection during the TLS handshake | |
+| `N26` | out of memory: a tunnel client's connection was refused | Raise Gateway's partition in Get Info. |
+| `N27` | tunnel_remote_host is empty, so a client was turned away | |
+| `N28` | tunnel_remote_port is not a port number, so a client was turned away | |
+| `N29` | tunnel_proxy must be none, http or socks5, so a client was turned away | |
+
 ## S — TLS towards the browser
 
 Written when `connect_mitm` answers a browser's handshake and the handshake
@@ -154,7 +190,7 @@ error, TLS version and the address the name resolved to.
 | `T16` | Gateway could not check the dates on the certificate for … | The clock is unset. |
 | `T17` | the certificate chain for … has an intermediate that is not an authority | |
 | `T18` | the certificate for … has a key too weak to trust | |
-| `T20` | … speaks only TLS 1.2, which this connection cannot fall back to | A connection Gateway did not dial itself (STARTTLS, or the tunnel through a proxy) cannot be redialled for TLS 1.2. Enable TLS 1.3 on the far end. |
+| `T20` | … speaks only TLS 1.2, which this connection cannot fall back to | A STARTTLS connection cannot be redialled for TLS 1.2. Enable TLS 1.3 on the mail server. The tunnel has its own line for this, `N24`. |
 | `T21` | … refused the secure connection | The far end sent a fatal alert. The alert is under `log_debug`. |
 | `T22` | the secure connection to … failed | Any other handshake failure. The number is under `log_debug`. |
 | `T23` | the secure connection to … broke while reading | |
