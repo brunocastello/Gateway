@@ -12,6 +12,7 @@
 
 #include "gw_b64.h"
 #include "gw_chunked.h"
+#include "gw_fwd.h"
 #include "gw_http.h"
 #include "gw_mailcmd.h"
 #include "gw_oauth.h"
@@ -1844,6 +1845,100 @@ static void test_whitelist_edit(void)
     check_str(value, "a;b", "normalization is idempotent");
 }
 
+static void test_fwd(void)
+{
+    char req[512];
+    size_t n, hlen = 0;
+    long code = 0;
+    unsigned char bin[300];
+    static const char reply200[] =
+        "HTTP/1.0 200 Connection established\r\n"
+        "Proxy-Agent: test\r\n"
+        "\r\n";
+    static const char reply407[] =
+        "HTTP/1.1 407 Proxy Authentication Required\r\n"
+        "Content-Length: 0\r\n"
+        "\r\n";
+
+    puts("gw_fwd");
+
+    check(gw_fwd_kind("none") == GW_FWD_NONE, "none");
+    check(gw_fwd_kind("HTTP") == GW_FWD_HTTP, "http is case-insensitive");
+    check(gw_fwd_kind("socks5") == GW_FWD_SOCKS5, "socks5");
+    check(gw_fwd_kind("socks") == GW_FWD_SOCKS5, "socks aliases socks5");
+    check(gw_fwd_kind("socks4") < 0, "socks4 is rejected, not misread");
+
+    n = gw_fwd_connect_req("ssh.example.com", 22, NULL, req, sizeof(req));
+    check(n > 0, "CONNECT request shapes");
+    check_str(req, "CONNECT ssh.example.com:22 HTTP/1.0\r\n"
+                   "Host: ssh.example.com:22\r\n"
+                   "\r\n", "CONNECT request bytes");
+    n = gw_fwd_connect_req_bare("ssh.example.com", 22, NULL,
+                                req, sizeof(req));
+    check(n > 0, "bare CONNECT request shapes");
+    check_str(req, "CONNECT ssh.example.com:22 HTTP/1.0\r\n"
+                   "\r\n", "bare CONNECT omits Host, like socat");
+    n = gw_fwd_connect_req_bare("ssh.example.com", 22, "dXNlcjpwYXNz",
+                                req, sizeof(req));
+    check(n > 0 && strstr(req, "Proxy-Authorization: Basic dXNlcjpwYXNz\r\n")
+          != NULL && strstr(req, "Host:") == NULL,
+          "bare CONNECT keeps auth but never a Host line");
+    n = gw_fwd_connect_req("ssh.example.com", 22, "dXNlcjpwYXNz",
+                           req, sizeof(req));
+    check(n > 0 && strstr(req, "Proxy-Authorization: Basic dXNlcjpwYXNz\r\n")
+          != NULL, "CONNECT carries Basic credentials");
+    check(gw_fwd_connect_req("ssh.example.com", 22, NULL, req, 10) == 0,
+          "a truncated CONNECT is reported, not sent");
+    check(gw_fwd_connect_req("", 22, NULL, req, sizeof(req)) == 0,
+          "an empty host is refused");
+
+    check(gw_fwd_connect_reply(reply200, sizeof(reply200) - 1, &hlen, &code)
+          == 1, "a 200 reply parses");
+    check(code == 200 && hlen == sizeof(reply200) - 1, "code and head length");
+    check(gw_fwd_connect_reply(reply407, sizeof(reply407) - 1, &hlen, &code)
+          == 1 && code == 407, "a 407 parses as a refusal, not garbage");
+    check(gw_fwd_connect_reply("HTTP/1.0 200", 12, &hlen, &code) == 0,
+          "a short reply waits for more");
+    check(gw_fwd_connect_reply("\x05\x01\x00\r\n\r\n", 7, &hlen, &code) < 0,
+          "a SOCKS reply to an HTTP greeting is rejected");
+
+    n = gw_fwd_socks_greet(bin, sizeof(bin));
+    check(n == 3 && bin[0] == 0x05 && bin[1] == 0x01 && bin[2] == 0x00,
+          "SOCKS greeting bytes");
+
+    n = gw_fwd_socks_connect("ssh.example.com", 22, bin, sizeof(bin));
+    check(n == 7 + strlen("ssh.example.com"), "SOCKS connect length");
+    check(bin[0] == 0x05 && bin[1] == 0x01 && bin[3] == 0x03 &&
+          bin[4] == (unsigned char)strlen("ssh.example.com") &&
+          bin[n - 2] == 0x00 && bin[n - 1] == 0x16,
+          "SOCKS connect bytes (domain + port 22)");
+    check(gw_fwd_socks_connect("", 22, bin, sizeof(bin)) == 0,
+          "SOCKS refuses an empty host");
+
+    {
+        static const unsigned char ok[] = { 0x05, 0x00 };
+        static const unsigned char noauth[] = { 0x05, 0xFF };
+        check(gw_fwd_socks_greet_reply(ok, sizeof(ok)) == 1,
+              "SOCKS greeting accepted");
+        check(gw_fwd_socks_greet_reply(ok, 1) == 0,
+              "a short greeting waits");
+        check(gw_fwd_socks_greet_reply(noauth, sizeof(noauth)) < 0,
+              "0xFF (no acceptable methods) fails");
+    }
+    {
+        static const unsigned char granted[] =
+            { 0x05, 0x00, 0x00, 0x01, 1, 2, 3, 4, 0x04, 0x43 };
+        static const unsigned char refused[] =
+            { 0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0 };
+        check(gw_fwd_socks_conn_reply(granted, sizeof(granted)) == 1,
+              "SOCKS grant parses");
+        check(gw_fwd_socks_conn_reply(granted, 4) == 0,
+              "a short grant waits");
+        check(gw_fwd_socks_conn_reply(refused, sizeof(refused)) < 0,
+              "a SOCKS refusal fails with its REP intact");
+    }
+}
+
 int main(void)
 {
     test_util();
@@ -1868,6 +1963,7 @@ int main(void)
     test_pac_splitter_agree();
     test_wayback_api();
     test_pac();
+    test_fwd();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;

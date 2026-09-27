@@ -14,6 +14,7 @@ SOURCES = \
 	$(PORTABLE)/gw_http.c \
 	$(PORTABLE)/gw_chunked.c \
 	$(PORTABLE)/gw_b64.c \
+	$(PORTABLE)/gw_fwd.c \
 	$(PORTABLE)/gw_mailcmd.c \
 	$(PORTABLE)/gw_oauth.c \
 	$(PORTABLE)/gw_prefs.c \
