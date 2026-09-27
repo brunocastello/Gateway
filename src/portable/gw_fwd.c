@@ -153,7 +153,8 @@ int gw_fwd_socks_greet_reply(const unsigned char *buf, size_t len)
     return -1;              /* 0xFF: no acceptable methods, or anything else */
 }
 
-int gw_fwd_socks_conn_reply(const unsigned char *buf, size_t len)
+int gw_fwd_socks_conn_reply(const unsigned char *buf, size_t len,
+                            size_t *used)
 {
     size_t need;
 
@@ -175,5 +176,7 @@ int gw_fwd_socks_conn_reply(const unsigned char *buf, size_t len)
     default:   return -1;
     }
     if (len < need) return 0;
-    return buf[1] == 0x00 ? 1 : -1;
+    if (buf[1] != 0x00) return -1;
+    if (used != NULL) *used = need;
+    return 1;
 }

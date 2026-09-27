@@ -495,9 +495,11 @@ MacTLS_Context *MacTLS_CreateOnEndpointTLS12(const char *host, CTSocket sock)
     /*
      * Nothing to re-arm: the engine has never run, so set_buffer() in
      * setup_bearssl() is its first arming. The reset only fails on a name
-     * too long for the engine or an RNG that will not seed.
+     * too long for the engine or an RNG that will not seed. It goes through
+     * client_first_record_compat() like the fallback path, so the hello's
+     * record header is 03 01 here too (PATCHES.md §30).
      */
-    if (!br_ssl_client_reset(&ctx->sc, eff_sni(ctx), 0)) {
+    if (!client_first_record_compat(ctx, eff_sni(ctx))) {
         ctx->state = kMacTLS_Error;
         ctx->error = kMacTLS_ErrHandshake;
         return ctx;
@@ -1833,7 +1835,7 @@ void MacTLS_SetSNI(MacTLS_Context *ctx, const char *sni)
      */
     br_ssl_engine_set_buffer(&ctx->sc.eng, ctx->iobuf,
                              sizeof(ctx->iobuf), 0);
-    if (!br_ssl_client_reset(&ctx->sc, eff_sni(ctx), 0)) {
+    if (!client_first_record_compat(ctx, eff_sni(ctx))) {
         ctx->state = kMacTLS_Error;
         ctx->error = kMacTLS_ErrHandshake;
     }

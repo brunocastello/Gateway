@@ -1292,8 +1292,10 @@ prologue either — so the library now offers to skip it entirely.
 
 `MacTLS_CreateOnEndpointTLS12()` adopts the socket exactly like
 `MacTLS_CreateOnEndpoint()`, resets BearSSL's 1.2 engine onto it directly
-(hostname for SNI, as the fallback path does after re-arming it — see
-§34 for what "hostname" now means), and sets `force_tls12`, which keeps
+through `client_first_record_compat()`, as the fallback path does after
+re-arming it, so the first record goes out as `16 03 01` (§30) — a forced
+1.2 far end behind a 03-01-only middlebox is exactly the case §30 exists
+for (see §34 for what the hostname passed now means) — and sets `force_tls12`, which keeps
 both TLS 1.3 branches of `MacTLS_Pump()` from ever starting:
 
 ```c

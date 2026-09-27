@@ -8,9 +8,11 @@
  * The proxy handshake runs on the raw GWConn before Certainly ever sees the
  * socket: on success the connection is adopted into a GWStream and upgraded
  * with GWStream_UpgradeToTLS(), the same detach-and-hand-over the mail
- * module uses for STARTTLS. After the handoff leftover handshake bytes must
- * not exist, because Certainly reads from the socket, not from our buffers --
- * so a 200 with trailing bytes is a failure, not a head start.
+ * module uses for STARTTLS. Bytes that arrive behind the proxy's reply are
+ * the far end's: on a plain relay they are handed to the local application
+ * (an SSH banner can share the reply's segment), but under TLS they cannot
+ * be, because Certainly reads from the socket, not from our buffers -- so
+ * there they are a failure, not a head start. See keep_leftover().
  *
  * tunnel_sni changes only what the ClientHello's SNI extension carries; the
  * certificate is always checked against remoteHost (PATCHES.md §34), never
@@ -218,6 +220,14 @@ static int build_handshake(GWTunnelSession *s)
             char userCopy[GW_TUNNEL_USER], passCopy[GW_TUNNEL_USER];
             char creds[GW_TUNNEL_USER * 2 + 1];
 
+            /* Refuse rather than truncate: a cut password only surfaces
+             * as a 407, which reads as a wrong password. */
+            if (strlen(user) >= sizeof(userCopy) ||
+                strlen(pass) >= sizeof(passCopy)) {
+                gw_log("tunnel #%ld proxy user or password longer than %u",
+                       s->id, (unsigned)(sizeof(userCopy) - 1));
+                return 0;
+            }
             gw_copy_n(userCopy, sizeof(userCopy), user, strlen(user));
             gw_copy_n(passCopy, sizeof(passCopy), pass, strlen(pass));
             if (strlen(userCopy) + 1 + strlen(passCopy) >= sizeof(creds)) {
@@ -416,6 +426,35 @@ static void begin_tls_or_splice(GWTunnelSession *s)
 
 static void proxy_ready(GWTunnelSession *s);
 
+/*
+ * Bytes that arrived behind the proxy's reply, in the same read, belong to
+ * the far end. On a plain relay they are its first bytes -- an SSH server
+ * speaks first, so its banner can share the segment that carried the
+ * reply -- and they go to the local application ahead of anything the
+ * splice reads. Under TLS they would be the start of the handshake, which
+ * Certainly reads from the socket and never from this buffer, so they
+ * cannot be handed over and the connection is refused rather than
+ * corrupted. Returns 0 when it has failed the session.
+ */
+static int keep_leftover(GWTunnelSession *s, size_t used, const char *what)
+{
+    size_t extra;
+
+    if (s->rxLen <= used) return 1;
+    extra = s->rxLen - used;
+    if (s->useTls) {
+        char why[64];
+
+        snprintf(why, sizeof(why), "proxy sent %u bytes past its %s reply",
+                 (unsigned)extra, what);
+        tunnel_fail(s, why);
+        return 0;
+    }
+    memcpy(s->ubuf, s->rx + used, extra);   /* rx is far smaller than ubuf */
+    s->uLen = extra;
+    return 1;
+}
+
 static void step_proxy_connect(GWTunnelSession *s)
 {
     switch (GWConn_Pump(s->conn)) {
@@ -487,16 +526,8 @@ static void step_http_hello(GWTunnelSession *s)
         tunnel_fail(s, "proxy refused the CONNECT request");
         return;
     }
-    if (s->rxLen != head_len) {
-        /*
-         * Anything past the head would be the first TLS bytes, and Certainly
-         * reads from the socket rather than from this buffer -- handing over
-         * now would silently drop them. No proxy in practice pipelines here,
-         * so refuse rather than corrupt.
-         */
-        tunnel_fail(s, "proxy sent bytes past its CONNECT reply");
+    if (!keep_leftover(s, head_len, "CONNECT"))
         return;
-    }
     {
         /* Name the reply beyond its status: chained proxies (Via) tell
          * apart backends that share one address, and a 200 that differs
@@ -523,6 +554,7 @@ static void step_http_hello(GWTunnelSession *s)
 static void step_socks_hello(GWTunnelSession *s)
 {
     int r;
+    size_t used = 0;
 
     if (conn_flush(s) < 0) {
         tunnel_fail(s, "proxy broke while sending SOCKS request");
@@ -565,7 +597,7 @@ static void step_socks_hello(GWTunnelSession *s)
         return;
     }
 
-    switch (gw_fwd_socks_conn_reply(s->rx, s->rxLen)) {
+    switch (gw_fwd_socks_conn_reply(s->rx, s->rxLen, &used)) {
     case 0: return;
     case 1: break;
     default:
@@ -575,6 +607,8 @@ static void step_socks_hello(GWTunnelSession *s)
         tunnel_fail(s, "SOCKS proxy refused the connection");
         return;
     }
+    if (!keep_leftover(s, used, "SOCKS"))
+        return;
     gw_log("tunnel #%ld SOCKS proxy to %s:%u established", s->id,
            s->remoteHost, (unsigned)s->remotePort);
     proxy_ready(s);
@@ -636,6 +670,7 @@ static void step_splice(GWTunnelSession *s)
     }
     if (q_flush(&s->up, s->pq, &s->pLen, &s->pSent) < 0) {
         s->state = kTNLFlushClose;
+        s->lastActivity = GWNet_Ticks();    /* its own window, not the splice's */
         return;
     }
 
@@ -655,6 +690,7 @@ static void step_splice(GWTunnelSession *s)
                 s->lastActivity = GWNet_Ticks();
             } else if (n == -2 || n == -1) {
                 s->state = kTNLFlushClose;
+                s->lastActivity = GWNet_Ticks();
             }
         }
     }
@@ -668,11 +704,13 @@ static void session_step(GWTunnelSession *s)
     if (s->state == kTNLFree) return;
 
     /* A handshake that makes no progress is a dead proxy, not a slow one.
-     * The splice itself is exempt: quiet is normal there. */
+     * The splice itself is exempt: quiet is normal there. The final flush
+     * gets the same window, started when the splice ended, so a client
+     * that stops reading cannot hold the slot. */
     if (s->state != kTNLSplice &&
         GWNet_Ticks() - s->lastActivity > GW_TUNNEL_HANDSHAKE) {
-        gw_log("tunnel #%ld handshake timed out", s->id);
-        tunnel_fail(s, "handshake timed out");
+        tunnel_fail(s, s->state == kTNLFlushClose ? "final flush timed out"
+                                                   : "handshake timed out");
     }
 
     GWStream_Pump(&s->cli);

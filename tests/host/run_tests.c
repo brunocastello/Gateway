@@ -1930,12 +1930,23 @@ static void test_fwd(void)
             { 0x05, 0x00, 0x00, 0x01, 1, 2, 3, 4, 0x04, 0x43 };
         static const unsigned char refused[] =
             { 0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0 };
-        check(gw_fwd_socks_conn_reply(granted, sizeof(granted)) == 1,
+        /* A grant with the far end's banner in the same segment. */
+        static const unsigned char banner[] =
+            { 0x05, 0x00, 0x00, 0x01, 1, 2, 3, 4, 0x04, 0x43,
+              'S', 'S', 'H', '-' };
+        size_t used = 0;
+
+        check(gw_fwd_socks_conn_reply(granted, sizeof(granted), &used) == 1,
               "SOCKS grant parses");
-        check(gw_fwd_socks_conn_reply(granted, 4) == 0,
+        check(used == sizeof(granted), "a bare grant is consumed whole");
+        check(gw_fwd_socks_conn_reply(granted, 4, NULL) == 0,
               "a short grant waits");
-        check(gw_fwd_socks_conn_reply(refused, sizeof(refused)) < 0,
+        check(gw_fwd_socks_conn_reply(refused, sizeof(refused), NULL) < 0,
               "a SOCKS refusal fails with its REP intact");
+        used = 0;
+        check(gw_fwd_socks_conn_reply(banner, sizeof(banner), &used) == 1 &&
+              used == 10,
+              "bytes past a SOCKS grant are left for the splice");
     }
 }
 

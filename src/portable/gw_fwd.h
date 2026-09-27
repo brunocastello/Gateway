@@ -75,9 +75,12 @@ int gw_fwd_socks_greet_reply(const unsigned char *buf, size_t len);
 
 /*
  * Read the connection reply. 1: granted (REP 0). 0: need more bytes.
- * -1: refused, or a reply this parser does not understand.
+ * -1: refused, or a reply this parser does not understand. On a grant,
+ * *used (when not NULL) is the reply's length: anything past it in buf is
+ * the far end's first bytes, arrived in the same segment.
  */
-int gw_fwd_socks_conn_reply(const unsigned char *buf, size_t len);
+int gw_fwd_socks_conn_reply(const unsigned char *buf, size_t len,
+                            size_t *used);
 
 #ifdef __cplusplus
 }
