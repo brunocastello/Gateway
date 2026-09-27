@@ -110,6 +110,13 @@ protocol selection, so it says nothing about the 32-bit build.
 
 ## 4. For 0.3.7: a log a person can read, without losing the material
 
+**Done on `gw037`, 2026-09-28.** Every module's lines are converted; the
+codes are in `docs/log-codes.md`. Two things the spec below did not foresee:
+Certainly no longer writes its own MITM lines (they had no `#N`), and hands
+the proxy what they said instead (`PATCHES.md` §35); and failures reaching a
+far end go through one explainer, `GWStream_Explain()`, shared by the proxy,
+mail, token refresh and tunnel, which is where the `T` codes come from.
+
 The log window is the only diagnostic Gateway has, and this weekend it did its
 job — but only for someone who knows what `rx-after-flight 0` means. The
 lines that carry the diagnosis today read like this:

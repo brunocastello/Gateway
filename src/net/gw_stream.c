@@ -421,11 +421,13 @@ static const char *gw_tls_error_text(int err)
      * the chain in the text, so it does not read as "bad certificate".
      */
     case 55: return "certificate chain out of order";
-    case 51: return "bad certificate signature";
-    case 34: return "server sent no certificate";
-    case 52: return "certificate dates unknown";
-    case 57: return "intermediate is not a CA";
-    case 59: return "public key too weak";
+    /* bearssl_x509.h's BR_ERR_X509_* numbers: 52 BAD_SIGNATURE, 35
+     * EMPTY_CHAIN, 53 TIME_UNKNOWN, 58 NOT_CA, 60 WEAK_PUBLIC_KEY. */
+    case 52: return "bad certificate signature";
+    case 35: return "server sent no certificate";
+    case 53: return "certificate dates unknown";
+    case 58: return "intermediate is not a CA";
+    case 60: return "public key too weak";
     default: return NULL;
     }
 }
@@ -533,41 +535,42 @@ const char *GWStream_Describe(const GWStream *s, char *out, size_t cap)
 
 /*
  * A certificate BearSSL refused, in words. The numbers are the same ones
- * gw_tls_error_text() names for the debug line; here each gets a sentence of
- * its own and a code, because which one it was is the remedy.
+ * gw_tls_error_text() names for the debug line (BR_ERR_X509_* in
+ * bearssl_x509.h); here each gets a sentence of its own and a code, because
+ * which one it was is the remedy.
  */
 static const char *explain_certificate(int err, const char *host,
                                        char *out, size_t cap)
 {
     switch (err) {
-    case 62:
+    case 62:                                    /* NOT_TRUSTED */
         snprintf(out, cap, "the certificate for %s is not from an authority "
                  "Gateway trusts", host);
         return "T10";
-    case 54:
+    case 54:                                    /* EXPIRED */
         snprintf(out, cap, "the certificate for %s has expired", host);
         return "T11";
-    case 56:
+    case 56:                                    /* BAD_SERVER_NAME */
         snprintf(out, cap, "the certificate %s sent is for another name", host);
         return "T12";
-    case 55:
+    case 55:                                    /* DN_MISMATCH */
         snprintf(out, cap, "%s sent its certificate chain out of order", host);
         return "T13";
-    case 51:
+    case 52:                                    /* BAD_SIGNATURE */
         snprintf(out, cap, "the certificate for %s has a bad signature", host);
         return "T14";
-    case 34:
+    case 35:                                    /* EMPTY_CHAIN */
         snprintf(out, cap, "%s sent no certificate", host);
         return "T15";
-    case 52:
+    case 53:                                    /* TIME_UNKNOWN */
         snprintf(out, cap, "Gateway could not check the dates on the "
                  "certificate for %s: is the clock set?", host);
         return "T16";
-    case 57:
+    case 58:                                    /* NOT_CA */
         snprintf(out, cap, "the certificate chain for %s has an intermediate "
                  "that is not an authority", host);
         return "T17";
-    case 59:
+    case 60:                                    /* WEAK_PUBLIC_KEY */
         snprintf(out, cap, "the certificate for %s has a key too weak to "
                  "trust", host);
         return "T18";

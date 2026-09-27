@@ -790,11 +790,13 @@ static void session_fail_upstream(GWHttpSession *s, const char *statusLine,
     char        desc[192];
     const char *tcode = GWStream_Explain(&s->up, host, why, sizeof why);
 
+    /* Before session_fail(), which destroys the stream. */
+    GWStream_Describe(&s->up, desc, sizeof desc);
     if (tcode != NULL)
         session_fail(s, statusLine, tcode, "%s", why);
     else
         session_fail(s, statusLine, code, fallback, host);
-    gw_logd("%s", GWStream_Describe(&s->up, desc, sizeof desc));
+    gw_logd("%s", desc);
 }
 
 static void session_start_upstream(GWHttpSession *s)
@@ -1663,14 +1665,6 @@ static void step_tunnel_connect(GWHttpSession *s)
     s->state = kHPTunnel;
 }
 
-/*
- * Wait for the browser's handshake to finish, then rejoin the ordinary path.
- *
- * Everything the client sent before this point was the CONNECT head, and the
- * bytes after it were its ClientHello -- which Certainly has already taken
- * over along with the socket. So the request buffer starts empty and the
- * session reads a fresh request, as if the browser had just connected.
- */
 /*
  * The engineer's lines under a MITM outcome: BearSSL's number, what the hello
  * and the engine said, and the first bytes the browser sent. Only with

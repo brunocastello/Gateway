@@ -5,7 +5,7 @@ decision a person might ask about, is a plain sentence followed by a short
 code:
 
 ```
-#2 the browser gave up after seeing our certificate (S04)
+#2 the browser gave up after seeing our certificate (S03)
 ```
 
 The sentence says what happened. The code says exactly which branch of the
@@ -171,8 +171,8 @@ carries a `T` code when the connection itself names the fault.
 ## S — TLS towards the browser
 
 Written when `connect_mitm` answers a browser's handshake and the handshake
-does not complete. The line before it names the host (`terminating TLS
-for …`). With `log_debug` on, the lines under it give BearSSL's error
+does not complete. The line before it names the host (`Gateway answers the
+browser's secure connection to … itself`, H21). With `log_debug` on, the lines under it give BearSSL's error
 number, the hello's framing, version and suite, byte counts, and the first
 bytes the browser sent.
 

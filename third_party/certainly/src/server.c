@@ -378,10 +378,11 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
             if (n > 0) {
                 s->rxTotal += (size_t)n;
                 /*
-                 * Always-on, once: the opening bytes name the protocol the
-                 * client is really speaking, which is the whole diagnosis when
-                 * a handshake then goes nowhere. Capped at 24 bytes so it is
-                 * one line, and only on the very first read so it is the hello.
+                 * Keep the opening bytes: they name the protocol the client
+                 * is really speaking, which is the whole diagnosis when a
+                 * handshake then goes nowhere. The first 24 bytes, across
+                 * however many reads they take, so it is the hello and fits
+                 * one line; MacTLS_ServerHelloHex() hands them to the host.
                  */
                 if (s->helloHeadLen < sizeof(s->helloHead)) {
                     size_t take = sizeof(s->helloHead) - s->helloHeadLen;

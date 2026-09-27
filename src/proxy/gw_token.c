@@ -191,6 +191,11 @@ static void token_finish(GWTokenCtx *t)
          * a sentence of its own. The provider's own description goes under
          * log_debug either way.
          */
+        int         haveDesc;
+
+        /* Both read before token_fail(), which disposes of t->resp. */
+        haveDesc = gw_json_string(body, bodyLen, "error_description",
+                                  desc, sizeof(desc));
         if (gw_json_string(body, bodyLen, "error", err, sizeof(err)) &&
             strcmp(err, "invalid_grant") == 0)
             token_fail(t, "M39", "%s refused the refresh token: run "
@@ -198,8 +203,7 @@ static void token_finish(GWTokenCtx *t)
         else
             token_fail(t, "M40", "%s refused to refresh the token (HTTP %d)",
                        t->host, res.status);
-        if (gw_json_string(body, bodyLen, "error_description",
-                           desc, sizeof(desc)))
+        if (haveDesc)
             gw_logd("%s", desc);
         return;
     }

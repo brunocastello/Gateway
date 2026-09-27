@@ -27,8 +27,8 @@ void gw_log(const char *fmt, ...);
  * short stable code after it, so a screenshot still says exactly which branch
  * wrote it:
  *
- *     gw_logc("H12", "#%ld the browser gave up after seeing our certificate",
- *             id);                 ->  "#2 the browser gave up ... (H12)"
+ *     gw_logc("S03", "#%ld the browser gave up after seeing our certificate",
+ *             id);                 ->  "#2 the browser gave up ... (S03)"
  *
  * Codes are one letter for the module and two digits, listed once in
  * docs/log-codes.md and never reused. When a sentence is too long for a line

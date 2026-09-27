@@ -153,6 +153,12 @@ static int begin_connect(GWConn *c)
 {
     struct sockaddr_in sa;
 
+    /* DNS has answered by now. Set the address before anything can fail, so
+     * a failure here is not taken for a lookup that never resolved (the
+     * readable log's T02/T03, and GWConn_PeerIPv4() on OT, which does the
+     * same). */
+    c->addr = ntohl(c->dnsAddr);
+
     c->sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (c->sock == INVALID_SOCKET || !set_nonblocking(c->sock)) {
         c->err = WSAGetLastError();
@@ -172,7 +178,6 @@ static int begin_connect(GWConn *c)
             return 0;
         }
     }
-    c->addr      = ntohl(c->dnsAddr);
     c->startedAt = GetTickCount();
     return 1;
 }
