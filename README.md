@@ -28,6 +28,7 @@ and stays on the same machine; only the modern side crosses the network.
 | `8765` | **Web proxy** | `http://`, `https://` and `CONNECT`. Fetches over TLS 1.3 and hands the result back in plaintext. |
 | `1993`, `1995`, `1587` | **Mail splice** | IMAP, POP3 and SMTP for a client that cannot do TLS or OAuth. Outlook.com and Gmail. |
 | `8888` | **Wayback proxy** | Serves pages from the Internet Archive at a date you choose, with an allow-list of hosts that pass through live. |
+| `2222` | **Tunnel** | One local port relayed to a fixed far end over TLS, optionally through an HTTP or SOCKS5 proxy — SSH through stunnel, say. Off by default, and with no login of its own. |
 
 Point the browser's HTTP proxy at the machine running Gateway, port `8765`,
 and that is the whole setup. Classilla also needs
@@ -85,8 +86,8 @@ beside `Gateway.exe` — which stays hand-editable. Every key is listed in
 [`docs/prefs.md`](docs/prefs.md), with an example in
 [`docs/prefs-example.txt`](docs/prefs-example.txt).
 
-Turn whole modules off with `http_enabled`, `mail_enabled` and
-`wayback_enabled`. `show_window = 0` starts without a window; on Mac OS 9 that
+Turn whole modules on or off with `http_enabled`, `mail_enabled`,
+`wayback_enabled` and `tunnel_enabled`. `show_window = 0` starts without a window; on Mac OS 9 that
 also means no menu bar and no Application menu entry, so stop it with a Quit
 Apple event.
 
@@ -112,7 +113,7 @@ unit tests, which is the only part that runs anywhere else.
 
 ```
 src/portable/   HTTP, prefs, URL, Base64, chunking, rewriting — no platform headers
-src/proxy/      the three modules
+src/proxy/      the four modules
 src/net/        sockets: Open Transport on Mac OS 9, Winsock on Windows
 src/ssl3/       SSL 3.0 key schedule and MAC, for browsers with no TLS
 src/ui/         the Mac shell and its preferences window
