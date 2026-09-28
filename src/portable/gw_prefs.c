@@ -357,6 +357,31 @@ size_t gw_prefs_comment(const char *text, size_t len, const char *key,
     return used;
 }
 
+int gw_prefs_get_commented(const char *text, size_t len, const char *key,
+                           char *out, size_t cap)
+{
+    size_t off = 0;
+    size_t klen = strlen(key);
+
+    if (cap) out[0] = '\0';
+    while (off < len) {
+        size_t line_end, next, start, sep;
+
+        gw_prefs_line(text, len, off, &line_end, &next);
+        if (gw_prefs_match(text, off, line_end, key, klen,
+                           &start, &sep) == 2) {
+            size_t vs = sep + 1, end = line_end;
+            while (vs < end && (text[vs] == ' ' || text[vs] == '\t')) vs++;
+            while (end > vs && (text[end - 1] == ' ' ||
+                                text[end - 1] == '\t')) end--;
+            gw_copy_n(out, cap, text + vs, end - vs);
+            return 1;
+        }
+        off = next;
+    }
+    return 0;
+}
+
 /* UI input accepts pasted lines as well as semicolons. Compact in place:
  * output never grows, and empty entries cannot create a leading separator. */
 void gw_prefs_normalize_list(char *value)

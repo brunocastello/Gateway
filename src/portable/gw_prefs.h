@@ -82,6 +82,15 @@ size_t gw_prefs_set(const char *text, size_t len, const char *key,
 size_t gw_prefs_comment(const char *text, size_t len, const char *key,
                         char *out, size_t cap);
 
+/*
+ * The value of the first commented copy of key ("# key = value"), for
+ * offering back a setting the file keeps commented out. Returns 1 when such
+ * a line exists, whatever its value, and 0 otherwise (out is set to "").
+ * Active lines are not consulted; gw_prefs_get reads those.
+ */
+int gw_prefs_get_commented(const char *text, size_t len, const char *key,
+                           char *out, size_t cap);
+
 /* Normalize an editable host list in place: trim entries, skip empty ones,
  * and convert semicolons or CR/LF separators to a single semicolon. */
 void gw_prefs_normalize_list(char *value);

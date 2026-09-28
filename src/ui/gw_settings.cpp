@@ -642,8 +642,14 @@ public:
     {
         LoadValues(items);
         customShown = Custom();
-        for (int i = 0; i < kFieldCount; ++i)
-            std::strcpy(items[i].custom, customShown ? items[i].original : "");
+        // Under Outlook or Gmail the custom values live on as commented-out
+        // lines; offer those back, or choosing Custom again would show the
+        // provider's values and Save would write them over what was kept.
+        for (int i = 0; i < kFieldCount; ++i) {
+            if (customShown) std::strcpy(items[i].custom, items[i].original);
+            else GWConfig_GetCommented(kFields[i].key, items[i].custom,
+                                       sizeof(items[i].custom));
+        }
         ApplyProvider();
     }
 

@@ -197,6 +197,13 @@ int GWConfig_Comment(const char *key)
     return gw_config_commit(key, sUpdated, n);
 }
 
+int GWConfig_GetCommented(const char *key, char *out, size_t cap)
+{
+    if (cap) out[0] = '\0';
+    if (!sLoaded) return 0;
+    return gw_prefs_get_commented(sText, (size_t)sLen, key, out, cap);
+}
+
 int GWConfig_GetNth(const char *key, int n, char *out, size_t cap)
 {
     if (cap) out[0] = '\0';

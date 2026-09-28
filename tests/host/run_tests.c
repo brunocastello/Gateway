@@ -1850,6 +1850,33 @@ static void test_prefs_comment(void)
     check(gw_prefs_comment("imap_host = a\n", 14, "imap_host", out, 15) == 0,
           "comment refuses to overflow");
 
+    /* Reading a commented copy back, so a window reopened under Gmail can
+     * still offer the custom values the file kept. */
+    {
+        static const char kept[] =
+            "provider = gmail\r"
+            "# Any other provider: set imap_host = x first.\r"
+            "# imap_host           = imap.fastmail.com  \r"
+            ";imap_host = second\r"
+            "# oauth_client_secret =\r"
+            "smtp_host = active.example.com\r";
+        char v[64];
+
+        check(gw_prefs_get_commented(kept, sizeof(kept) - 1, "imap_host",
+                                     v, sizeof(v)) == 1,
+              "commented copy is found");
+        check_str(v, "imap.fastmail.com", "first commented copy, trimmed");
+        check(gw_prefs_get_commented(kept, sizeof(kept) - 1,
+                                     "oauth_client_secret", v, sizeof(v)) == 1 &&
+              v[0] == '\0', "an empty commented value is present");
+        check(gw_prefs_get_commented(kept, sizeof(kept) - 1, "smtp_host",
+                                     v, sizeof(v)) == 0 && v[0] == '\0',
+              "an active line is not a commented copy");
+        check(gw_prefs_get_commented(kept, sizeof(kept) - 1, "pop_host",
+                                     v, sizeof(v)) == 0,
+              "an absent key is not found");
+    }
+
     /* Round trip: custom -> outlook -> custom restores the value. */
     {
         static const char set[] =

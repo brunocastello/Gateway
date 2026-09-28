@@ -539,8 +539,14 @@ static void load(void)
 
     load_values();
     gCustomShown = custom_chosen();
-    for (i = 0; i < FIELDS; ++i)
-        strcpy(gItems[i].custom, gCustomShown ? gItems[i].original : "");
+    /* Under Outlook or Gmail the custom values live on as commented-out
+     * lines; offer those back, or choosing Custom again would show the
+     * provider's values and Save would write them over what was kept. */
+    for (i = 0; i < FIELDS; ++i) {
+        if (gCustomShown) strcpy(gItems[i].custom, gItems[i].original);
+        else GWConfig_GetCommented(kFields[i].key, gItems[i].custom,
+                                   sizeof(gItems[i].custom));
+    }
     apply_provider();
 }
 
