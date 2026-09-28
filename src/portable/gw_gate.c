@@ -91,9 +91,20 @@ int gw_gate_applies(const char *key, GWGateLookup get, void *ctx)
     }
 }
 
-int gw_gate_required(const char *key)
+int gw_gate_required(const char *key, GWGateLookup get, void *ctx)
 {
     const GWGate *g;
+    const char *v;
+    long n;
+
+    /* Not a gated setting, but useless empty: a 0.3.6 file has no tunnel
+     * section at all, so this binds only once the tunnel is switched on. */
+    if (gw_stricmp(key, "tunnel_remote_host") == 0) {
+        v = gw_gate_get(get, ctx, "tunnel_enabled", "0");
+        n = gw_parse_dec(v, strlen(v));
+        return n > 0;
+    }
+    if (!gw_gate_applies(key, get, ctx)) return 0;
 
     /* Custom has no provider to fall back on: every server and the token
      * endpoint must be named. Its ports and scope may be left as they are. */

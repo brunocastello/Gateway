@@ -195,6 +195,7 @@ bytes the browser sent.
 | `S19` | the browser refused the handshake | The browser sent a fatal alert not covered above. |
 | `S20` | the handshake with the browser failed | Any other BearSSL error. The number is under `log_debug`. |
 | `S21` | the browser's handshake stalled and was dropped | No progress before the idle timeout. |
+| `S22` | the browser gave up on resuming its earlier secure session; the next connection starts afresh | It offered a cached session, Gateway resumed it, and the browser closed instead of finishing. The session is forgotten, so this happens at most once per session. If it happens every time with one browser, report it: resumption may not suit that browser (PATCHES.md §36). |
 
 A completed handshake is not an event to diagnose, so it has no code:
 `#N secure connection with the browser, SSL 3.0`.

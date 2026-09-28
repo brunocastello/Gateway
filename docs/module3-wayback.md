@@ -138,7 +138,6 @@ Everything goes in Gateway Prefs; no second file.
 wayback_port         = 8888         # 0 disables the archive listener entirely
 wayback_date         = 20011231     # YYYYMMDD, YYYYMM or YYYY
 wayback_tolerance    = 730          # days after wayback_date to accept, 0 = no limit
-wayback_api          = 1            # use the availability API to find the nearest snapshot
 wayback_geocities    = 1            # send geocities.com to oocities.org
 wayback_quick_images = 1            # let the browser fetch images from the archive directly
 wayback_ct_encoding  = 1            # allow a charset in Content-Type
@@ -401,9 +400,11 @@ it.
    on the allow-list being right.
 2. `gw_wayback.c` URL building and `Location` rewriting, with tests, entirely
    on the host.
-3. Wire the two hooks; try it against one site with a fixed date and the
-   availability API off.
-4. Add the availability API, then the date tolerance.
+3. Wire the two hooks; try it against one site with a fixed date.
+4. Add the date tolerance. (An availability-API step was planned here and
+   never built: the archive's redirect already reaches the nearest snapshot,
+   and the `wayback_api` setting that would have chosen it was removed after
+   0.3.7.)
 5. Settings page last — it is the most code and the least essential, and by
    then the behaviour it configures will be settled.
 6. Rate limiting once there is enough working to provoke it.

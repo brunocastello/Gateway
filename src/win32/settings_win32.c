@@ -97,12 +97,10 @@ static const Field kFields[] = {
     { 2, Date, "wayback_date", "Era (YYYYMMDD):", "20011231", "Also accepts YYYY or YYYYMM." },
     { 2, Number, "wayback_tolerance", "Days newer allowed:", "730", "0 accepts any date." },
     { 2, Number, "wayback_connects", "Connections opening at once:", "1", "The archive refuses bursts." },
-    { 2, Check, "wayback_api", "Find the &nearest available snapshot", "1",
-      "Off requests the configured era directly." },
     { 3, Check, "wayback_geocities", "Send &geocities.com to oocities.org", "1", "" },
     { 3, Check, "wayback_cache", "Let the browser &keep snapshots", "1", "" },
     { 3, Check, "wayback_settings", "Serve the browser se&ttings page", "1", "" },
-    { 3, Check, "wayback_ct_encoding", "Strip &charset from Content-Type", "1", "" },
+    { 3, Check, "wayback_ct_encoding", "Keep the &charset in Content-Type", "1", "" },
     { 3, Check, "wayback_quick_images", "&Quick images (compatibility setting)", "1",
       "Accepted for compatibility; it has no effect." },
     { 3, List, "wayback_live", "&Whitelist:", "",
@@ -636,9 +634,10 @@ static int save_values(void)
 
         read_value(i, value, sizeof(value));
 
-        /* A row that applies and must be named: the Custom servers, the
-         * proxy host. See gw_gate_required. */
-        if (gw_gate_required(f->key) && applies(i))
+        /* A row that must be named under the current choices: the Custom
+         * servers, the proxy host, the tunnel's remote host while the tunnel
+         * is on. See gw_gate_required. */
+        if (gw_gate_required(f->key, lookup, NULL))
             valid = value[0] != '\0';
 
         if (gItems[i].overflow) {

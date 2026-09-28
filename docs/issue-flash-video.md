@@ -1,8 +1,9 @@
 # Open issue — Flash video stalls through Gateway, plays through the modern-Mac proxy
 
-Recorded 2026-09-06. **Fixes for hypotheses 1, 3 and 4 have landed and the
-logging has been rebuilt; hypothesis 2 is addressed by a change of default.**
-Not yet confirmed on hardware — the section at the end says what to look for.
+Recorded 2026-09-06. **Resolved:** fixes for hypotheses 1, 3 and 4 landed,
+hypothesis 2 was addressed by a change of default, and the video plays on
+hardware (see *Confirmed on hardware* below). Kept for the reasoning and for
+what to read in the log if a stall like it comes back.
 
 ## Symptom
 
@@ -170,12 +171,13 @@ truncated body no longer matches the announced length, and a browser will
 discard it rather than cache it.
 
 The same log also settled the concurrency question — `proxy busy, dropped a
-connection` appears during the page load — so `max_sessions` now defaults to 8
-rather than 4.
+connection` appeared during the page load — so `max_sessions` was raised from
+4 (it is 12 now), and a full session table no longer drops anything: surplus
+connections wait in the listen backlog.
 
 ## If it still stalls
 
-The log will now distinguish the remaining possibilities:
+The log distinguishes the remaining possibilities (wording as of 0.3.7):
 
 - `<- 200 host no length` on the media fetch means the origin itself sends no
   `Content-Length`, and the player is unlikely to start. That is an origin
@@ -183,10 +185,12 @@ The log will now distinguish the remaining possibilities:
 - `passing 302 to the client` followed by no further request means the browser
   declined to follow it — check whether the target was `https` and the browser
   cannot reach it.
-- `proxy busy, dropped a connection` means `GW_MAX_SESSIONS` (4) is the
-  bottleneck for a page opening many parallel fetches; raise it and re-measure.
+- A page that opens many parallel fetches and stalls with every session busy
+  no longer logs a refusal — the surplus waits in the backlog — so raise
+  `max_sessions` (clamped to 16) and re-measure.
 - A `206` with a `Content-Range` and no `Content-Length` would indicate the
-  player is using range requests and needs both forwarded.
+  player is using range requests and needs both forwarded; a `206` with no
+  `Content-Range` at all is logged as `H17`.
 
 ## Fixes still to evaluate, if needed
 

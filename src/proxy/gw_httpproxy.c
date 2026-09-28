@@ -1701,7 +1701,15 @@ static void log_mitm_failure(GWHttpSession *s)
 {
     int err = GWStream_ServerError(&s->cli);
 
-    if (err == 0) {
+    if (err == 0 && GWStream_ServerResumeTried(&s->cli)) {
+        /*
+         * A resumed handshake sends no certificate, so S03-S05 would name
+         * the wrong thing. Certainly has already forgotten the session, so
+         * the browser's next connection gets a full handshake.
+         */
+        gw_logc("S22", "#%ld the browser gave up on resuming its earlier "
+                "secure session; the next connection starts afresh", s->id);
+    } else if (err == 0) {
         /*
          * Not an error: the browser closed the connection. Where it was when
          * it did is the whole diagnosis -- a browser that walks away on our
@@ -1801,8 +1809,11 @@ static void step_mitm_wait(GWHttpSession *s)
     case kGWStreamReady: {
         const char *name = tls_version_name(GWStream_ServerVersion(&s->cli));
 
-        gw_log("#%ld secure connection with the browser, %s", s->id,
-               name != NULL ? name : "unknown version");
+        /* "resumed" is the saving session caching exists for: no
+         * certificate and no RSA operation this time (PATCHES.md §36). */
+        gw_log("#%ld secure connection with the browser, %s%s", s->id,
+               name != NULL ? name : "unknown version",
+               GWStream_ServerResumed(&s->cli) ? ", resumed" : "");
         log_mitm_detail(s, 0);
         s->cheadLen = 0;
         s->cheadSent = 0;

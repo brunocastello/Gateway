@@ -305,6 +305,14 @@ void           MacTLS_ServerHelloHex(const MacTLS_Server *s, char *out, size_t c
 /* The version the handshake settled on (0x0300 = SSL 3.0 ...), or 0 before it
  * completed. */
 unsigned int   MacTLS_ServerSessionVersion(const MacTLS_Server *s);
+/* 1 once the handshake has completed as a resumption of a cached session --
+ * no certificate, no RSA operation -- and 0 for a full handshake or before
+ * one completed. See PATCHES.md §36. */
+int            MacTLS_ServerResumed(const MacTLS_Server *s);
+/* 1 when the handshake is a resumption attempt, completed or not: the
+ * browser offered a cached session and our abbreviated flight went out.
+ * For telling a failed resumption apart from a refused certificate. */
+int            MacTLS_ServerResumeTried(const MacTLS_Server *s);
 /* 1 while the engine still holds encrypted bytes that have not reached the
  * socket. MacTLS_ServerWrite() only stages plaintext -- the records leave in
  * MacTLS_ServerPump() -- so a caller that writes and then closes discards

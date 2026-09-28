@@ -1241,10 +1241,13 @@ static int pac_host(int index, char *out, size_t cap)
 }
 
 /*
- * wayback_api: JSON parsing and URL building.
+ * gw_json over an Availability API body, and the target built from it.
  *
- * §7 test cases 20–25. The JSON work is portable; the fetch is not, so test
- * the parsing and the URL building and leave the transport to the Mac.
+ * Written for docs/settings-window.md §7 cases 20–25, when wayback_api was
+ * to ask the archive's Availability API. That setting was removed after 0.3.7
+ * -- the archive's own redirect already reaches the nearest snapshot -- but
+ * the cases still pin gw_json's flat scan on a nested body (case 21 is the
+ * trap), which the OAuth token reply relies on too.
  */
 static void test_wayback_api(void)
 {
@@ -2033,10 +2036,22 @@ static void test_gate(void)
     check(gw_gate_canonical("follow_redirects", "auto") == NULL,
           "other keys have no canonical form here");
 
-    check(gw_gate_required("smtp_host") && gw_gate_required("tunnel_proxy_host") &&
-          !gw_gate_required("oauth_scope") && !gw_gate_required("imap_upstream_port") &&
-          !gw_gate_required("tunnel_proxy_user"),
-          "required while applicable");
+    {
+        static const char *all[] = { "provider", "custom", "tunnel_proxy",
+                                     "http", "tunnel_enabled", "1", NULL };
+        check(gw_gate_required("smtp_host", gate_lookup, (void *)all) &&
+              gw_gate_required("tunnel_proxy_host", gate_lookup, (void *)all) &&
+              gw_gate_required("tunnel_remote_host", gate_lookup, (void *)all) &&
+              !gw_gate_required("oauth_scope", gate_lookup, (void *)all) &&
+              !gw_gate_required("imap_upstream_port", gate_lookup, (void *)all) &&
+              !gw_gate_required("tunnel_proxy_user", gate_lookup, (void *)all),
+              "required while applicable");
+    }
+    check(!gw_gate_required("smtp_host", gate_lookup, (void *)gmail) &&
+          !gw_gate_required("tunnel_proxy_host", gate_lookup, (void *)unset),
+          "not required while not applicable");
+    check(!gw_gate_required("tunnel_remote_host", gate_lookup, (void *)unset),
+          "remote host not required with the tunnel off (a 0.3.6 file)");
 }
 
 /*

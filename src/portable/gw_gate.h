@@ -34,8 +34,13 @@ int gw_gate_gated(const char *key);
  */
 int gw_gate_applies(const char *key, GWGateLookup get, void *ctx);
 
-/* 1 when key, while it applies, may not be left empty. */
-int gw_gate_required(const char *key);
+/*
+ * 1 when key may not be left empty under the values get reports: the Custom
+ * servers and token endpoint while provider = custom, the proxy host while a
+ * proxy is chosen, and tunnel_remote_host while the tunnel is enabled -- the
+ * tunnel turns every client away without it.
+ */
+int gw_gate_required(const char *key, GWGateLookup get, void *ctx);
 
 /*
  * The pop-up value that means what Gateway does with value for key, or NULL

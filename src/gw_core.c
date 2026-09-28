@@ -400,7 +400,6 @@ int GW_Init(void)
     sWaybackSet.geocities    = GWConfig_Num("wayback_geocities", 1) != 0;
     sWaybackSet.quick_images = GWConfig_Num("wayback_quick_images", 1) != 0;
     sWaybackSet.ct_encoding  = GWConfig_Num("wayback_ct_encoding", 1) != 0;
-    sWaybackSet.wayback_api  = GWConfig_Num("wayback_api", 1) != 0;
     sWaybackPort = (int)GWConfig_Num("wayback_port", 8888);
 
     return GW_Start();

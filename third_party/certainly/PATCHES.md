@@ -1451,3 +1451,74 @@ hands it over:
 
 The `GW_DEBUG_IO` hex dumps are untouched: they are the developer's build
 flag, not the log a user reads.
+
+## §36 — the browser-side server resumes sessions
+
+Every resource on a `connect_mitm` page is a fresh `CONNECT`, because the
+client hop is always `Connection: close`, and every fresh `CONNECT` was a full
+handshake: a 1024-bit RSA private-key operation on the vintage CPU, which is
+most of what "slow" meant in that mode. The browsers already asked to resume —
+IE 5.1.7's second hello to a host carries the session ID from the first — and
+the server ignored it, because no session cache was set.
+
+`server.c` now keeps one `br_ssl_session_cache_lru` for every server context:
+a 4000-byte file-scope store, about forty sessions at 100 bytes each,
+initialised on first use and attached with `br_ssl_server_set_cache()` after
+the init calls (which zero the context) and before `br_ssl_server_reset()`.
+BearSSL does the rest: it saves a session after a full handshake and, when a
+hello offers a 32-byte ID it holds with a suite still offered, answers with
+ServerHello, ChangeCipherSpec and Finished and skips the certificate and the
+key exchange.
+
+BearSSL does not say whether a handshake resumed, and a cache hit is not the
+answer — the resumption is abandoned if the cached suite is not offered again.
+So the cache is wrapped: its `load` records the ID the browser offered before
+forwarding to the LRU, and when the handshake completes it resumed if the ID
+it settled on is that one, since a full handshake always mints a fresh ID.
+`MacTLS_ServerResumed()` reports it, and the proxy's "secure connection with
+the browser" line ends in `, resumed`.
+
+**Why the SSL 3.0 bridges of §28 carry over.** The SSL 3.0 master-secret
+derivation runs only on a full handshake, which is right: a resumed session
+reuses the cached master secret. The key block is derived from that secret
+and the fresh randoms either way. Both Finished bridges compute over the side
+transcript, whatever the order: resumed, the server's Finished comes first
+and covers ClientHello and ServerHello, and the client's covers those and the
+server's Finished — RFC 6101 §5.6.9. An SSLv2-framed hello drops its session
+ID by design (§22), so those clients always get a full handshake. A cached
+session names no leaf certificate, so the leaf cache's rule that a session
+must not outlive the handshake that read its chain is untouched; and one RSA
+key serves every host, so resuming another host's session reveals nothing a
+fresh handshake would not.
+
+**Three guards the review asked for.**
+
+- *The floor.* BearSSL's resume check compares the cached version with the
+  client's maximum only, never with the engine's minimum, so a session cached
+  while `allow_sslv3` was on could bring SSL 3.0 back after it was turned off.
+  The `load` wrapper reads into a copy and refuses a session below
+  `version_min`.
+- *A failed resumption is forgotten.* `lru_load` moves a hit to the head of
+  the list, so a session whose resumption a browser rejects would fail the
+  same way on every connection until Gateway restarted.
+  `MacTLS_ServerClose()` calls `br_ssl_session_cache_lru_forget()` for a
+  resumption that never completed.
+- *The failure says so.* A resumed handshake sends no certificate, so the
+  proxy's S03–S05 ("gave up after seeing our certificate") would point at the
+  wrong thing. BearSSL replaces the offered ID with a fresh one unless it is
+  resuming, so "the offered ID is still the session's once our flight went
+  out" identifies an attempt whether or not it finished;
+  `MacTLS_ServerResumeTried()` reports it, the proxy logs S22 instead, and
+  `MacTLS_ServerDescribe()` names the session as new, offered or resumed.
+
+A browser that frames its hello as SSLv2 ("Use SSL 2.0" ticked) cannot
+resume through §22, which drops the session ID; whether such a browser falls
+back to a native hello when it has a session to offer is for hardware to say.
+
+**Verified** on Windows 95, 2026-09-28, against howsmyssl.com: Internet
+Explorer 4 and Netscape 4.08 — the latter SSL 3.0 at best, so through the
+bridges above — each made a full first handshake and resumed from then on,
+and the page loaded quickly. Not yet tried: IE 5.1.7 on Mac OS 9 and 16-bit
+IE 5. Should one of them reject a resumed handshake, the log says S22, the
+session is forgotten and its next connection is a full handshake; if that
+repeats for a browser, the fallback is to resume TLS 1.0 sessions only.
