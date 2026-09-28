@@ -1,57 +1,36 @@
-# After 0.3.6 — what is worth doing next
+# After 0.3.7 — what is worth doing next
 
-0.3.6 shipped on 2026-09-20. The upstream side is TLS 1.3 and finished; the
-browser side now serves everything from Netscape 3 to Classilla over SSL 3.0
-or TLS 1.0; mail works through `get-email-token.py`. What remains is making
-the machine Gateway runs on feel less punished for it. This document records
-the candidates in order of value, with the evidence each rests on, so a later
-session can pick one up without re-deriving it — and records what was tried
-and is not worth trying again.
+0.3.7 shipped on 2026-09-28. The upstream side is TLS 1.3 and finished; the
+browser side serves everything from Netscape 3 to Classilla over SSL 3.0 or
+TLS 1.0; mail works through `get-email-token.py`; a generic tunnel carries
+SSH or anything else over TLS. What remains is making the machine Gateway
+runs on feel less punished for it. This document records the candidates in
+order of value, with the evidence each rests on, so a later session can pick
+one up without re-deriving it — and records what was tried and is not worth
+trying again.
 
 ---
 
-## 0.3.7 — six fixes ported from roytam1's fork
+## Shipped in 0.3.7
 
-Independent of the readable-log work in item 4 below: six bug fixes from
-roytam1's `gw034` fork, re-applied by hand against current code rather than
-cherry-picked (the fork branched at fa64f91, long before this file existed).
-An idle-but-open session no longer holds its slot forever — a backpressured
-client now gets a bounded grace period rather than an unconditional clock
-refresh. A partial flush of a CONNECT's `200 Connection Established` can no
-longer queue a second copy behind the first. A 1xx interim response is now
-swallowed rather than treated as the final answer: RFC 9110 §15.2 says a
-proxy must not forward one to an HTTP/1.0 client, which the client hop
-always is here. On the Certainly side, the TLS 1.2 fallback no longer tries
-to redial an adopted STARTTLS connection on port 0 (PATCHES.md §29); its
-ClientHello record now goes out as `03 01` rather than `03 03` (§30); and a
-peer that hangs up mid-handshake or mid-transfer is now caught on both
-transports' close conventions — OT's and Win32's disagree — instead of
-riding out a 30-second timeout (§31).
+For the record, and for where to look when something in them misbehaves:
 
-Also landed in 0.3.7: **Module 4, the generic TLS tunnel** (`:2222`, off by
-default), ported from roytam1's `gw034` fork -- a plaintext local port
-relayed to a fixed far end over TLS, optionally through an HTTP CONNECT or
-SOCKS5 proxy. SSH is the motivating use, not the protocol. `tunnel_tls12`
-(PATCHES.md §32) and `tunnel_insecure` (§33) came from the fork mostly as
-written; `tunnel_sni` (§34) did not -- the fork's version let an overridden
-or omitted SNI change what was validated, up to skipping the hostname check
-entirely, and was rewritten around an X.509 vtable guard so `tunnel_sni`
-changes only the wire and the certificate is always checked against
-`tunnel_remote_host`. See `docs/prefs.md`'s Tunnel section and
-`third_party/certainly/PATCHES.md` §32-§34.
-
-Also landed in 0.3.7: **the custom mail servers follow the provider.** The
-upstream hosts, ports, `smtp_starttls` and the token endpoint are read only
-under `provider = custom`; under Outlook or Gmail the provider's values stand
-and a copy in the file is ignored (`src/portable/gw_provider.c`). Both
-Preferences windows show those rows dimmed with the provider's values and, on
-Save, comment them out or write them back in place (`gw_prefs_comment`, and
-`gw_prefs_set` uncommenting a commented-only key). **Release-notes item:** a
-single overridden host under `outlook` no longer works — it needs `custom`.
-The Tunnel settings got the same treatment: `tunnel_tls` gates the TLS
-options, any `tunnel_proxy` gates the proxy host, port and settle delay, and
-`http` gates the login and Host line; `tunnel_proxy` became a pop-up. The rule
-for both modules lives in `src/portable/gw_gate.c`.
+- **Six fixes from roytam1's `gw034` fork**, re-applied by hand: the idle
+  slot leak, the doubled `200 Connection Established`, interim 1xx
+  responses, and on the Certainly side the fallback redial, the `03 01`
+  record version and mid-handshake close detection (`PATCHES.md` §29–§31).
+- **Module 4, the tunnel** (`:2222`), from the same fork. `tunnel_tls12`
+  and `tunnel_insecure` came mostly as written (`PATCHES.md` §32, §33);
+  `tunnel_sni` was rewritten so the certificate is always checked against
+  `tunnel_remote_host` (§34).
+- **The readable log**: plain sentences with stable codes
+  (`docs/log-codes.md`), `log_debug` for the engineer lines. Certainly
+  hands its MITM outcome to the proxy instead of logging it (§35), and
+  far-end failures go through one explainer, `GWStream_Explain()`.
+- **Settings that follow their choices**: the custom mail servers are read
+  only under `provider = custom`, and both Preferences windows dim and
+  comment out whatever does not apply under the current provider, TLS and
+  proxy choices. The rule is `src/portable/gw_gate.c`.
 
 ---
 
@@ -120,46 +99,6 @@ below — and the abandon and timeout lines will say whether it closed or hung.
 Already known: the 16-bit Windows 3.1 build of 3.0 fails identically with
 PCT unticked and SSL 2/3 ticked (tried 2026-09-20). Its failure is before
 protocol selection, so it says nothing about the 32-bit build.
-
-## 4. For 0.3.7: a log a person can read, without losing the material
-
-**Done on `gw037`, 2026-09-28.** Every module's lines are converted; the
-codes are in `docs/log-codes.md`. Two things the spec below did not foresee:
-Certainly no longer writes its own MITM lines (they had no `#N`), and hands
-the proxy what they said instead (`PATCHES.md` §35); and failures reaching a
-far end go through one explainer, `GWStream_Explain()`, shared by the proxy,
-mail, token refresh and tunnel, which is where the `T` codes come from.
-
-The log window is the only diagnostic Gateway has, and this weekend it did its
-job — but only for someone who knows what `rx-after-flight 0` means. The
-lines that carry the diagnosis today read like this:
-
-```
-MITM handshake abandoned by the browser: SSLv2 hello, version 0300, suite 0004
-[no client reply after our certificate; rx 54, rx-after-flight 0]
-```
-
-The ask for 0.3.7 is a log in plain sentences by default, with the detail
-still obtainable when a report needs it. Two mechanisms, and they are not
-alternatives:
-
-- **A short code on the plain line**, so a screenshot from a user still
-  carries the diagnosis: the sentence says what happened, the code says
-  exactly which branch said so. Codes are stable, documented in one table
-  (`docs/log-codes.md`), and never reused. Something like
-  `#2 the browser gave up after seeing our certificate (H12)`.
-- **A `log_debug` preference**, read at launch like everything else, that
-  turns today's engineer lines back on: hello bytes, suite numbers, byte
-  counts, BearSSL error numbers. A runtime switch rather than a build flag,
-  because builds come from CI and a user asked to reproduce something must
-  not need one. `GW_DEBUG_IO` stays what it is: a build-time flag for the
-  developer, not the mechanism for users.
-
-Where to start: `gw_log` calls in `gw_httpproxy.c` and
-`third_party/certainly/src/server.c` (the MITM lines), then the mail splice.
-Each existing line becomes a sentence plus a code, and its current text moves
-behind `log_debug`. The request line (`#N :8765 GET host:port/path`) is
-already readable and stays.
 
 ---
 
