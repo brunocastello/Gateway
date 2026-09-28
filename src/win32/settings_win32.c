@@ -246,6 +246,7 @@ typedef struct {
     char kept[VALUE_CAP];              /* gated rows: the value to restore when */
     int  hasKept;                      /* the row applies again (see gw_gate.h) */
     int  live;                         /* gated rows: applies as last shown */
+    int  appliedAtLoad;                /* gated rows: applied when the file was read */
     int  overflow;                     /* never silently save a truncated list */
 } Item;
 
@@ -503,6 +504,12 @@ static void load_values(void)
             const char *current = GWConfig_Str(f->key, f->fallback);
             strncpy(value, current, sizeof(value) - 1);
             value[sizeof(value) - 1] = '\0';
+            /* "google" or "socks" is Gmail or SOCKS5 to Gateway; showing the
+             * first drop-down item instead would have Save change the file. */
+            if (f->kind == Provider || f->kind == Proxy) {
+                const char *canonical = gw_gate_canonical(f->key, value);
+                if (canonical != NULL) strcpy(value, canonical);
+            }
         }
 
         strcpy(it->original, value);
@@ -581,13 +588,17 @@ static void load(void)
     for (i = 0; i < FIELDS; ++i) {
         Item *it = &gItems[i];
         if (!gw_gate_gated(kFields[i].key)) continue;
-        it->live = applies(i);
+        it->live = it->appliedAtLoad = applies(i);
         if (it->live) {
             strcpy(it->kept, it->original);
             it->hasKept = 1;
         } else {
-            it->hasKept = GWConfig_GetCommented(kFields[i].key, it->kept,
-                                                sizeof(it->kept));
+            /* An active line first: a mail server a 0.3.6 file overrides
+             * under Outlook is ignored now, but it is the user's value, and
+             * choosing Custom must not show and save over it. */
+            it->hasKept =
+                GWConfig_GetNth(kFields[i].key, 0, it->kept, sizeof(it->kept)) ||
+                GWConfig_GetCommented(kFields[i].key, it->kept, sizeof(it->kept));
         }
     }
     apply_gates();
@@ -617,6 +628,11 @@ static int save_values(void)
     for (i = 0; i < FIELDS; ++i) {
         const Field *f = &kFields[i];
         int valid = 1;
+
+        /* A row that does not apply is commented out, not saved: its value
+         * is no business of Save's, and a bad one would beep and focus a
+         * field the user cannot type in. */
+        if (gw_gate_gated(f->key) && !applies(i)) continue;
 
         read_value(i, value, sizeof(value));
 
@@ -663,16 +679,20 @@ static int save_values(void)
     }
 
     /* Write edits across all panes. Preserve any refresh token rotated by the
-     * live core while this window was open. A gated row is written whole
-     * while it applies -- a value shown but never typed over still has to
-     * reach the file -- and commented out otherwise, which keeps it there
-     * for the next time it applies. */
+     * live core while this window was open. A gated row that applies is
+     * written when edited, or when it did not apply as the file was read --
+     * a value shown but never typed over, such as a provider's server on
+     * switching to Custom, still has to reach the file. One that does not
+     * apply is commented out, which keeps it there for the next time it
+     * does. */
     for (i = 0; i < FIELDS; ++i) {
         if (gw_gate_gated(kFields[i].key)) {
-            int ok;
+            int ok = 1;
             if (applies(i)) {
                 read_value(i, value, sizeof(value));
-                ok = GWConfig_Set(kFields[i].key, value);
+                if (!gItems[i].appliedAtLoad ||
+                    strcmp(value, gItems[i].original) != 0)
+                    ok = GWConfig_Set(kFields[i].key, value);
             } else {
                 ok = GWConfig_Comment(kFields[i].key);
             }

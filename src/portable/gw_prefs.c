@@ -337,21 +337,68 @@ size_t gw_prefs_comment(const char *text, size_t len, const char *key,
     size_t off = 0;
     size_t used = 0;
     size_t klen = strlen(key);
+    size_t vs = 0, ve = 0;              /* the first active line's value */
+    size_t slot = (size_t)-1;           /* the first commented copy's line */
+    int active = 0;
 
+    /* Where the value is, and whether a commented copy is waiting for it. */
     while (off < len) {
-        size_t line_end, next, start, sep, n;
+        size_t line_end, next, start, sep;
+        int kind;
 
         gw_prefs_line(text, len, off, &line_end, &next);
-        if (gw_prefs_match(text, off, line_end, key, klen,
-                           &start, &sep) == 1) {
-            if (used + 2 > cap) return 0;
-            out[used++] = '#';
-            out[used++] = ' ';
+        kind = gw_prefs_match(text, off, line_end, key, klen, &start, &sep);
+        if (kind == 1 && !active) {
+            active = 1;
+            vs = sep + 1;
+            ve = line_end;
+            while (vs < ve && (text[vs] == ' ' || text[vs] == '\t')) vs++;
+            while (ve > vs && (text[ve - 1] == ' ' || text[ve - 1] == '\t'))
+                ve--;
+        } else if (kind == 2 && slot == (size_t)-1) {
+            slot = off;
         }
-        n = next - off;
-        if (used + n > cap) return 0;
-        memcpy(out + used, text + off, n);
-        used += n;
+        off = next;
+    }
+
+    for (off = 0; off < len; ) {
+        size_t line_end, next, start, sep, n;
+        int kind;
+
+        gw_prefs_line(text, len, off, &line_end, &next);
+        kind = active ? gw_prefs_match(text, off, line_end, key, klen,
+                                       &start, &sep) : 0;
+
+        if (kind == 1 && slot != (size_t)-1) {
+            /* The value moves to the commented copy below or above. */
+        } else if (off == slot && active) {
+            /*
+             * The first commented copy takes the value, where it stands and
+             * as it is spaced. Otherwise an older commented copy -- the
+             * example's placeholder, say -- would sit first and be what
+             * comes back, over the value the user had actually set.
+             */
+            n = (sep + 1 - off) + 1 + (ve - vs) + (next - line_end);
+            if (used + n > cap) return 0;
+            memcpy(out + used, text + off, sep + 1 - off);
+            used += sep + 1 - off;
+            out[used++] = ' ';
+            memcpy(out + used, text + vs, ve - vs);
+            used += ve - vs;
+            memcpy(out + used, text + line_end, next - line_end);
+            used += next - line_end;
+        } else {
+            if (kind == 1) {
+                /* No commented copy to take it: comment the line itself. */
+                if (used + 2 > cap) return 0;
+                out[used++] = '#';
+                out[used++] = ' ';
+            }
+            n = next - off;
+            if (used + n > cap) return 0;
+            memcpy(out + used, text + off, n);
+            used += n;
+        }
         off = next;
     }
     return used;

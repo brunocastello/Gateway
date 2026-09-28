@@ -1823,23 +1823,51 @@ static void test_prefs_comment(void)
                   "a ';' comment in a CR file is uncommented");
     }
 
-    /* Commenting out: every active copy, indentation kept, comments alone. */
+    /* Commenting out with no commented copy: every active line, indentation
+     * kept. */
     {
         static const char active[] =
             "imap_host = a\r\n"
             "  imap_host = b\r\n"
-            "# imap_host = c\r\n"
             "pop_host = d\r\n";
         n = gw_prefs_comment(active, sizeof(active) - 1, "imap_host",
                              out, sizeof(out));
         check_buf(out, n,
                   "# imap_host = a\r\n"
                   "#   imap_host = b\r\n"
-                  "# imap_host = c\r\n"
                   "pop_host = d\r\n",
                   "comment covers every active copy");
         check(gw_prefs_get(out, n, "imap_host", again, sizeof(again)) == 0,
               "a commented key reads as unset");
+    }
+
+    /* A commented copy already there -- the example's placeholder -- takes
+     * the value in place, so the value in force is what comes back, not
+     * the placeholder. Later commented copies are left alone. */
+    {
+        static const char placeholder[] =
+            "# imap_host           = imap.example.com\n"
+            "pop_host = d\n"
+            "# imap_host = older\n"
+            "imap_host = mail.fastmail.com\n";
+        n = gw_prefs_comment(placeholder, sizeof(placeholder) - 1,
+                             "imap_host", out, sizeof(out));
+        check_buf(out, n,
+                  "# imap_host           = mail.fastmail.com\n"
+                  "pop_host = d\n"
+                  "# imap_host = older\n",
+                  "the first commented copy takes the active value");
+        check(gw_prefs_get_commented(out, n, "imap_host", again,
+                                     sizeof(again)) == 1 &&
+              strcmp(again, "mail.fastmail.com") == 0,
+              "and is what reads back");
+        m = gw_prefs_set(out, n, "imap_host", "mail.fastmail.com",
+                         again, sizeof(again));
+        check_buf(again, m,
+                  "imap_host           = mail.fastmail.com\n"
+                  "pop_host = d\n"
+                  "# imap_host = older\n",
+                  "and is what set brings back");
     }
 
     /* Absent or already commented: the text comes back unchanged. */
@@ -1942,6 +1970,7 @@ static const char *gate_lookup(const char *key, void *ctx)
 /* Which rows the settings windows dim, and which they insist on. */
 static void test_gate(void)
 {
+    const char *v;
     static const char *unset[] = { NULL };
     static const char *custom[] = { "provider", "custom", NULL };
     static const char *gmail[] = { "provider", "gmail", NULL };
@@ -1988,6 +2017,21 @@ static void test_gate(void)
     check(gw_gate_applies("tunnel_sni", gate_lookup, (void *)bad) &&
           !gw_gate_applies("tunnel_proxy_host", gate_lookup, (void *)bad),
           "unreadable deciding values mean the defaults");
+
+    v = gw_gate_canonical("tunnel_proxy", "SOCKS");
+    check_str(v ? v : "(null)", "socks5", "socks shows as socks5");
+    v = gw_gate_canonical("tunnel_proxy", "connect");
+    check_str(v ? v : "(null)", "http", "connect shows as http");
+    v = gw_gate_canonical("tunnel_proxy", "direct");
+    check_str(v ? v : "(null)", "none", "direct shows as none");
+    check(gw_gate_canonical("tunnel_proxy", "ftp") == NULL,
+          "an unknown proxy kind has no pop-up value");
+    v = gw_gate_canonical("provider", "Google");
+    check_str(v ? v : "(null)", "gmail", "google shows as gmail");
+    v = gw_gate_canonical("provider", "");
+    check_str(v ? v : "(null)", "outlook", "unset shows as outlook");
+    check(gw_gate_canonical("follow_redirects", "auto") == NULL,
+          "other keys have no canonical form here");
 
     check(gw_gate_required("smtp_host") && gw_gate_required("tunnel_proxy_host") &&
           !gw_gate_required("oauth_scope") && !gw_gate_required("imap_upstream_port") &&

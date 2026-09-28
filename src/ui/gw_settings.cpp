@@ -239,6 +239,7 @@ struct Item {
     char kept[kValueCapacity];     // gated rows: the value to restore when
     bool hasKept;                  // the row applies again (see gw_gate.h)
     bool live;                     // gated rows: applies as last shown
+    bool appliedAtLoad;            // gated rows: applied when the file was read
     bool overflow;                 // Never silently save a truncated value.
 };
 
@@ -377,6 +378,12 @@ void LoadValues(Item *items)
         } else {
             const char *current = GWConfig_Str(f.key, f.fallback);
             std::strncpy(value, current, sizeof(value) - 1);
+            // "google" or "socks" is Gmail or SOCKS5 to Gateway; showing the
+            // first pop-up item instead would have Save change the file.
+            if (Popup(f.kind)) {
+                const char *canonical = gw_gate_canonical(f.key, value);
+                if (canonical) std::strcpy(value, canonical);
+            }
         }
         std::strcpy(item.original, value);
         ShowValue(item, f, value);
@@ -670,13 +677,17 @@ public:
         for (int i = 0; i < kFieldCount; ++i) {
             Item &item = items[i];
             if (!gw_gate_gated(kFields[i].key)) continue;
-            item.live = Applies(i);
+            item.live = item.appliedAtLoad = Applies(i);
             if (item.live) {
                 std::strcpy(item.kept, item.original);
                 item.hasKept = true;
             } else {
-                item.hasKept = GWConfig_GetCommented(kFields[i].key, item.kept,
-                                                     sizeof(item.kept)) != 0;
+                // An active line first: a mail server a 0.3.6 file overrides
+                // under Outlook is ignored now, but it is the user's value,
+                // and choosing Custom must not show and save over it.
+                item.hasKept =
+                    GWConfig_GetNth(kFields[i].key, 0, item.kept, sizeof(item.kept)) ||
+                    GWConfig_GetCommented(kFields[i].key, item.kept, sizeof(item.kept));
             }
         }
         ApplyGates();
@@ -707,6 +718,13 @@ public:
                 if (item.live) {
                     ReadValue(item, f, item.kept);
                     item.hasKept = true;
+                }
+                // The TLS box and the proxy pop-up share a pane with the rows
+                // they dim, and a click on them leaves the keyboard where it
+                // was: take it off a row that can no longer be typed in.
+                if (focus == i) {
+                    ClearKeyboardFocus(window);
+                    focus = -1;
                 }
                 const char *supplied = gw_provider_default(chosen, f.key);
                 if (supplied) ShowValue(item, f, supplied);
@@ -949,6 +967,10 @@ public:
         // Validate every pane before writing anything.
         for (short i = 0; i < kFieldCount; ++i) {
             const Field &f = kFields[i];
+            // A row that does not apply is commented out, not saved: its
+            // value is no business of Save's, and a bad one would beep and
+            // focus a field the user cannot type in.
+            if (gw_gate_gated(f.key) && !Applies(i)) continue;
             ReadValue(items[i], f, value);
             bool valid = true;
             // A row that applies and must be named: the Custom servers, the
@@ -980,16 +1002,19 @@ public:
             }
         }
         // Write edits across all panes. Preserve any refresh token rotated by
-        // the live core while this window was open. A gated row is written
-        // whole while it applies -- a value shown but never typed over still
-        // has to reach the file -- and commented out otherwise, which keeps
-        // it there for the next time it applies.
+        // the live core while this window was open. A gated row that applies
+        // is written when edited, or when it did not apply as the file was
+        // read -- a value shown but never typed over, such as a provider's
+        // server on switching to Custom, still has to reach the file. One
+        // that does not apply is commented out, which keeps it there for the
+        // next time it does.
         for (int i = 0; i < kFieldCount; ++i) {
             if (gw_gate_gated(kFields[i].key)) {
-                int ok;
+                int ok = 1;
                 if (Applies(i)) {
                     ReadValue(items[i], kFields[i], value);
-                    ok = GWConfig_Set(kFields[i].key, value);
+                    if (!items[i].appliedAtLoad || std::strcmp(value, items[i].original))
+                        ok = GWConfig_Set(kFields[i].key, value);
                 } else {
                     ok = GWConfig_Comment(kFields[i].key);
                 }

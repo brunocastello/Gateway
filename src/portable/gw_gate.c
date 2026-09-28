@@ -104,3 +104,24 @@ int gw_gate_required(const char *key)
     g = gw_gate_find(key);
     return g != NULL && g->required;
 }
+
+const char *gw_gate_canonical(const char *key, const char *value)
+{
+    if (value == NULL) value = "";
+    if (gw_stricmp(key, "provider") == 0) {
+        /* As gw_provider_default reads it: anything unknown is Outlook. */
+        if (gw_provider_is_custom(value)) return "custom";
+        if (gw_stricmp(value, "gmail") == 0 || gw_stricmp(value, "google") == 0)
+            return "gmail";
+        return "outlook";
+    }
+    if (gw_stricmp(key, "tunnel_proxy") == 0) {
+        switch (gw_fwd_kind(value)) {
+        case GW_FWD_NONE:   return "none";
+        case GW_FWD_HTTP:   return "http";
+        case GW_FWD_SOCKS5: return "socks5";
+        default:            return NULL;
+        }
+    }
+    return NULL;
+}

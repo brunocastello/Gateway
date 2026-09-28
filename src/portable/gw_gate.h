@@ -37,6 +37,15 @@ int gw_gate_applies(const char *key, GWGateLookup get, void *ctx);
 /* 1 when key, while it applies, may not be left empty. */
 int gw_gate_required(const char *key);
 
+/*
+ * The pop-up value that means what Gateway does with value for key, or NULL
+ * when key is not a pop-up or value means nothing Gateway accepts. The file
+ * may say "google" or "socks", which Gateway takes as gmail and socks5;
+ * a window showing the first pop-up item for them instead, and saving that,
+ * would quietly change what the file does.
+ */
+const char *gw_gate_canonical(const char *key, const char *value);
+
 #ifdef __cplusplus
 }
 #endif

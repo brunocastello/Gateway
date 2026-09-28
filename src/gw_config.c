@@ -165,6 +165,13 @@ static char sUpdated[GW_PREFS_MAX];
  * not fit, and keep the in-memory copy in step so later reads see it. */
 static int gw_config_commit(const char *key, const char *updated, size_t n)
 {
+    /*
+     * A file the load had to cut short is in memory only up to the cut, so
+     * writing it back would throw away everything after it -- possibly the
+     * end of the refresh token. Refuse, as for a result too large: a text
+     * that fills the read buffer would be cut short on the next load.
+     */
+    if (sLen >= GW_PREFS_MAX - 1 || n >= GW_PREFS_MAX - 1) n = 0;
     if (n == 0) {
         gw_logc("G22", "%s could not be saved: the prefs file would be "
                 "larger than %d bytes", key, (int)GW_PREFS_MAX);
@@ -181,9 +188,10 @@ static int gw_config_commit(const char *key, const char *updated, size_t n)
 
 int GWConfig_Set(const char *key, const char *value)
 {
+    /* One byte short of the buffer, for the terminator commit adds. */
     return gw_config_commit(key, sUpdated,
                             gw_prefs_set(sText, (size_t)sLen, key, value,
-                                         sUpdated, sizeof(sUpdated)));
+                                         sUpdated, sizeof(sUpdated) - 1));
 }
 
 int GWConfig_Comment(const char *key)
@@ -191,7 +199,7 @@ int GWConfig_Comment(const char *key)
     size_t n;
 
     n = gw_prefs_comment(sText, (size_t)sLen, key,
-                         sUpdated, sizeof(sUpdated));
+                         sUpdated, sizeof(sUpdated) - 1);
     if (n == (size_t)sLen && memcmp(sUpdated, sText, n) == 0)
         return 1;                       /* already commented or absent */
     return gw_config_commit(key, sUpdated, n);

@@ -72,10 +72,14 @@ size_t gw_prefs_set(const char *text, size_t len, const char *key,
                     const char *value, char *out, size_t cap);
 
 /*
- * Produce a copy of the prefs text with every active line of key commented
- * out ("# " before it), so the key reads as unset while its value stays in
- * the file for gw_prefs_set to bring back. Text without an active line comes
- * back unchanged.
+ * Produce a copy of the prefs text with key commented out, so it reads as
+ * unset while its value stays in the file for gw_prefs_set to bring back.
+ * When the file already has a commented copy ("# key = old"), the first one
+ * takes the active value in place and the active lines go; otherwise every
+ * active line gets "# " in front. Either way the first commented copy is the
+ * value that was in force, which is the one gw_prefs_set and
+ * gw_prefs_get_commented read. Text without an active line comes back
+ * unchanged.
  *
  * Returns the length written, or 0 if it would not fit in cap.
  */
