@@ -75,6 +75,24 @@ well as a TLS 1.0 one, and confirm in the log that the second connection to a
 host says `secure connection with the browser, …, resumed`. The abandon
 readout is already there to say where it stops if it does.
 
+## Open: `wayback_api` is wired to nothing
+
+Found in the post-0.3.7 audit. Both Preferences windows show "Find the nearest
+available snapshot" (`wayback_api`, default 1), `gw_core.c` reads it into the
+Wayback settings, and nothing ever looks at the flag — so the checkbox reports
+a choice Gateway does not honour, which `docs/settings-window.md` §4.3 calls
+the one unacceptable outcome. It was item B of that document's definition of
+done, never finished.
+
+What Gateway does either way: it asks for `/web/<era>/<url>`, the archive
+redirects to the nearest capture, and Gateway checks it against
+`wayback_tolerance`. That is upstream's `WAYBACK_API` *off* path, and it
+already reaches the nearest snapshot. The spec's *on* path asks the
+Availability API first — an extra TLS request per page on hardware where TLS
+is the expensive step — for much the same answer. The choice is between
+building that path, giving the setting a smaller meaning the existing
+mechanism can honour, or removing the checkbox and the key.
+
 ## 2. Keep-alive inside the terminated tunnel
 
 The larger version of the same win: one handshake per host rather than per
