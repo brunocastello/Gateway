@@ -715,6 +715,11 @@ public:
             }
             item.live = now;
         }
+        // The deciding row can share a pane with the rows it gates (the TLS
+        // box, the proxy pop-up). Their labels and captions are drawn by
+        // Draw(), and SetControlData does not repaint a field, so nothing on
+        // show changed until the pane was left and redrawn -- ask for that now.
+        InvalRect(&bounds);
     }
 
     /* Whether a control is one whose value can dim or restore other rows. */
