@@ -1515,8 +1515,10 @@ A browser that frames its hello as SSLv2 ("Use SSL 2.0" ticked) cannot
 resume through §22, which drops the session ID; whether such a browser falls
 back to a native hello when it has a session to offer is for hardware to say.
 
-**Verified:** not yet on hardware at the time of writing. Test on the SSL 3.0
-clients (IE 5.1.7 Mac, Netscape 4.75, 16-bit IE 5) and one TLS 1.0 client: the
-first handshake to a host is full, later ones say `resumed`. If an SSL 3.0
-client fails only on resumed handshakes, the abandon readout says where; the
-fallback is to resume TLS 1.0 sessions only.
+**Verified** on Windows 95, 2026-09-28, against howsmyssl.com: Internet
+Explorer 4 and Netscape 4.08 — the latter SSL 3.0 at best, so through the
+bridges above — each made a full first handshake and resumed from then on,
+and the page loaded quickly. Not yet tried: IE 5.1.7 on Mac OS 9 and 16-bit
+IE 5. Should one of them reject a resumed handshake, the log says S22, the
+session is forgotten and its next connection is a full handshake; if that
+repeats for a browser, the fallback is to resume TLS 1.0 sessions only.

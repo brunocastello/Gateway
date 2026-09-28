@@ -1,6 +1,6 @@
-# After 0.3.7 — what is worth doing next
+# After 0.3.8 — what is worth doing next
 
-0.3.7 shipped on 2026-09-28. The upstream side is TLS 1.3 and finished; the
+0.3.8 shipped on 2026-09-28. The upstream side is TLS 1.3 and finished; the
 browser side serves everything from Netscape 3 to Classilla over SSL 3.0 or
 TLS 1.0; mail works through `get-email-token.py`; a generic tunnel carries
 SSH or anything else over TLS. What remains is making the machine Gateway
@@ -10,6 +10,16 @@ one up without re-deriving it — and records what was tried and is not worth
 trying again.
 
 ---
+
+## Shipped in 0.3.8
+
+- **TLS session resumption** on the browser side of `connect_mitm`: one LRU
+  cache, `, resumed` on the handshake line, S22 and a forgotten session when
+  a browser rejects a resumption (`PATCHES.md` §36). Verified on Windows 95
+  with IE 4 and Netscape 4.08; IE 5.1.7 Mac and 16-bit IE 5 not yet tried.
+- **The post-0.3.7 audit**: `wayback_api` removed (below), the Tunnel's
+  remote host required while the tunnel is on, the inverted "Keep the
+  charset in Content-Type" label corrected, stale docs brought up to date.
 
 ## Shipped in 0.3.7
 
@@ -34,47 +44,6 @@ For the record, and for where to look when something in them misbehaves:
 
 ---
 
-## 1. TLS session resumption
-
-**Built on `gw038`, 2026-09-28 — awaiting hardware verification.** One LRU
-session cache for the browser-side server, and a `, resumed` on the proxy's
-"secure connection with the browser" line when it is used; the design and
-why the SSL 3.0 bridges carry over are in `PATCHES.md` §36. The rest of this
-item is the case as it was made, and the test still to run.
-
-**The evidence.** IE 5.1.7 for Mac OS 9 loading howsmyssl.com with
-`connect_mitm = 1` (build fc4bb6f, 2026-09-20):
-
-```
-#3 MITM client hello: 5 bytes, first: 16 03 00 00 35
-#9 MITM client hello: 5 bytes, first: 16 03 00 00 55
-```
-
-Both are native SSL 3.0 hellos to the same host, seconds apart. The second is
-32 bytes longer: it carries the session ID from the first. The browser is
-asking to resume, and Gateway performs a full handshake anyway, because no
-session cache is set on the server context — `third_party/certainly/src/server.c`
-calls `br_ssl_server_init_full_rsa` and nothing else.
-
-**Why it matters.** Every resource on a page is a fresh CONNECT (the client
-hop is always `Connection: close`), and every fresh CONNECT is a 1024-bit RSA
-private-key operation on a 1997 PowerPC. That operation is most of what
-"slow" means with `connect_mitm` on. An abbreviated handshake skips it.
-
-**The change.** BearSSL's `br_ssl_session_cache_lru` — a few kilobytes,
-`br_ssl_session_cache_lru_init` once at startup and `br_ssl_server_set_cache`
-per server context. Nothing in the proxy needs to know.
-
-**What has to be verified.** The SSL 3.0 bridges of PATCHES.md §28 fire at
-most once per connection under conditions written for the full handshake. An
-abbreviated handshake has a different flight order — the server's
-ChangeCipherSpec and Finished go first, there is no ClientKeyExchange, and the
-36-byte Finished must be produced and checked in both directions. Test on the
-clients that negotiate SSL 3.0 (IE 5.1.7 Mac, Netscape 4.75, 16-bit IE 5) as
-well as a TLS 1.0 one, and confirm in the log that the second connection to a
-host says `secure connection with the browser, …, resumed`. The abandon
-readout is already there to say where it stops if it does.
-
 ## Resolved: `wayback_api` removed
 
 Found in the post-0.3.7 audit: both Preferences windows showed "Find the
@@ -87,17 +56,17 @@ have cost an extra TLS request per page for much the same answer. Removed on
 old prefs file is ignored, like any unknown key. If the Availability API is
 ever wanted, `docs/settings-window.md` §4.3 has the design and its two traps.
 
-## 2. Keep-alive inside the terminated tunnel
+## 1. Keep-alive inside the terminated tunnel
 
-The larger version of the same win: one handshake per host rather than per
-resource. It collides with the design rule that the client hop is always
+The larger version of resumption's win: one handshake per host rather than
+per resource. It collides with the design rule that the client hop is always
 `Connection: close` (CLAUDE.md, Module 1), which exists for the cooperative
 loop's sake — a kept-alive TLS connection is a splice slot held for as long
-as the browser likes. Resumption gets most of the benefit without touching
-that rule, so do it first and measure before deciding whether this is still
-worth its cost.
+as the browser likes. Resumption, shipped in 0.3.8, gets most of the benefit
+without touching that rule; measure a page with it before deciding whether
+this is still worth its cost.
 
-## 3. IE 3.0 may need a checkbox, not code — but first, its hello bytes
+## 2. IE 3.0 may need a checkbox, not code — but first, its hello bytes
 
 32-bit IE 3.0x on Windows 95 has only ever produced "CONNECT, terminating
 TLS, then silence" — three attempts alike, all on builds from before the
