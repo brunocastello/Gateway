@@ -235,6 +235,8 @@ void          GWStream_ServerHelloHex(const GWStream *s, char *out, size_t cap);
 unsigned int  GWStream_ServerVersion(const GWStream *s);
 /* 1 when the browser-side handshake resumed a cached session. */
 int           GWStream_ServerResumed(const GWStream *s);
+/* 1 when it tried to, completed or not; see MacTLS_ServerResumeTried. */
+int           GWStream_ServerResumeTried(const GWStream *s);
 /* 1 while TLS still holds bytes that have not reached the socket. A write to
  * a TLS stream only stages plaintext, so closing on the strength of the write
  * having returned throws the tail away. Plain streams always answer 0: the

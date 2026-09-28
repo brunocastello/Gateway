@@ -119,11 +119,34 @@ static int gw_cache_load(const br_ssl_session_cache_class **ctx,
 {
     MacTLS_Server *s = (MacTLS_Server *)(void *)
                        ((char *)sc - offsetof(MacTLS_Server, sc));
+    br_ssl_session_parameters found = *params;
 
     (void)ctx;
     memcpy(s->offeredId, params->session_id, sizeof s->offeredId);
     s->offered = 1;
-    return sLru.vtable->load(&sLru.vtable, sc, params);
+    if (!sLru.vtable->load(&sLru.vtable, sc, &found)) return 0;
+    /*
+     * BearSSL's resume check compares the cached version with the client's
+     * maximum only, not with the engine's floor. A session cached while
+     * allow_sslv3 was on must not bring SSL 3.0 back once it is off.
+     */
+    if (found.version < sc->eng.version_min) return 0;
+    *params = found;
+    return 1;
+}
+
+/*
+ * Whether this handshake is a resumption attempt: the browser offered an ID
+ * and it was still the session's ID once our first flight went out. BearSSL
+ * replaces the offered ID with a fresh one unless it is resuming, so this
+ * holds from the ServerHello on, whether or not the handshake then finished.
+ */
+static int gw_resume_tried(const MacTLS_Server *s)
+{
+    return s->offered && s->firstFlightSeen &&
+           s->sc.eng.session.session_id_len == sizeof s->offeredId &&
+           memcmp(s->sc.eng.session.session_id, s->offeredId,
+                  sizeof s->offeredId) == 0;
 }
 
 static const br_ssl_session_cache_class kGwCacheClass = {
@@ -254,11 +277,14 @@ void MacTLS_ServerDescribe(const MacTLS_Server *s, char *out, size_t cap)
     rx_after = s->firstFlightSeen ? s->rxTotal - s->rxAtFirstFlight : 0;
     snprintf(out, cap,
              "%s hello, version %04x, suite %04x, rx %lu, "
-             "rx after our flight %lu, in-rectype %u, incrypt %u",
+             "rx after our flight %lu, in-rectype %u, incrypt %u, "
+             "session %s",
              s->sc.eng.ssl2_hello ? "SSLv2" : "native",
              s->sc.eng.session.version, s->sc.eng.session.cipher_suite,
              (unsigned long)s->rxTotal, (unsigned long)rx_after,
-             s->sc.eng.record_type_in, s->sc.eng.incrypt);
+             s->sc.eng.record_type_in, s->sc.eng.incrypt,
+             gw_resume_tried(s) ? "resumed" :
+             s->offered ? "offered, not resumed" : "new");
 }
 
 void MacTLS_ServerHelloHex(const MacTLS_Server *s, char *out, size_t cap)
@@ -279,6 +305,11 @@ void MacTLS_ServerHelloHex(const MacTLS_Server *s, char *out, size_t cap)
 int MacTLS_ServerResumed(const MacTLS_Server *s)
 {
     return s != NULL && s->handshook && s->resumed;
+}
+
+int MacTLS_ServerResumeTried(const MacTLS_Server *s)
+{
+    return s != NULL && gw_resume_tried(s);
 }
 
 unsigned int MacTLS_ServerSessionVersion(const MacTLS_Server *s)
@@ -644,6 +675,14 @@ unsigned int MacTLS_ServerClientVersion(const MacTLS_Server *s)
 void MacTLS_ServerClose(MacTLS_Server *s)
 {
     if (s == NULL) return;
+
+    /*
+     * A resumption that did not complete: forget the session, so a browser
+     * that keeps offering it gets a full handshake next time instead of the
+     * same failure until Gateway restarts (lru_load had moved it to the head).
+     */
+    if (!s->handshook && gw_resume_tried(s))
+        br_ssl_session_cache_lru_forget(&sLru, s->offeredId);
 
     if (s->state == kMacTLS_Connected || s->state == kMacTLS_Handshaking)
         br_ssl_engine_close(&s->sc.eng);

@@ -1491,6 +1491,30 @@ must not outlive the handshake that read its chain is untouched; and one RSA
 key serves every host, so resuming another host's session reveals nothing a
 fresh handshake would not.
 
+**Three guards the review asked for.**
+
+- *The floor.* BearSSL's resume check compares the cached version with the
+  client's maximum only, never with the engine's minimum, so a session cached
+  while `allow_sslv3` was on could bring SSL 3.0 back after it was turned off.
+  The `load` wrapper reads into a copy and refuses a session below
+  `version_min`.
+- *A failed resumption is forgotten.* `lru_load` moves a hit to the head of
+  the list, so a session whose resumption a browser rejects would fail the
+  same way on every connection until Gateway restarted.
+  `MacTLS_ServerClose()` calls `br_ssl_session_cache_lru_forget()` for a
+  resumption that never completed.
+- *The failure says so.* A resumed handshake sends no certificate, so the
+  proxy's S03–S05 ("gave up after seeing our certificate") would point at the
+  wrong thing. BearSSL replaces the offered ID with a fresh one unless it is
+  resuming, so "the offered ID is still the session's once our flight went
+  out" identifies an attempt whether or not it finished;
+  `MacTLS_ServerResumeTried()` reports it, the proxy logs S22 instead, and
+  `MacTLS_ServerDescribe()` names the session as new, offered or resumed.
+
+A browser that frames its hello as SSLv2 ("Use SSL 2.0" ticked) cannot
+resume through §22, which drops the session ID; whether such a browser falls
+back to a native hello when it has a session to offer is for hardware to say.
+
 **Verified:** not yet on hardware at the time of writing. Test on the SSL 3.0
 clients (IE 5.1.7 Mac, Netscape 4.75, 16-bit IE 5) and one TLS 1.0 client: the
 first handshake to a host is full, later ones say `resumed`. If an SSL 3.0

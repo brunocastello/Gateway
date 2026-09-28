@@ -100,7 +100,7 @@ static const Field kFields[] = {
     { 3, Check, "wayback_geocities", "Send &geocities.com to oocities.org", "1", "" },
     { 3, Check, "wayback_cache", "Let the browser &keep snapshots", "1", "" },
     { 3, Check, "wayback_settings", "Serve the browser se&ttings page", "1", "" },
-    { 3, Check, "wayback_ct_encoding", "Strip &charset from Content-Type", "1", "" },
+    { 3, Check, "wayback_ct_encoding", "Keep the &charset in Content-Type", "1", "" },
     { 3, Check, "wayback_quick_images", "&Quick images (compatibility setting)", "1",
       "Accepted for compatibility; it has no effect." },
     { 3, List, "wayback_live", "&Whitelist:", "",
