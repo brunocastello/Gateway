@@ -13,7 +13,7 @@ trying again.
 
 ## Ideas for 0.3.9
 
-Candidates, not commitments; each is written up further down or says where.
+Picked on 2026-09-28 for later sessions; each is written up further down.
 None is started.
 
 1. **Keep-alive inside the terminated tunnel** — one handshake per host
@@ -22,29 +22,30 @@ None is started.
 2. **IE 3.0's hello bytes** — read what 32-bit IE 3 sends, with and without
    PCT ticked; it may need a README line rather than code. Needs a Windows 95
    run with `log_debug` on. (Item 2 below.)
-3. **Resumption on the browsers not yet tried** — IE 5.1.7 on Mac OS 9 and
-   16-bit IE 5. A test, not code, unless one of them logs S22 every time;
-   then resume TLS 1.0 sessions only (`PATCHES.md` §36).
-4. **roytam1's `connect_upgrade`** — plaintext inside a `CONNECT` to port 80,
+3. **roytam1's `connect_upgrade`** — plaintext inside a `CONNECT` to port 80,
    re-originated over TLS. Only with a client that really sends `CONNECT
    host:80` to test against. (*Deferred from roytam1's fork* below.)
-5. **Prefs writer polish**, from the 0.3.7 settings review, all low value:
-   a comment such as `# provider = custom is accepted` reads as a commented
-   setting; commenting then uncommenting an indented line loses its indent;
-   rewriting a gated line drops anything after its value on that line.
-6. **Parked: separate proxies for Internet Explorer and Outlook Express on
-   Windows.** OE's HTML viewer follows IE's proxy settings, and a PAC script
-   is never told which program asks, so OE's images go to the Wayback
-   listener with IE. The only lead was telling OE apart by `User-Agent` on
-   that listener, unverified — its requests may carry IE's own. Set aside by
-   the user on 2026-09-28.
+
+Settled the same night, after 0.3.8 shipped:
+
+- *Resumption on the remaining browsers* (IE 5.1.7 Mac, 16-bit IE 5): marked
+  completed by the user.
+- *Prefs writer polish* from the 0.3.7 settings review: uncommenting now
+  removes only the `# ` a comment added, so an indented line comes back
+  indented. Setting-shaped prose (`# provider = custom is accepted`) still
+  reads as a commented setting — it cannot be told from a value with spaces,
+  as `oauth_scope`'s has — and a host test pins that as accepted. "Rewriting
+  a line drops what follows its value" was not a defect: in this format a `#`
+  after a value is part of the value.
+- *Separate proxies for IE and Outlook Express on Windows*: discarded.
 
 ## Shipped in 0.3.8
 
 - **TLS session resumption** on the browser side of `connect_mitm`: one LRU
   cache, `, resumed` on the handshake line, S22 and a forgotten session when
   a browser rejects a resumption (`PATCHES.md` §36). Verified on Windows 95
-  with IE 4 and Netscape 4.08; IE 5.1.7 Mac and 16-bit IE 5 not yet tried.
+  with IE 4 and Netscape 4.08; IE 5.1.7 Mac and 16-bit IE 5 marked completed
+  afterwards.
 - **The post-0.3.7 audit**: `wayback_api` removed (below), the Tunnel's
   remote host required while the tunnel is on, the inverted "Keep the
   charset in Content-Type" label corrected, stale docs brought up to date.

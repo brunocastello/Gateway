@@ -281,16 +281,29 @@ size_t gw_prefs_set(const char *text, size_t len, const char *key,
         kind = gw_prefs_match(text, off, line_end, key, klen, &start, &sep);
 
         if (off == target) {
-            /* Rewrite in place, keeping the key exactly as the user typed it
-             * and the indentation before any comment marker. */
-            size_t lead = off;
+            /*
+             * Rewrite in place, keeping the key exactly as the user typed it.
+             * Uncommenting removes the marker and one space after it -- the
+             * "# " gw_prefs_comment puts in front of a line -- and keeps any
+             * indentation before or after, so an indented line comes back
+             * indented.
+             */
+            size_t lead = off, after = start;
             while (lead < line_end && (text[lead] == ' ' || text[lead] == '\t'))
                 lead++;
-            if (want == 1) lead = start;
-            if (used + (lead - off) + (sep - start) + 2 + vlen + eol_len > cap)
+            if (want == 1) {
+                lead = start;
+            } else {
+                after = lead + 1;
+                if (after < start && text[after] == ' ') after++;
+            }
+            if (used + (lead - off) + (start - after) + (sep - start) + 2 +
+                vlen + eol_len > cap)
                 return 0;
             memcpy(out + used, text + off, lead - off);
             used += lead - off;
+            memcpy(out + used, text + after, start - after);
+            used += start - after;
             memcpy(out + used, text + start, sep - start);
             used += sep - start;
             out[used++] = text[sep];        /* the separator they used */

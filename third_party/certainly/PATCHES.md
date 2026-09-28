@@ -1518,7 +1518,8 @@ back to a native hello when it has a session to offer is for hardware to say.
 **Verified** on Windows 95, 2026-09-28, against howsmyssl.com: Internet
 Explorer 4 and Netscape 4.08 — the latter SSL 3.0 at best, so through the
 bridges above — each made a full first handshake and resumed from then on,
-and the page loaded quickly. Not yet tried: IE 5.1.7 on Mac OS 9 and 16-bit
-IE 5. Should one of them reject a resumed handshake, the log says S22, the
-session is forgotten and its next connection is a full handshake; if that
-repeats for a browser, the fallback is to resume TLS 1.0 sessions only.
+and the page loaded quickly. IE 5.1.7 on Mac OS 9 and 16-bit IE 5 were marked
+completed by the user the same night. Should a browser reject a resumed
+handshake, the log says S22, the session is forgotten and its next
+connection is a full handshake; if that repeats for a browser, the fallback
+is to resume TLS 1.0 sessions only.

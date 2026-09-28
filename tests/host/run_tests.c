@@ -1844,6 +1844,32 @@ static void test_prefs_comment(void)
               "a commented key reads as unset");
     }
 
+    /* Commented and uncommented again, an indented line keeps its indent:
+     * uncommenting removes "# " and nothing more. */
+    {
+        static const char indented[] = "  imap_host = b\n";
+        n = gw_prefs_comment(indented, sizeof(indented) - 1, "imap_host",
+                             out, sizeof(out));
+        check_buf(out, n, "#   imap_host = b\n", "an indented line is commented");
+        m = gw_prefs_set(out, n, "imap_host", "b", again, sizeof(again));
+        check_buf(again, m, indented, "and comes back indented");
+    }
+
+    /*
+     * Known and accepted: prose shaped like a commented setting is read as
+     * one. "# provider = custom is accepted" cannot be told from a setting
+     * whose value has spaces -- oauth_scope's does -- so it would be
+     * uncommented. Gateway's own files never write prose in that shape; this
+     * pins the behaviour so a change to it is deliberate.
+     */
+    {
+        static const char prose[] = "# provider = custom is accepted\n";
+        check(gw_prefs_get_commented(prose, sizeof(prose) - 1, "provider",
+                                     again, sizeof(again)) == 1 &&
+              strcmp(again, "custom is accepted") == 0,
+              "setting-shaped prose reads as a commented setting (accepted)");
+    }
+
     /* A commented copy already there -- the example's placeholder -- takes
      * the value in place, so the value in force is what comes back, not
      * the placeholder. Later commented copies are left alone. */
