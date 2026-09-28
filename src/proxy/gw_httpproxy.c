@@ -1801,8 +1801,11 @@ static void step_mitm_wait(GWHttpSession *s)
     case kGWStreamReady: {
         const char *name = tls_version_name(GWStream_ServerVersion(&s->cli));
 
-        gw_log("#%ld secure connection with the browser, %s", s->id,
-               name != NULL ? name : "unknown version");
+        /* "resumed" is the saving session caching exists for: no
+         * certificate and no RSA operation this time (PATCHES.md §36). */
+        gw_log("#%ld secure connection with the browser, %s%s", s->id,
+               name != NULL ? name : "unknown version",
+               GWStream_ServerResumed(&s->cli) ? ", resumed" : "");
         log_mitm_detail(s, 0);
         s->cheadLen = 0;
         s->cheadSent = 0;

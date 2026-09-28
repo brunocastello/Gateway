@@ -25,6 +25,7 @@
 #include "certainly.h"
 #include "certainly_internal.h"
 
+#include <stddef.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -80,7 +81,57 @@ struct MacTLS_Server {
      * SSL and is not served. See MacTLS_ServerHelloHex(). */
     unsigned char          helloHead[24];
     size_t                 helloHeadLen;
+    /* The session ID the browser offered to resume, as the cache was asked
+     * for it (PATCHES.md §36). A handshake resumed when the ID it settled on
+     * is this one: a full handshake always mints a fresh one. */
+    unsigned char          offeredId[32];
+    int                    offered;
+    int                    resumed;
 };
+
+/*
+ * Gateway (PATCHES.md §36): one session cache for every browser-side server,
+ * so a browser that comes back to a host -- which with a Connection: close
+ * client hop is every resource on the page -- resumes rather than paying for
+ * another RSA private-key operation. 100 bytes an entry, so about forty
+ * sessions, far more than four concurrent splices and a page's worth of hosts
+ * need. File-scope statics, as CLAUDE.md permits in Certainly.
+ *
+ * The cache is wrapped only to see what the browser offered: BearSSL does not
+ * say whether a handshake resumed, and a cache hit alone does not mean it did
+ * -- the resumption is dropped if the cached suite is not offered again.
+ */
+static br_ssl_session_cache_lru sLru;
+static unsigned char            sLruStore[4000];
+static int                      sLruReady;
+
+static void gw_cache_save(const br_ssl_session_cache_class **ctx,
+                          br_ssl_server_context *sc,
+                          const br_ssl_session_parameters *params)
+{
+    (void)ctx;
+    sLru.vtable->save(&sLru.vtable, sc, params);
+}
+
+static int gw_cache_load(const br_ssl_session_cache_class **ctx,
+                         br_ssl_server_context *sc,
+                         br_ssl_session_parameters *params)
+{
+    MacTLS_Server *s = (MacTLS_Server *)(void *)
+                       ((char *)sc - offsetof(MacTLS_Server, sc));
+
+    (void)ctx;
+    memcpy(s->offeredId, params->session_id, sizeof s->offeredId);
+    s->offered = 1;
+    return sLru.vtable->load(&sLru.vtable, sc, params);
+}
+
+static const br_ssl_session_cache_class kGwCacheClass = {
+    sizeof(const br_ssl_session_cache_class *),
+    gw_cache_save,
+    gw_cache_load
+};
+static const br_ssl_session_cache_class *sGwCache = &kGwCacheClass;
 
 MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
                                    const unsigned char *leaf, size_t leaf_len,
@@ -137,6 +188,13 @@ MacTLS_Server *MacTLS_ServerCreate(CTSocket sock,
     br_ssl_server_init_full_rsa(&s->sc, s->chain, s->chain_len, sk);
     ssl3_server_init(&s->sc);
     br_ssl_engine_set_buffer(&s->sc.eng, s->iobuf, sizeof(s->iobuf), 0);
+
+    /* After the init calls, which zero the context; before the reset. */
+    if (!sLruReady) {
+        br_ssl_session_cache_lru_init(&sLru, sLruStore, sizeof sLruStore);
+        sLruReady = 1;
+    }
+    br_ssl_server_set_cache(&s->sc, &sGwCache);
 
     /*
      * Our own pool on top of whatever BearSSL has, exactly as the client path
@@ -216,6 +274,11 @@ void MacTLS_ServerHelloHex(const MacTLS_Server *s, char *out, size_t cap)
         if (n < 0 || (size_t)n >= cap - p) break;
         p += (size_t)n;
     }
+}
+
+int MacTLS_ServerResumed(const MacTLS_Server *s)
+{
+    return s != NULL && s->handshook && s->resumed;
 }
 
 unsigned int MacTLS_ServerSessionVersion(const MacTLS_Server *s)
@@ -473,6 +536,11 @@ MacTLS_State MacTLS_ServerPump(MacTLS_Server *s)
     }
 #endif
     if (st & (BR_SSL_SENDAPP | BR_SSL_RECVAPP)) {
+        if (!s->handshook)
+            s->resumed = s->offered &&
+                         s->sc.eng.session.session_id_len == sizeof s->offeredId &&
+                         memcmp(s->sc.eng.session.session_id, s->offeredId,
+                                sizeof s->offeredId) == 0;
         s->handshook = 1;
         s->state = kMacTLS_Connected;
     }

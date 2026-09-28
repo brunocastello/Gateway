@@ -1451,3 +1451,48 @@ hands it over:
 
 The `GW_DEBUG_IO` hex dumps are untouched: they are the developer's build
 flag, not the log a user reads.
+
+## §36 — the browser-side server resumes sessions
+
+Every resource on a `connect_mitm` page is a fresh `CONNECT`, because the
+client hop is always `Connection: close`, and every fresh `CONNECT` was a full
+handshake: a 1024-bit RSA private-key operation on the vintage CPU, which is
+most of what "slow" meant in that mode. The browsers already asked to resume —
+IE 5.1.7's second hello to a host carries the session ID from the first — and
+the server ignored it, because no session cache was set.
+
+`server.c` now keeps one `br_ssl_session_cache_lru` for every server context:
+a 4000-byte file-scope store, about forty sessions at 100 bytes each,
+initialised on first use and attached with `br_ssl_server_set_cache()` after
+the init calls (which zero the context) and before `br_ssl_server_reset()`.
+BearSSL does the rest: it saves a session after a full handshake and, when a
+hello offers a 32-byte ID it holds with a suite still offered, answers with
+ServerHello, ChangeCipherSpec and Finished and skips the certificate and the
+key exchange.
+
+BearSSL does not say whether a handshake resumed, and a cache hit is not the
+answer — the resumption is abandoned if the cached suite is not offered again.
+So the cache is wrapped: its `load` records the ID the browser offered before
+forwarding to the LRU, and when the handshake completes it resumed if the ID
+it settled on is that one, since a full handshake always mints a fresh ID.
+`MacTLS_ServerResumed()` reports it, and the proxy's "secure connection with
+the browser" line ends in `, resumed`.
+
+**Why the SSL 3.0 bridges of §28 carry over.** The SSL 3.0 master-secret
+derivation runs only on a full handshake, which is right: a resumed session
+reuses the cached master secret. The key block is derived from that secret
+and the fresh randoms either way. Both Finished bridges compute over the side
+transcript, whatever the order: resumed, the server's Finished comes first
+and covers ClientHello and ServerHello, and the client's covers those and the
+server's Finished — RFC 6101 §5.6.9. An SSLv2-framed hello drops its session
+ID by design (§22), so those clients always get a full handshake. A cached
+session names no leaf certificate, so the leaf cache's rule that a session
+must not outlive the handshake that read its chain is untouched; and one RSA
+key serves every host, so resuming another host's session reveals nothing a
+fresh handshake would not.
+
+**Verified:** not yet on hardware at the time of writing. Test on the SSL 3.0
+clients (IE 5.1.7 Mac, Netscape 4.75, 16-bit IE 5) and one TLS 1.0 client: the
+first handshake to a host is full, later ones say `resumed`. If an SSL 3.0
+client fails only on resumed handshakes, the abandon readout says where; the
+fallback is to resume TLS 1.0 sessions only.

@@ -36,6 +36,12 @@ For the record, and for where to look when something in them misbehaves:
 
 ## 1. TLS session resumption
 
+**Built on `gw038`, 2026-09-28 — awaiting hardware verification.** One LRU
+session cache for the browser-side server, and a `, resumed` on the proxy's
+"secure connection with the browser" line when it is used; the design and
+why the SSL 3.0 bridges carry over are in `PATCHES.md` §36. The rest of this
+item is the case as it was made, and the test still to run.
+
 **The evidence.** IE 5.1.7 for Mac OS 9 loading howsmyssl.com with
 `connect_mitm = 1` (build fc4bb6f, 2026-09-20):
 
@@ -65,8 +71,8 @@ abbreviated handshake has a different flight order — the server's
 ChangeCipherSpec and Finished go first, there is no ClientKeyExchange, and the
 36-byte Finished must be produced and checked in both directions. Test on the
 clients that negotiate SSL 3.0 (IE 5.1.7 Mac, Netscape 4.75, 16-bit IE 5) as
-well as a TLS 1.0 one, and confirm in the log that the second hello to a host
-ends in `handshake done` with a smaller `rx` than the first. The abandon
+well as a TLS 1.0 one, and confirm in the log that the second connection to a
+host says `secure connection with the browser, …, resumed`. The abandon
 readout is already there to say where it stops if it does.
 
 ## 2. Keep-alive inside the terminated tunnel
