@@ -40,6 +40,16 @@ changes only the wire and the certificate is always checked against
 `tunnel_remote_host`. See `docs/prefs.md`'s Tunnel section and
 `third_party/certainly/PATCHES.md` §32-§34.
 
+Also landed in 0.3.7: **the custom mail servers follow the provider.** The
+upstream hosts, ports, `smtp_starttls` and the token endpoint are read only
+under `provider = custom`; under Outlook or Gmail the provider's values stand
+and a copy in the file is ignored (`src/portable/gw_provider.c`). Both
+Preferences windows show those rows dimmed with the provider's values and, on
+Save, comment them out or write them back in place (`gw_prefs_comment`, and
+`gw_prefs_set` uncommenting a commented-only key). **Release-notes item:** a
+single overridden host under `outlook` no longer works — it needs `custom`.
+The Tunnel settings get the same treatment next.
+
 ---
 
 ## 1. TLS session resumption

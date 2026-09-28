@@ -20,6 +20,7 @@
 #include "../gw_config.h"
 #include "../gw_core.h"
 #include "../portable/gw_prefs.h"
+#include "../portable/gw_provider.h"
 #include "../portable/gw_util.h"
 
 namespace {
@@ -47,7 +48,7 @@ const char *const kIntro[kPaneCount] = {
     "",
     "",
     "",
-    "Empty host fields use the selected provider's defaults.",
+    "Used only by the Custom provider. Outlook and Gmail supply their own.",
     "Obtain the refresh token outside Gateway, then paste it here.\n"
     "Long values scroll horizontally. Tokens may rotate while running.",
     "",
@@ -101,12 +102,13 @@ const Field kFields[] = {
     { 5, Number, "smtp_upstream_port", "SMTP port:", "587", "" },
     { 5, Check, "smtp_starttls", "Use STARTTLS on the SMTP port", "1",
       "Port 465 uses TLS immediately; other ports default to STARTTLS." },
-    { 6, Text, "oauth_host", "Token host:", "", "" },
-    { 6, Text, "oauth_path", "Token path:", "", "" },
-    { 6, Text, "oauth_scope", "Scope:", "", "" },
     { 6, Text, "oauth_client_id", "Client ID:", "", "" },
     { 6, Text, "oauth_client_secret", "Client secret:", "", "" },
     { 6, Text, "refresh_token", "Refresh token:", "", "" },
+    // Custom provider only, like the Mail upstream pane.
+    { 6, Text, "oauth_host", "Token host:", "", "" },
+    { 6, Text, "oauth_path", "Token path:", "", "" },
+    { 6, Text, "oauth_scope", "Scope:", "", "" },
     { 7, Number, "tunnel_local_port", "Local port:", "2222",
       "No local authentication: keep this port behind the machine's own\n"
       "boundary. Stop and start Gateway after changing it." },
@@ -221,6 +223,8 @@ struct Item {
     short labelBase;               // Charcoal baseline, 0 when the control draws it
     short hintBase;                // Geneva baseline of the first caption line
     char original[kValueCapacity];
+    char custom[kValueCapacity];   // custom-only rows: the value typed under
+                                   // Custom, kept while another provider shows
     bool overflow;                 // Never silently save a truncated value.
 };
 
@@ -299,6 +303,37 @@ void ReadValue(const Item &item, const Field &field, char *value)
     }
 }
 
+void ShowValue(Item &item, const Field &f, const char *value)
+{
+    if (f.kind == List) {
+        if (item.text) {
+            TESetText(value, std::strlen(value), item.text);
+            (*item.text)->destRect = (*item.text)->viewRect;
+            TECalText(item.text);
+            TESetSelect(0, 0, item.text);
+        }
+    } else if (Editable(f)) {
+        SetControlData(item.control, kControlEntireControl,
+                       kControlEditTextTextTag, std::strlen(value), value);
+        // The framed fields are single-line and scroll horizontally.
+        if (item.text) {
+            (*item.text)->crOnly = -1;
+            TECalText(item.text);
+            TEAutoView(true, item.text);
+            TESetSelect(0, 0, item.text);
+            TESelView(item.text);
+        }
+    } else if (f.kind == Check) {
+        SetControlValue(item.control, value[0] == '1');
+    } else {
+        const char *const *choices = f.kind == Provider ? kProviders : kRedirects;
+        short chosen = 1;
+        for (short n = 0; n < 3; ++n)
+            if (!gw_stricmp(value, choices[n])) chosen = n + 1;
+        SetControlValue(item.control, chosen);
+    }
+}
+
 void LoadValues(Item *items)
 {
     GWConfig_Load();
@@ -330,33 +365,7 @@ void LoadValues(Item *items)
             std::strncpy(value, current, sizeof(value) - 1);
         }
         std::strcpy(item.original, value);
-        if (f.kind == List) {
-            if (item.text) {
-                TESetText(value, std::strlen(value), item.text);
-                (*item.text)->destRect = (*item.text)->viewRect;
-                TECalText(item.text);
-                TESetSelect(0, 0, item.text);
-            }
-        } else if (Editable(f)) {
-            SetControlData(item.control, kControlEntireControl,
-                           kControlEditTextTextTag, std::strlen(value), value);
-            // The framed fields are single-line and scroll horizontally.
-            if (item.text) {
-                (*item.text)->crOnly = -1;
-                TECalText(item.text);
-                TEAutoView(true, item.text);
-                TESetSelect(0, 0, item.text);
-                TESelView(item.text);
-            }
-        } else if (f.kind == Check) {
-            SetControlValue(item.control, value[0] == '1');
-        } else {
-            const char *const *choices = f.kind == Provider ? kProviders : kRedirects;
-            short chosen = 1;
-            for (short n = 0; n < 3; ++n)
-                if (!gw_stricmp(value, choices[n])) chosen = n + 1;
-            SetControlValue(item.control, chosen);
-        }
+        ShowValue(item, f, value);
     }
 }
 
@@ -368,7 +377,8 @@ public:
     ControlHandle cancel = nullptr, revert = nullptr, scroll = nullptr;
     MenuHandle menus[3] = {};
     Item items[kFieldCount] = {};
-    short pane = 0, focus = -1, listIndex = -1;
+    short pane = 0, focus = -1, listIndex = -1, providerIndex = -1;
+    bool customShown = false;            // the custom-only rows are live
     short paneHeight[kPaneCount] = {};   // window height, per pane
     short paneBottom[kPaneCount] = {};   // group frame bottom, per pane
     short tallest = 0;
@@ -586,6 +596,7 @@ public:
                 if (!scroll) return false;
                 continue;
             }
+            if (f.kind == Provider) providerIndex = static_cast<short>(i);
             Rect box = item.box;
             short proc = kControlCheckBoxAutoToggleProc;
             short minimum = 0, maximum = 1;
@@ -610,12 +621,66 @@ public:
                     !item.text) return false;
             }
         }
-        LoadValues(items);
+        if (providerIndex < 0) return false;
+        Load();
         ShowControl(selector);
         ShowControl(save); ShowControl(cancel); ShowControl(revert);
         SwitchPane(0);
         ShowWindow(window); SelectWindow(window);
         return true;
+    }
+
+    bool Custom()
+    {
+        char provider[kValueCapacity];
+        ReadValue(items[providerIndex], kFields[providerIndex], provider);
+        return gw_provider_is_custom(provider) != 0;
+    }
+
+    /* Values from the file, then the custom-only rows set for the provider. */
+    void Load()
+    {
+        LoadValues(items);
+        customShown = Custom();
+        for (int i = 0; i < kFieldCount; ++i)
+            std::strcpy(items[i].custom, customShown ? items[i].original : "");
+        ApplyProvider();
+    }
+
+    /*
+     * The custom-only rows are live under Custom. Under Outlook or Gmail they
+     * show, dimmed, what that provider uses -- the way TCP/IP shows the
+     * addresses a DHCP server supplies. Leaving Custom keeps what was typed,
+     * so trying Gmail and coming back loses nothing; arriving at Custom with
+     * nothing kept starts from the provider's values rather than blanks.
+     */
+    void ApplyProvider()
+    {
+        char provider[kValueCapacity];
+        ReadValue(items[providerIndex], kFields[providerIndex], provider);
+        bool custom = gw_provider_is_custom(provider) != 0;
+        for (int i = 0; i < kFieldCount; ++i) {
+            const Field &f = kFields[i];
+            Item &item = items[i];
+            if (!item.control || !gw_provider_custom_only(f.key)) continue;
+            if (custom) {
+                if (!customShown && item.custom[0]) ShowValue(item, f, item.custom);
+                ActivateControl(item.control);
+            } else {
+                if (customShown) ReadValue(item, f, item.custom);
+                const char *supplied = gw_provider_default(provider, f.key);
+                ShowValue(item, f, supplied ? supplied : "");
+                DeactivateControl(item.control);
+            }
+        }
+        customShown = custom;
+    }
+
+    /* A row that takes the keyboard: editable, and not dimmed. */
+    bool Live(int i) const
+    {
+        return Editable(kFields[i]) &&
+               (!items[i].control || IsControlActive(items[i].control));
     }
 
     void SwitchPane(short next)
@@ -759,7 +824,12 @@ public:
             const Item &item = items[i];
             if (item.labelBase) {
                 LabelFont();
+                // A dimmed row's label dims with it.
+                bool dim = item.control && !IsControlActive(item.control);
+                if (dim) SetThemeTextColor(kThemeTextColorDialogInactive,
+                                           (*(*GetGDevice())->gdPMap)->pixelSize, true);
                 Line(kRowLeft, item.labelBase, f.label, std::strlen(f.label));
+                if (dim) Pen(0x0000);
             }
             if (item.hintBase) {
                 HintFont();
@@ -813,11 +883,17 @@ public:
     bool Save()
     {
         char value[kValueCapacity];
+        bool custom = Custom();
         // Validate every pane before writing anything.
         for (short i = 0; i < kFieldCount; ++i) {
             const Field &f = kFields[i];
             ReadValue(items[i], f, value);
             bool valid = true;
+            // Custom has no provider to fall back on: every server and the
+            // token endpoint must be named. Only the scope may be empty.
+            if (custom && f.kind == Text && gw_provider_custom_only(f.key) &&
+                std::strcmp(f.key, "oauth_scope"))
+                valid = value[0] != 0;
             if (items[i].overflow) {
                 // An oversized on-disk list can be kept, but not truncated by Save.
                 valid = !std::strcmp(value, items[i].original);
@@ -842,9 +918,23 @@ public:
                 return false;
             }
         }
-        // Write edits across all panes. Preserve untouched provider defaults and
-        // any refresh token rotated by the live core while this window was open.
+        // Write edits across all panes. Preserve any refresh token rotated by
+        // the live core while this window was open. The custom-only rows are
+        // written whole under Custom -- values shown but never typed over
+        // still have to reach the file -- and commented out otherwise, which
+        // keeps them there for the next time Custom is chosen.
         for (int i = 0; i < kFieldCount; ++i) {
+            if (gw_provider_custom_only(kFields[i].key)) {
+                int ok;
+                if (custom) {
+                    ReadValue(items[i], kFields[i], value);
+                    ok = GWConfig_Set(kFields[i].key, value);
+                } else {
+                    ok = GWConfig_Comment(kFields[i].key);
+                }
+                if (!ok) { SysBeep(1); return false; }
+                continue;
+            }
             ReadValue(items[i], kFields[i], value);
             if (!std::strcmp(value, items[i].original)) continue;
             if (kFields[i].kind == List) gw_prefs_normalize_list(value);
@@ -911,7 +1001,7 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
             Point point = event.where; GlobalToLocal(&point);
             bool edited = false;
             for (short i = 0; i < kFieldCount; ++i) {
-                if (kFields[i].pane != p->pane || !Editable(kFields[i])) continue;
+                if (kFields[i].pane != p->pane || !p->Live(i)) continue;
                 Rect hitBox = p->items[i].box;
                 // The whitelist shares its right-hand frame pixel with the
                 // scroll bar; leave that column to the scroll bar.
@@ -949,10 +1039,12 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
             if (hit == p->selector) {
                 short selected = GetControlValue(hit) - 1;
                 if (selected >= 0 && selected < kPaneCount) p->SwitchPane(selected);
+            } else if (hit == p->items[p->providerIndex].control) {
+                p->ApplyProvider();
             } else if (hit == p->cancel) done = true;
             else if (hit == p->save) done = p->Save();
             else if (hit == p->revert) {
-                LoadValues(p->items);
+                p->Load();
                 p->SwitchPane(p->pane);
             }
         } else if (event.what == keyDown || event.what == autoKey) {
@@ -966,7 +1058,7 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
                 int start = p->focus >= 0 ? p->focus : (step > 0 ? kFieldCount - 1 : 0);
                 for (int n = 1; n <= kFieldCount; ++n) {
                     short i = (start + step * n + kFieldCount) % kFieldCount;
-                    if (kFields[i].pane == p->pane && Editable(kFields[i])) {
+                    if (kFields[i].pane == p->pane && p->Live(i)) {
                         p->Focus(i); break;
                     }
                 }

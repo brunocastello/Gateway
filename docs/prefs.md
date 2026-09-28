@@ -8,7 +8,9 @@ is trimmed, and CR, LF or CRLF line endings all work.
 The file lives in the System Preferences folder as **Gateway Prefs**. A
 starting point is `docs/prefs-example.txt`. Gateway reads it once at launch,
 and rewrites two lines itself: `refresh_token` when the provider rotates it,
-and `wayback_date`/`wayback_tolerance` when the settings page is used.
+and `wayback_date`/`wayback_tolerance` when the settings page is used. The
+Preferences window also comments out or restores the custom mail servers (see
+[Provider](#provider)).
 
 The file may be up to 32 KB. Past that Gateway warns loudly in its log and
 every setting after the cut silently reverts to its default — which is exactly
@@ -150,7 +152,8 @@ authentication **on**.
 
 ### Provider
 
-`provider` supplies the endpoints so they need not be listed individually.
+`provider` supplies the upstream servers and the token endpoint, so under
+Outlook or Gmail they are not written at all.
 
 | `provider` | IMAP | POP | SMTP | OAuth |
 |---|---|---|---|---|
@@ -158,19 +161,29 @@ authentication **on**.
 | `gmail` | `imap.gmail.com` | `pop.gmail.com` | `smtp.gmail.com` | `oauth2.googleapis.com` |
 | `custom` | — | — | — | — |
 
-Anything set explicitly overrides the table, so a single different hostname does
-not require `custom`. Use `custom` when none of the presets fit: it supplies
-nothing, and the settings below stand on their own.
+The settings below, down to `oauth_scope`, are read **only** under `custom`.
+Under `outlook` or `gmail` the provider's own values stand, and a copy left in
+the file is ignored, so a host kept from an earlier custom setup cannot quietly
+redirect the mail. A single different hostname therefore needs `custom` with
+all of them filled in. The example file keeps them commented out; the
+Preferences window shows them dimmed with the provider's values, and on Save
+comments them out under Outlook or Gmail and writes them back in place under
+Custom, so switching away and back loses nothing.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `imap_host`, `pop_host`, `smtp_host` | from `provider` | Upstream servers. |
+| `imap_host`, `pop_host`, `smtp_host` | from `provider` | Upstream servers. Required under `custom`. |
 | `imap_upstream_port` | `993` | Implicit TLS. |
 | `pop_upstream_port` | `995` | Implicit TLS. |
 | `smtp_upstream_port` | `587` | With `smtp_starttls = 1`. Use `465` with `smtp_starttls = 0` for implicit TLS. |
 | `smtp_starttls` | `1` for 587, `0` for 465 | Whether to upgrade an initially plaintext connection. |
-| `oauth_host`, `oauth_path` | from `provider` | Token endpoint. |
+| `oauth_host`, `oauth_path` | from `provider` | Token endpoint. Required under `custom`. |
 | `oauth_scope` | from `provider` | Must name every protocol in use — a token without the POP scope is refused by the POP server even though it is valid. |
+
+These are read for every provider, and are what `get-email-token.py` prints:
+
+| Key | Default | Meaning |
+|---|---|---|
 | `oauth_user` | — | The account address. |
 | `oauth_client_id` | — | The OAuth client the refresh token belongs to. |
 | `oauth_client_secret` | empty | Needed by Google even for desktop clients; Microsoft public clients do not use one. |

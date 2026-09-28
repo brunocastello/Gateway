@@ -54,6 +54,7 @@ pop_port       = 1995
 smtp_port      = 1587
 local_password = change-me
 
+# outlook, gmail or custom
 provider = outlook
 
 # Run get-email-token.py on a modern computer to print these four lines.
@@ -62,9 +63,7 @@ oauth_client_id     = 00000000-0000-0000-0000-000000000000
 oauth_client_secret =
 refresh_token       = paste-your-refresh-token-here
 
-# Any other provider: set provider = custom and fill these in.
-#
-# provider            = custom
+# Used only with provider = custom; Outlook and Gmail supply their own.
 # imap_host           = imap.example.com
 # imap_upstream_port  = 993
 # pop_host            = pop.example.com

@@ -37,6 +37,7 @@
 #include "../gw_config.h"
 #include "../gw_core.h"
 #include "../portable/gw_prefs.h"
+#include "../portable/gw_provider.h"
 #include "../portable/gw_util.h"
 
 #define GW_SETTINGS_CLASS "GatewaySettingsClass"
@@ -66,7 +67,7 @@ static const char *const kIntro[PANES] = {
     "",
     "",
     "",
-    "Empty host fields use the selected provider's defaults.",
+    "Used only by the Custom provider. Outlook and Gmail supply their own.",
     "Obtain the refresh token outside Gateway, then paste it here.\n"
     "Long values scroll horizontally. Tokens may rotate while running.",
     "",
@@ -120,12 +121,13 @@ static const Field kFields[] = {
     { 5, Number, "smtp_upstream_port", "SMTP port:", "587", "" },
     { 5, Check, "smtp_starttls", "Use START&TLS on the SMTP port", "1",
       "Port 465 uses TLS immediately; other ports default to STARTTLS." },
-    { 6, Text, "oauth_host", "Token host:", "", "" },
-    { 6, Text, "oauth_path", "Token path:", "", "" },
-    { 6, Text, "oauth_scope", "Scope:", "", "" },
     { 6, Text, "oauth_client_id", "Client ID:", "", "" },
     { 6, Text, "oauth_client_secret", "Client secret:", "", "" },
     { 6, Text, "refresh_token", "Refresh token:", "", "" },
+    /* Custom provider only, like the Mail upstream pane. */
+    { 6, Text, "oauth_host", "Token host:", "", "" },
+    { 6, Text, "oauth_path", "Token path:", "", "" },
+    { 6, Text, "oauth_scope", "Scope:", "", "" },
     { 7, Number, "tunnel_local_port", "Local port:", "2222",
       "No local authentication: keep this port behind the machine's own\n"
       "boundary. Stop and start Gateway after changing it." },
@@ -226,6 +228,8 @@ typedef struct {
     HWND hint[MAX_HINT_LINES];
     int  lines;
     char original[VALUE_CAP];
+    char custom[VALUE_CAP];            /* custom-only rows: the value typed under
+                                        * Custom, kept while another provider shows */
     int  overflow;                     /* never silently save a truncated list */
 } Item;
 
@@ -242,6 +246,8 @@ static int       gTallest;
 static Item      gItems[FIELDS];
 static HWND      gIntro[PANES][MAX_HINT_LINES];
 static HWND      gGroup, gCombo, gComboLabel, gSave, gCancel, gUndo;
+static int       gProvider = -1;       /* the provider row's index */
+static int       gCustomShown;         /* the custom-only rows are live */
 
 static void show_pane(int pane);
 
@@ -423,6 +429,28 @@ static void read_value(int i, char *out, size_t cap)
     }
 }
 
+static void set_value(int i, const char *value)
+{
+    const Field *f = &kFields[i];
+    const Item *it = &gItems[i];
+    int n;
+
+    if (editable(f->kind)) {
+        SetWindowTextA(it->ctrl, value);
+        SendMessageA(it->ctrl, EM_SETSEL, 0, 0);
+    } else if (f->kind == Check) {
+        SendMessageA(it->ctrl, BM_SETCHECK,
+                     value[0] == '1' ? BST_CHECKED : BST_UNCHECKED, 0);
+    } else {
+        const char *const *values = f->kind == Provider ? kProviders
+                                                        : kRedirects;
+        int chosen = 0;
+        for (n = 0; n < 3; ++n)
+            if (gw_stricmp(value, values[n]) == 0) chosen = n;
+        SendMessageA(it->ctrl, CB_SETCURSEL, chosen, 0);
+    }
+}
+
 static void load_values(void)
 {
     char value[VALUE_CAP];
@@ -464,22 +492,56 @@ static void load_values(void)
         }
 
         strcpy(it->original, value);
-
-        if (editable(f->kind)) {
-            SetWindowTextA(it->ctrl, value);
-            SendMessageA(it->ctrl, EM_SETSEL, 0, 0);
-        } else if (f->kind == Check) {
-            SendMessageA(it->ctrl, BM_SETCHECK,
-                         value[0] == '1' ? BST_CHECKED : BST_UNCHECKED, 0);
-        } else {
-            const char *const *values = f->kind == Provider ? kProviders
-                                                            : kRedirects;
-            int chosen = 0;
-            for (n = 0; n < 3; ++n)
-                if (gw_stricmp(value, values[n]) == 0) chosen = n;
-            SendMessageA(it->ctrl, CB_SETCURSEL, chosen, 0);
-        }
+        set_value(i, value);
     }
+}
+
+static int custom_chosen(void)
+{
+    char provider[VALUE_CAP];
+    read_value(gProvider, provider, sizeof(provider));
+    return gw_provider_is_custom(provider);
+}
+
+/*
+ * The custom-only rows are live under Custom. Under Outlook or Gmail they
+ * show, disabled, what that provider uses. Leaving Custom keeps what was
+ * typed, so trying Gmail and coming back loses nothing; arriving at Custom
+ * with nothing kept starts from the provider's values rather than blanks.
+ */
+static void apply_provider(void)
+{
+    char provider[VALUE_CAP];
+    int i, custom;
+
+    read_value(gProvider, provider, sizeof(provider));
+    custom = gw_provider_is_custom(provider);
+    for (i = 0; i < FIELDS; ++i) {
+        Item *it = &gItems[i];
+        if (!gw_provider_custom_only(kFields[i].key)) continue;
+        if (custom) {
+            if (!gCustomShown && it->custom[0]) set_value(i, it->custom);
+        } else {
+            const char *supplied = gw_provider_default(provider, kFields[i].key);
+            if (gCustomShown) read_value(i, it->custom, sizeof(it->custom));
+            set_value(i, supplied != NULL ? supplied : "");
+        }
+        EnableWindow(it->ctrl, custom);
+        if (it->label != NULL) EnableWindow(it->label, custom);
+    }
+    gCustomShown = custom;
+}
+
+/* Values from the file, then the custom-only rows set for the provider. */
+static void load(void)
+{
+    int i;
+
+    load_values();
+    gCustomShown = custom_chosen();
+    for (i = 0; i < FIELDS; ++i)
+        strcpy(gItems[i].custom, gCustomShown ? gItems[i].original : "");
+    apply_provider();
 }
 
 /* The Mac beeps and takes focus rather than printing a message; so does this. */
@@ -500,7 +562,7 @@ static void reject(int i)
 static int save_values(void)
 {
     char value[VALUE_CAP];
-    int i;
+    int i, custom = custom_chosen();
 
     /* Validate every pane before writing anything. */
     for (i = 0; i < FIELDS; ++i) {
@@ -508,6 +570,12 @@ static int save_values(void)
         int valid = 1;
 
         read_value(i, value, sizeof(value));
+
+        /* Custom has no provider to fall back on: every server and the token
+         * endpoint must be named. Only the scope may be empty. */
+        if (custom && f->kind == Text && gw_provider_custom_only(f->key) &&
+            strcmp(f->key, "oauth_scope") != 0)
+            valid = value[0] != '\0';
 
         if (gItems[i].overflow) {
             /* An oversized on-disk list can be kept, but not truncated here. */
@@ -546,9 +614,27 @@ static int save_values(void)
         if (!valid) { reject(i); return 0; }
     }
 
-    /* Write edits across all panes. Preserve untouched provider defaults and
-     * any refresh token rotated by the live core while this window was open. */
+    /* Write edits across all panes. Preserve any refresh token rotated by the
+     * live core while this window was open. The custom-only rows are written
+     * whole under Custom -- values shown but never typed over still have to
+     * reach the file -- and commented out otherwise, which keeps them there
+     * for the next time Custom is chosen. */
     for (i = 0; i < FIELDS; ++i) {
+        if (gw_provider_custom_only(kFields[i].key)) {
+            int ok;
+            if (custom) {
+                read_value(i, value, sizeof(value));
+                ok = GWConfig_Set(kFields[i].key, value);
+            } else {
+                ok = GWConfig_Comment(kFields[i].key);
+            }
+            if (!ok) {
+                MessageBeep(MB_ICONEXCLAMATION);
+                SetFocus(gItems[i].ctrl);
+                return 0;
+            }
+            continue;
+        }
         read_value(i, value, sizeof(value));
         if (strcmp(value, gItems[i].original) == 0) continue;
         if (kFields[i].kind == List) gw_prefs_normalize_list(value);
@@ -620,7 +706,10 @@ static LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CTLCOLORSTATIC:
     case WM_CTLCOLORBTN:
         SetBkColor((HDC)wp, GetSysColor(COLOR_BTNFACE));
-        SetTextColor((HDC)wp, GetSysColor(COLOR_BTNTEXT));
+        /* A disabled edit asks here too; setting its text black would
+         * undo the grey that says it is not for typing in. */
+        SetTextColor((HDC)wp, GetSysColor(IsWindowEnabled((HWND)lp)
+                                          ? COLOR_BTNTEXT : COLOR_GRAYTEXT));
         return (LRESULT)gFace;
 
     /* IsDialogMessage asks who the default button is before it acts on
@@ -643,9 +732,12 @@ static LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             DestroyWindow(hwnd);
             return 0;
         case IDC_UNDO:
-            load_values();
+            load();
             return 0;
         default:
+            if (LOWORD(wp) == IDC_FIELD + gProvider &&
+                HIWORD(wp) == CBN_SELCHANGE)
+                apply_provider();
             break;
         }
         return 0;
@@ -761,7 +853,10 @@ void GWSettings_Show(HINSTANCE inst)
         return;
     }
 
-    load_values();
+    for (i = 0; i < FIELDS; ++i)
+        if (kFields[i].kind == Provider) gProvider = i;
+    if (gProvider < 0) { DestroyWindow(gWnd); return; }
+    load();
 
     ShowWindow(gComboLabel, SW_SHOW);
     ShowWindow(gCombo, SW_SHOW);

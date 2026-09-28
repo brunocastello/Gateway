@@ -165,6 +165,7 @@ add_library(gw_portable STATIC
     src/portable/gw_mailcmd.c
     src/portable/gw_oauth.c
     src/portable/gw_prefs.c
+    src/portable/gw_provider.c
     src/portable/gw_log.c
     src/portable/gw_rewrite.c
     src/portable/gw_x509write.c

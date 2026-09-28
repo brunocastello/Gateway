@@ -201,6 +201,48 @@ static const char *gw_prefs_eol(const char *text, size_t len)
     return "\r";           /* a new file on this machine: Mac convention */
 }
 
+/*
+ * Whether the text from i up to line_end reads "key = ...": the key, then
+ * optional blanks, then a separator. Sets *sep to the separator's offset.
+ */
+static int gw_prefs_key_at(const char *text, size_t i, size_t line_end,
+                           const char *key, size_t klen, size_t *sep)
+{
+    size_t ke = i, kend;
+
+    while (ke < line_end && text[ke] != '=' && text[ke] != ':') ke++;
+    if (ke == line_end) return 0;
+    kend = ke;
+    while (kend > i && (text[kend - 1] == ' ' || text[kend - 1] == '\t'))
+        kend--;
+    if (kend - i != klen || gw_strnicmp(text + i, key, klen) != 0) return 0;
+    *sep = ke;
+    return 1;
+}
+
+/*
+ * Classify one line against key. Returns 1 for an active setting, 2 for a
+ * commented one ("# key = value" or ";key = value"), 0 otherwise. *start is
+ * where the key itself begins and *sep where its separator is.
+ */
+static int gw_prefs_match(const char *text, size_t off, size_t line_end,
+                          const char *key, size_t klen,
+                          size_t *start, size_t *sep)
+{
+    size_t i = off;
+    int commented = 0;
+
+    while (i < line_end && (text[i] == ' ' || text[i] == '\t')) i++;
+    if (i < line_end && (text[i] == '#' || text[i] == ';')) {
+        commented = 1;
+        i++;
+        while (i < line_end && (text[i] == ' ' || text[i] == '\t')) i++;
+    }
+    if (!gw_prefs_key_at(text, i, line_end, key, klen, sep)) return 0;
+    *start = i;
+    return commented ? 2 : 1;
+}
+
 size_t gw_prefs_set(const char *text, size_t len, const char *key,
                     const char *value, char *out, size_t cap)
 {
@@ -210,48 +252,56 @@ size_t gw_prefs_set(const char *text, size_t len, const char *key,
     size_t vlen = strlen(value);
     const char *eol = gw_prefs_eol(text, len);
     size_t eol_len = strlen(eol);
-    int replaced = 0;
+    size_t target = (size_t)-1;     /* offset of the line to rewrite */
+    int want = 1;                   /* the kind of line target is */
 
-    while (off < len) {
-        size_t line_end, next, i;
-        int is_match = 0;
+    /*
+     * An active line is rewritten where it stands. Failing that, the first
+     * commented copy is brought back in its place; failing that, append.
+     */
+    for (; want <= 2 && target == (size_t)-1; want++) {
+        for (off = 0; off < len; ) {
+            size_t line_end, next, start, sep;
+            gw_prefs_line(text, len, off, &line_end, &next);
+            if (gw_prefs_match(text, off, line_end, key, klen,
+                               &start, &sep) == want) {
+                target = off;
+                break;
+            }
+            off = next;
+        }
+    }
+    want--;
+
+    for (off = 0; off < len; ) {
+        size_t line_end, next, start, sep;
+        int kind;
 
         gw_prefs_line(text, len, off, &line_end, &next);
+        kind = gw_prefs_match(text, off, line_end, key, klen, &start, &sep);
 
-        i = off;
-        while (i < line_end && (text[i] == ' ' || text[i] == '\t')) i++;
-
-        if (i < line_end && text[i] != '#' && text[i] != ';') {
-            size_t ke = i;
-            while (ke < line_end && text[ke] != '=' && text[ke] != ':') ke++;
-            if (ke < line_end) {
-                size_t kend = ke;
-                while (kend > i && (text[kend - 1] == ' ' ||
-                                    text[kend - 1] == '\t')) kend--;
-                if (kend - i == klen && gw_strnicmp(text + i, key, klen) == 0)
-                    is_match = 1;
-            }
-        }
-
-        if (is_match && !replaced) {
-            /* Rewrite in place, keeping the key exactly as the user typed it.
-             * Drop all later occurrences of this key — they are stale copies
-             * that would reappear on the next read. */
-            size_t ke = i;
-            while (ke < line_end && text[ke] != '=' && text[ke] != ':') ke++;
-            if (used + (ke - off) + 2 + vlen + eol_len > cap) return 0;
-            memcpy(out + used, text + off, ke - off);
-            used += ke - off;
-            out[used++] = text[ke];         /* the separator they used */
+        if (off == target) {
+            /* Rewrite in place, keeping the key exactly as the user typed it
+             * and the indentation before any comment marker. */
+            size_t lead = off;
+            while (lead < line_end && (text[lead] == ' ' || text[lead] == '\t'))
+                lead++;
+            if (want == 1) lead = start;
+            if (used + (lead - off) + (sep - start) + 2 + vlen + eol_len > cap)
+                return 0;
+            memcpy(out + used, text + off, lead - off);
+            used += lead - off;
+            memcpy(out + used, text + start, sep - start);
+            used += sep - start;
+            out[used++] = text[sep];        /* the separator they used */
             out[used++] = ' ';
             memcpy(out + used, value, vlen);
             used += vlen;
             memcpy(out + used, eol, eol_len);
             used += eol_len;
-            replaced = 1;
-        } else if (is_match) {
-            /* A duplicate of the key we already replaced: skip it entirely.
-             * Comments (lines starting with '#' or ';') are left alone. */
+        } else if (kind == 1 && want == 1) {
+            /* A later active duplicate of the key just rewritten: drop it,
+             * or it would reappear on the next read. Comments are kept. */
         } else {
             size_t n = next - off;
             if (used + n > cap) return 0;
@@ -261,7 +311,7 @@ size_t gw_prefs_set(const char *text, size_t len, const char *key,
         off = next;
     }
 
-    if (!replaced) {
+    if (target == (size_t)-1) {
         if (used > 0 && out[used - 1] != '\n' && out[used - 1] != '\r') {
             if (used + eol_len > cap) return 0;
             memcpy(out + used, eol, eol_len);
@@ -277,6 +327,32 @@ size_t gw_prefs_set(const char *text, size_t len, const char *key,
         used += vlen;
         memcpy(out + used, eol, eol_len);
         used += eol_len;
+    }
+    return used;
+}
+
+size_t gw_prefs_comment(const char *text, size_t len, const char *key,
+                        char *out, size_t cap)
+{
+    size_t off = 0;
+    size_t used = 0;
+    size_t klen = strlen(key);
+
+    while (off < len) {
+        size_t line_end, next, start, sep, n;
+
+        gw_prefs_line(text, len, off, &line_end, &next);
+        if (gw_prefs_match(text, off, line_end, key, klen,
+                           &start, &sep) == 1) {
+            if (used + 2 > cap) return 0;
+            out[used++] = '#';
+            out[used++] = ' ';
+        }
+        n = next - off;
+        if (used + n > cap) return 0;
+        memcpy(out + used, text + off, n);
+        used += n;
+        off = next;
     }
     return used;
 }

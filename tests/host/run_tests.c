@@ -19,6 +19,7 @@
 #include "gw_oauth.h"
 #include "gw_pac.h"
 #include "gw_prefs.h"
+#include "gw_provider.h"
 #include "gw_rewrite.h"
 #include "gw_x509write.h"
 #include "gw_url.h"
@@ -1731,6 +1732,176 @@ static void test_prefs_set_drop(void)
     }
 }
 
+/* Compare a length-counted buffer with a string, reporting both on failure. */
+static void check_buf(const char *got, size_t n, const char *want,
+                      const char *what)
+{
+    char copy[1024];
+    size_t k = n < sizeof(copy) - 1 ? n : sizeof(copy) - 1;
+
+    memcpy(copy, got, k);
+    copy[k] = '\0';
+    check_str(copy, want, what);
+}
+
+/*
+ * The custom mail settings live commented out in the prefs file whenever
+ * the provider is Outlook or Gmail, and the settings window comments and
+ * uncomments them as the provider changes. A commented line has to come back
+ * where it stood, with its alignment, rather than being appended below the
+ * Tunnel section.
+ */
+static void test_prefs_comment(void)
+{
+    static const char custom[] =
+        "provider = custom\n"
+        "# imap_host           = imap.example.com\n"
+        "local_password = x\n";
+    char out[1024], again[1024];
+    size_t n, m;
+
+    printf("prefs comment\n");
+
+    /* Uncommented in place, alignment kept. */
+    n = gw_prefs_set(custom, sizeof(custom) - 1, "imap_host", "mail.x.com",
+                     out, sizeof(out));
+    check_buf(out, n,
+              "provider = custom\n"
+              "imap_host           = mail.x.com\n"
+              "local_password = x\n",
+              "set uncomments a commented-only key where it stands");
+
+    /* An active line wins; the comment beside it is left alone. */
+    {
+        static const char both[] =
+            "provider = outlook\n"
+            "# provider = custom\n";
+        n = gw_prefs_set(both, sizeof(both) - 1, "provider", "gmail",
+                         out, sizeof(out));
+        check_buf(out, n,
+                  "provider = gmail\n"
+                  "# provider = custom\n",
+                  "active line is set, duplicate comment untouched");
+    }
+
+    /* Two commented copies: only the first comes back. */
+    {
+        static const char two[] =
+            "# smtp_host = a\n"
+            "# smtp_host = b\n";
+        n = gw_prefs_set(two, sizeof(two) - 1, "smtp_host", "c",
+                         out, sizeof(out));
+        check_buf(out, n,
+                  "smtp_host = c\n"
+                  "# smtp_host = b\n",
+                  "only the first commented copy is uncommented");
+    }
+
+    /* Prose that happens to contain "key = value" is not a setting. */
+    {
+        static const char prose[] =
+            "# Any other provider: set provider = custom and fill these in.\n";
+        n = gw_prefs_set(prose, sizeof(prose) - 1, "provider", "gmail",
+                         out, sizeof(out));
+        check_buf(out, n,
+                  "# Any other provider: set provider = custom and fill these in.\n"
+                  "provider = gmail\n",
+                  "a prose comment is not uncommented");
+    }
+
+    /* ';' is a comment too, and CR-only files (Mac OS 9) stay CR-only. */
+    {
+        static const char cr[] =
+            "provider = custom\r"
+            ";oauth_host = login.example.com\r";
+        n = gw_prefs_set(cr, sizeof(cr) - 1, "oauth_host", "id.x.com",
+                         out, sizeof(out));
+        check_buf(out, n,
+                  "provider = custom\r"
+                  "oauth_host = id.x.com\r",
+                  "a ';' comment in a CR file is uncommented");
+    }
+
+    /* Commenting out: every active copy, indentation kept, comments alone. */
+    {
+        static const char active[] =
+            "imap_host = a\r\n"
+            "  imap_host = b\r\n"
+            "# imap_host = c\r\n"
+            "pop_host = d\r\n";
+        n = gw_prefs_comment(active, sizeof(active) - 1, "imap_host",
+                             out, sizeof(out));
+        check_buf(out, n,
+                  "# imap_host = a\r\n"
+                  "#   imap_host = b\r\n"
+                  "# imap_host = c\r\n"
+                  "pop_host = d\r\n",
+                  "comment covers every active copy");
+        check(gw_prefs_get(out, n, "imap_host", again, sizeof(again)) == 0,
+              "a commented key reads as unset");
+    }
+
+    /* Absent or already commented: the text comes back unchanged. */
+    n = gw_prefs_comment(custom, sizeof(custom) - 1, "imap_host",
+                         out, sizeof(out));
+    check_buf(out, n, custom, "commenting a commented key changes nothing");
+
+    /* A buffer that cannot hold the result fails rather than truncating. */
+    check(gw_prefs_comment("imap_host = a\n", 14, "imap_host", out, 15) == 0,
+          "comment refuses to overflow");
+
+    /* Round trip: custom -> outlook -> custom restores the value. */
+    {
+        static const char set[] =
+            "provider = custom\n"
+            "imap_host           = mail.x.com\n";
+        n = gw_prefs_comment(set, sizeof(set) - 1, "imap_host",
+                             out, sizeof(out));
+        m = gw_prefs_set(out, n, "imap_host", "mail.x.com",
+                         again, sizeof(again));
+        check_buf(again, m, set, "comment then set is a round trip");
+    }
+}
+
+/* Which settings a provider supplies, and that custom supplies none. */
+static void test_provider(void)
+{
+    const char *v;
+
+    printf("gw_provider\n");
+
+    check(gw_provider_is_custom("custom") && gw_provider_is_custom("Custom"),
+          "custom is custom, in any case");
+    check(!gw_provider_is_custom("outlook") && !gw_provider_is_custom(""),
+          "outlook and unset are not custom");
+
+    check(gw_provider_custom_only("imap_host") &&
+          gw_provider_custom_only("SMTP_STARTTLS") &&
+          gw_provider_custom_only("oauth_scope"),
+          "servers, STARTTLS and token endpoint are custom-only");
+    check(!gw_provider_custom_only("oauth_client_id") &&
+          !gw_provider_custom_only("refresh_token") &&
+          !gw_provider_custom_only("imap_port") &&
+          !gw_provider_custom_only("provider"),
+          "token lines and local ports are read for every provider");
+
+    v = gw_provider_default("gmail", "imap_host");
+    check_str(v ? v : "(null)", "imap.gmail.com", "gmail imap host");
+    v = gw_provider_default("google", "oauth_path");
+    check_str(v ? v : "(null)", "/token", "google is gmail");
+    v = gw_provider_default("outlook", "smtp_host");
+    check_str(v ? v : "(null)", "smtp-mail.outlook.com", "outlook smtp host");
+    v = gw_provider_default("", "imap_host");
+    check_str(v ? v : "(null)", "outlook.office365.com", "unset means outlook");
+    v = gw_provider_default("gmail", "smtp_upstream_port");
+    check_str(v ? v : "(null)", "587", "ports are supplied as text");
+
+    check(gw_provider_default("custom", "imap_host") == NULL,
+          "custom supplies nothing");
+    check(gw_provider_default("outlook", "refresh_token") == NULL,
+          "no default for a setting every provider reads");
+}
+
 /*
  * The two consumers agreeing: proxy and PAC file use the same splitter.
  *
@@ -2012,6 +2183,8 @@ int main(void)
     test_prefs_splitter();
     test_whitelist_edit();
     test_prefs_set_drop();
+    test_prefs_comment();
+    test_provider();
     test_pac_splitter_agree();
     test_wayback_api();
     test_pac();
