@@ -28,13 +28,14 @@ allow_sslv3      = 1
 
 # --------------------------------------------------------- Wayback proxy
 
-wayback_port      = 8888
-wayback_connects  = 1
-wayback_date      = 20011231
-wayback_tolerance = 730
-wayback_geocities = 1
-wayback_settings  = 1
-wayback_cache     = 1
+wayback_port        = 8888
+wayback_connects    = 1
+wayback_date        = 20011231
+wayback_tolerance   = 730
+wayback_geocities   = 1
+wayback_settings    = 1
+wayback_cache       = 1
+wayback_ct_encoding = 1
 
 # Hosts fetched live, instead of from the archive (one per line; * and ? work)
 wayback_live = frogfind.com

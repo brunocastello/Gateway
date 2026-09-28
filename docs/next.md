@@ -102,6 +102,20 @@ protocol selection, so it says nothing about the 32-bit build.
 
 ---
 
+## Deferred from roytam1's fork, not rejected
+
+**`connect_upgrade`** (the fork's `gw034`, default 0): answer a `CONNECT` **to
+port 80** by terminating the plaintext HTTP inside the tunnel and
+re-originating it over TLS to port 443 — single-shot, one inner request per
+`CONNECT`, then the tunnel closes. No certificate is presented to anyone, so
+it is protocol translation rather than MITM; opt-in because a `CONNECT` may
+carry bytes that are not HTTP. Left out of 0.3.7 because its author had never
+run it. Port it only with a client that actually sends `CONNECT host:80` and
+a test of it on hardware; the fork's `gw_httpproxy.c` and `docs/prefs.md`
+describe it.
+
+---
+
 ## Tried and not worth repeating
 
 **IE 3.02 on an image that has IE 4.** The 3.02 setup refuses to run over

@@ -636,9 +636,10 @@ static int save_values(void)
 
         read_value(i, value, sizeof(value));
 
-        /* A row that applies and must be named: the Custom servers, the
-         * proxy host. See gw_gate_required. */
-        if (gw_gate_required(f->key) && applies(i))
+        /* A row that must be named under the current choices: the Custom
+         * servers, the proxy host, the tunnel's remote host while the tunnel
+         * is on. See gw_gate_required. */
+        if (gw_gate_required(f->key, lookup, NULL))
             valid = value[0] != '\0';
 
         if (gItems[i].overflow) {

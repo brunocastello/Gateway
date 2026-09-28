@@ -973,9 +973,10 @@ public:
             if (gw_gate_gated(f.key) && !Applies(i)) continue;
             ReadValue(items[i], f, value);
             bool valid = true;
-            // A row that applies and must be named: the Custom servers, the
-            // proxy host. See gw_gate_required.
-            if (gw_gate_required(f.key) && Applies(i))
+            // A row that must be named under the current choices: the Custom
+            // servers, the proxy host, the tunnel's remote host while the
+            // tunnel is on. See gw_gate_required.
+            if (gw_gate_required(f.key, Lookup, this))
                 valid = value[0] != 0;
             if (items[i].overflow) {
                 // An oversized on-disk list can be kept, but not truncated by Save.

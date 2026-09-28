@@ -1,9 +1,18 @@
 # Gateway — Settings window specification
 
-## Current visual refinements
+> **Historical.** This is the build sheet the Preferences window was written
+> from for 0.3.5. The window has since changed: its layout is computed in
+> `src/ui/gw_settings.cpp` (the DITLs 210–217 mentioned below are gone), the
+> Windows counterpart is `src/win32/settings_win32.c`, and since 0.3.7 rows
+> that do not apply under the current provider, TLS or proxy choice are
+> dimmed and commented out on Save (`src/portable/gw_gate.c`). For what each
+> setting does, `docs/prefs.md` is current; where this document disagrees
+> with it or with the code, they win.
 
-The current implementation in `src/ui/gw_settings.cpp` and DITL 210–217
-supersedes the older font, alignment, and session-scope guidance below:
+## Visual refinements made during 0.3.5
+
+The implementation that shipped in 0.3.5 superseded the older font,
+alignment, and session-scope guidance below:
 
 - Checkbox titles, field captions, dropdown contents and Revert/Cancel/Save
   use Charcoal 12; descriptions and entry text remain Geneva 9.
@@ -551,11 +560,14 @@ Menu labels: *Outlook*, *Gmail*, *Custom*.
 masked it and then saved the asterisks back over the real password. If masking
 is wanted later, it has to keep the real value separately.
 
-Changing `provider` fills in the empty fields on the **Mail upstream** and
-**OAuth** panes from a built-in table; `custom` supplies nothing and leaves
-those panes as the user set them. An explicit value on those panes always wins
-over the provider default. Consider refreshing the two panes' placeholder text
-when the pop-up changes, so the effect is visible.
+*As built in 0.3.7, replacing the original plan:* the servers on **Mail
+upstream** and the token host, path and scope on **OAuth** apply only under
+`custom`. Under Outlook or Gmail they are dimmed and show that provider's
+values from `src/portable/gw_provider.c`, the file's copy is ignored, and Save
+comments those lines out; choosing Custom brings back whatever the file kept.
+The original plan here — an explicit value always winning over the provider
+default — was dropped, because a host left over from a custom setup silently
+redirected Outlook mail.
 
 ### 4.6 Mail upstream
 
@@ -775,6 +787,10 @@ future reader will reach for `url`, and this is the line that stops them.
 ---
 
 ## 8. Definition of done
+
+*Status:* A, C and the end-to-end checks shipped with the window in 0.3.5 (the
+window's geometry then moved away from the pixel figures in C, as the note at
+the top says). B was never done: see `wayback_api` in `docs/next.md`.
 
 Work through this before calling it finished. The items that have historically
 been missed are the ones below the interface, and they fail silently.

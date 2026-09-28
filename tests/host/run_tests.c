@@ -2033,10 +2033,22 @@ static void test_gate(void)
     check(gw_gate_canonical("follow_redirects", "auto") == NULL,
           "other keys have no canonical form here");
 
-    check(gw_gate_required("smtp_host") && gw_gate_required("tunnel_proxy_host") &&
-          !gw_gate_required("oauth_scope") && !gw_gate_required("imap_upstream_port") &&
-          !gw_gate_required("tunnel_proxy_user"),
-          "required while applicable");
+    {
+        static const char *all[] = { "provider", "custom", "tunnel_proxy",
+                                     "http", "tunnel_enabled", "1", NULL };
+        check(gw_gate_required("smtp_host", gate_lookup, (void *)all) &&
+              gw_gate_required("tunnel_proxy_host", gate_lookup, (void *)all) &&
+              gw_gate_required("tunnel_remote_host", gate_lookup, (void *)all) &&
+              !gw_gate_required("oauth_scope", gate_lookup, (void *)all) &&
+              !gw_gate_required("imap_upstream_port", gate_lookup, (void *)all) &&
+              !gw_gate_required("tunnel_proxy_user", gate_lookup, (void *)all),
+              "required while applicable");
+    }
+    check(!gw_gate_required("smtp_host", gate_lookup, (void *)gmail) &&
+          !gw_gate_required("tunnel_proxy_host", gate_lookup, (void *)unset),
+          "not required while not applicable");
+    check(!gw_gate_required("tunnel_remote_host", gate_lookup, (void *)unset),
+          "remote host not required with the tunnel off (a 0.3.6 file)");
 }
 
 /*
