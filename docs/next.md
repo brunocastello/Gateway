@@ -75,23 +75,17 @@ well as a TLS 1.0 one, and confirm in the log that the second connection to a
 host says `secure connection with the browser, …, resumed`. The abandon
 readout is already there to say where it stops if it does.
 
-## Open: `wayback_api` is wired to nothing
+## Resolved: `wayback_api` removed
 
-Found in the post-0.3.7 audit. Both Preferences windows show "Find the nearest
-available snapshot" (`wayback_api`, default 1), `gw_core.c` reads it into the
-Wayback settings, and nothing ever looks at the flag — so the checkbox reports
-a choice Gateway does not honour, which `docs/settings-window.md` §4.3 calls
-the one unacceptable outcome. It was item B of that document's definition of
-done, never finished.
-
-What Gateway does either way: it asks for `/web/<era>/<url>`, the archive
-redirects to the nearest capture, and Gateway checks it against
-`wayback_tolerance`. That is upstream's `WAYBACK_API` *off* path, and it
-already reaches the nearest snapshot. The spec's *on* path asks the
-Availability API first — an extra TLS request per page on hardware where TLS
-is the expensive step — for much the same answer. The choice is between
-building that path, giving the setting a smaller meaning the existing
-mechanism can honour, or removing the checkbox and the key.
+Found in the post-0.3.7 audit: both Preferences windows showed "Find the
+nearest available snapshot" (`wayback_api`), `gw_core.c` read it, and nothing
+ever looked at the flag — a checkbox reporting a choice Gateway did not
+honour. Gateway reaches the nearest snapshot by following the archive's own
+redirect, which is upstream's `WAYBACK_API` *off* path; the *on* path would
+have cost an extra TLS request per page for much the same answer. Removed on
+`gw038`: the rows, the read, the struct field. A `wayback_api` line left in an
+old prefs file is ignored, like any unknown key. If the Availability API is
+ever wanted, `docs/settings-window.md` §4.3 has the design and its two traps.
 
 ## 2. Keep-alive inside the terminated tunnel
 

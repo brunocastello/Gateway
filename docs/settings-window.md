@@ -790,7 +790,8 @@ future reader will reach for `url`, and this is the line that stops them.
 
 *Status:* A, C and the end-to-end checks shipped with the window in 0.3.5 (the
 window's geometry then moved away from the pixel figures in C, as the note at
-the top says). B was never done: see `wayback_api` in `docs/next.md`.
+the top says). B was never done, and after 0.3.7 the setting was removed instead: see
+`wayback_api` in `docs/next.md`.
 
 Work through this before calling it finished. The items that have historically
 been missed are the ones below the interface, and they fail silently.

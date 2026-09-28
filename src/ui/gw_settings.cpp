@@ -78,8 +78,6 @@ const Field kFields[] = {
     { 2, Date, "wayback_date", "Era (YYYYMMDD):", "20011231", "Also accepts YYYY or YYYYMM." },
     { 2, Number, "wayback_tolerance", "Days newer allowed:", "730", "0 accepts any date." },
     { 2, Number, "wayback_connects", "Connections opening at once:", "1", "The archive refuses bursts." },
-    { 2, Check, "wayback_api", "Find the nearest available snapshot", "1",
-      "Off requests the configured era directly." },
     { 3, Check, "wayback_geocities", "Send geocities.com to oocities.org", "1", "" },
     { 3, Check, "wayback_cache", "Let the browser keep snapshots", "1", "" },
     { 3, Check, "wayback_settings", "Serve the browser settings page", "1", "" },

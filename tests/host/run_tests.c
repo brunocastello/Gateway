@@ -1241,10 +1241,13 @@ static int pac_host(int index, char *out, size_t cap)
 }
 
 /*
- * wayback_api: JSON parsing and URL building.
+ * gw_json over an Availability API body, and the target built from it.
  *
- * §7 test cases 20–25. The JSON work is portable; the fetch is not, so test
- * the parsing and the URL building and leave the transport to the Mac.
+ * Written for docs/settings-window.md §7 cases 20–25, when wayback_api was
+ * to ask the archive's Availability API. That setting was removed after 0.3.7
+ * -- the archive's own redirect already reaches the nearest snapshot -- but
+ * the cases still pin gw_json's flat scan on a nested body (case 21 is the
+ * trap), which the OAuth token reply relies on too.
  */
 static void test_wayback_api(void)
 {
