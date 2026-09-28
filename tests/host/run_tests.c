@@ -20,6 +20,7 @@
 #include "gw_pac.h"
 #include "gw_prefs.h"
 #include "gw_provider.h"
+#include "gw_gate.h"
 #include "gw_rewrite.h"
 #include "gw_x509write.h"
 #include "gw_url.h"
@@ -1929,6 +1930,71 @@ static void test_provider(void)
           "no default for a setting every provider reads");
 }
 
+/* A deciding-settings table for the gate tests: key=value pairs. */
+static const char *gate_lookup(const char *key, void *ctx)
+{
+    const char *const *kv = (const char *const *)ctx;
+    for (; kv[0] != NULL; kv += 2)
+        if (gw_stricmp(kv[0], key) == 0) return kv[1];
+    return NULL;
+}
+
+/* Which rows the settings windows dim, and which they insist on. */
+static void test_gate(void)
+{
+    static const char *unset[] = { NULL };
+    static const char *custom[] = { "provider", "custom", NULL };
+    static const char *gmail[] = { "provider", "gmail", NULL };
+    static const char *tls_off[] = { "tunnel_tls", "0", NULL };
+    static const char *http[] = { "tunnel_proxy", "http", NULL };
+    static const char *socks[] = { "tunnel_proxy", "socks5", NULL };
+    static const char *bad[] = { "tunnel_tls", "yes", "tunnel_proxy", "", NULL };
+
+    printf("gw_gate\n");
+
+    check(gw_gate_decides("provider") && gw_gate_decides("TUNNEL_TLS") &&
+          gw_gate_decides("tunnel_proxy") && !gw_gate_decides("imap_host"),
+          "the three deciding settings");
+    check(gw_gate_gated("imap_host") && gw_gate_gated("tunnel_sni") &&
+          gw_gate_gated("tunnel_host_header") && !gw_gate_gated("tunnel_tls") &&
+          !gw_gate_gated("refresh_token") && !gw_gate_gated("tunnel_remote_host"),
+          "gated and ungated settings");
+
+    /* Mail: the custom servers only under custom. */
+    check(!gw_gate_applies("imap_host", gate_lookup, (void *)unset) &&
+          !gw_gate_applies("oauth_scope", gate_lookup, (void *)gmail) &&
+          gw_gate_applies("smtp_starttls", gate_lookup, (void *)custom),
+          "custom mail servers follow the provider");
+    check(gw_gate_applies("refresh_token", gate_lookup, (void *)gmail),
+          "an ungated setting always applies");
+
+    /* Tunnel TLS options: default tunnel_tls is 1. */
+    check(gw_gate_applies("tunnel_insecure", gate_lookup, (void *)unset) &&
+          !gw_gate_applies("tunnel_tls12", gate_lookup, (void *)tls_off),
+          "TLS options follow tunnel_tls");
+
+    /* Proxy rows: any proxy, then HTTP only. */
+    check(!gw_gate_applies("tunnel_proxy_host", gate_lookup, (void *)unset),
+          "no proxy: proxy host does not apply");
+    check(gw_gate_applies("tunnel_proxy_port", gate_lookup, (void *)socks) &&
+          gw_gate_applies("tunnel_settle_ms", gate_lookup, (void *)http),
+          "any proxy: host, port and settle apply");
+    check(gw_gate_applies("tunnel_proxy_user", gate_lookup, (void *)http) &&
+          !gw_gate_applies("tunnel_proxy_pass", gate_lookup, (void *)socks) &&
+          !gw_gate_applies("tunnel_host_header", gate_lookup, (void *)socks),
+          "login and Host line only under http");
+
+    /* Unreadable deciding values take the defaults. */
+    check(gw_gate_applies("tunnel_sni", gate_lookup, (void *)bad) &&
+          !gw_gate_applies("tunnel_proxy_host", gate_lookup, (void *)bad),
+          "unreadable deciding values mean the defaults");
+
+    check(gw_gate_required("smtp_host") && gw_gate_required("tunnel_proxy_host") &&
+          !gw_gate_required("oauth_scope") && !gw_gate_required("imap_upstream_port") &&
+          !gw_gate_required("tunnel_proxy_user"),
+          "required while applicable");
+}
+
 /*
  * The two consumers agreeing: proxy and PAC file use the same splitter.
  *
@@ -2212,6 +2278,7 @@ int main(void)
     test_prefs_set_drop();
     test_prefs_comment();
     test_provider();
+    test_gate();
     test_pac_splitter_agree();
     test_wayback_api();
     test_pac();

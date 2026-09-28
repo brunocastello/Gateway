@@ -19,12 +19,13 @@
 #include "gw_settings.h"
 #include "../gw_config.h"
 #include "../gw_core.h"
+#include "../portable/gw_gate.h"
 #include "../portable/gw_prefs.h"
 #include "../portable/gw_provider.h"
 #include "../portable/gw_util.h"
 
 namespace {
-enum Kind { Check, Number, Date, Text, Redirect, Provider, List };
+enum Kind { Check, Number, Date, Text, Redirect, Provider, Proxy, List };
 struct Field {
     short pane;
     Kind kind;
@@ -123,11 +124,11 @@ const Field kFields[] = {
     { 7, Text, "tunnel_sni", "SNI override:", "",
       "Empty sends the remote host; \"none\" omits SNI.\n"
       "The certificate is always checked against the remote host." },
-    { 8, Text, "tunnel_proxy", "Forward proxy:", "none",
-      "none, http (CONNECT) or socks5 (no auth)." },
+    { 8, Proxy, "tunnel_proxy", "Forward proxy:", "none",
+      "HTTP sends CONNECT; SOCKS5 takes no login." },
     { 8, Text, "tunnel_proxy_host", "Proxy host:", "", "" },
     { 8, Number, "tunnel_proxy_port", "Proxy port:", "8080",
-      "8080 for http, 1080 for socks5." },
+      "8080 for HTTP, 1080 for SOCKS5." },
     { 8, Text, "tunnel_proxy_user", "Proxy user:", "", "" },
     { 8, Text, "tunnel_proxy_pass", "Proxy password:", "", "" },
     { 8, Check, "tunnel_host_header", "Send Host: in the CONNECT request", "1",
@@ -147,6 +148,18 @@ const Field kFields[] = {
 const int kFieldCount = sizeof(kFields) / sizeof(kFields[0]);
 const char *const kRedirects[] = { "auto", "always", "never" };
 const char *const kProviders[] = { "outlook", "gmail", "custom" };
+const char *const kProxies[] = { "none", "http", "socks5" };
+
+/* A pop-up's values, in the order of its MENU in gateway_settings.r. */
+const char *const *Choices(Kind kind)
+{
+    return kind == Provider ? kProviders : kind == Proxy ? kProxies : kRedirects;
+}
+
+bool Popup(Kind kind)
+{
+    return kind == Redirect || kind == Provider || kind == Proxy;
+}
 const int kValueCapacity = 2048;
 const int kListLimit = 2000;
 
@@ -223,8 +236,9 @@ struct Item {
     short labelBase;               // Charcoal baseline, 0 when the control draws it
     short hintBase;                // Geneva baseline of the first caption line
     char original[kValueCapacity];
-    char custom[kValueCapacity];   // custom-only rows: the value typed under
-                                   // Custom, kept while another provider shows
+    char kept[kValueCapacity];     // gated rows: the value to restore when
+    bool hasKept;                  // the row applies again (see gw_gate.h)
+    bool live;                     // gated rows: applies as last shown
     bool overflow;                 // Never silently save a truncated value.
 };
 
@@ -299,7 +313,7 @@ void ReadValue(const Item &item, const Field &field, char *value)
     } else {
         short n = GetControlValue(item.control);
         if (n < 1 || n > 3) n = 1;
-        std::strcpy(value, (field.kind == Provider ? kProviders : kRedirects)[n - 1]);
+        std::strcpy(value, Choices(field.kind)[n - 1]);
     }
 }
 
@@ -326,7 +340,7 @@ void ShowValue(Item &item, const Field &f, const char *value)
     } else if (f.kind == Check) {
         SetControlValue(item.control, value[0] == '1');
     } else {
-        const char *const *choices = f.kind == Provider ? kProviders : kRedirects;
+        const char *const *choices = Choices(f.kind);
         short chosen = 1;
         for (short n = 0; n < 3; ++n)
             if (!gw_stricmp(value, choices[n])) chosen = n + 1;
@@ -375,10 +389,10 @@ public:
     WindowPtr window = nullptr;
     ControlHandle selector = nullptr, save = nullptr;
     ControlHandle cancel = nullptr, revert = nullptr, scroll = nullptr;
-    MenuHandle menus[3] = {};
+    MenuHandle menus[4] = {};
     Item items[kFieldCount] = {};
-    short pane = 0, focus = -1, listIndex = -1, providerIndex = -1;
-    bool customShown = false;            // the custom-only rows are live
+    short pane = 0, focus = -1, listIndex = -1;
+    char lookup[kValueCapacity];         // Lookup()'s answer, for gw_gate
     short paneHeight[kPaneCount] = {};   // window height, per pane
     short paneBottom[kPaneCount] = {};   // group frame bottom, per pane
     short tallest = 0;
@@ -458,6 +472,7 @@ public:
                     break;
                 case Redirect:
                 case Provider:
+                case Proxy:
                     item.labelBase = static_cast<short>(y + kPopupAscent);
                     item.box.top = y; item.box.left = static_cast<short>(kFieldLeft - 3);
                     item.box.bottom = static_cast<short>(y + kPopupHeight);
@@ -543,7 +558,7 @@ public:
         HintFont();
         ControlHandle root;
         if (CreateRootControl(window, &root) != noErr) return false;
-        for (short n = 0; n < 3; ++n) {
+        for (short n = 0; n < 4; ++n) {
             menus[n] = GetMenu(200 + n);
             if (!menus[n]) return false;
             InsertMenu(menus[n], -1);
@@ -596,7 +611,6 @@ public:
                 if (!scroll) return false;
                 continue;
             }
-            if (f.kind == Provider) providerIndex = static_cast<short>(i);
             Rect box = item.box;
             short proc = kControlCheckBoxAutoToggleProc;
             short minimum = 0, maximum = 1;
@@ -604,9 +618,9 @@ public:
                 // The native edit CDEF frames outside its text rectangle.
                 InsetRect(&box, 3, 3);
                 proc = kControlEditTextProc;
-            } else if (f.kind == Redirect || f.kind == Provider) {
+            } else if (Popup(f.kind)) {
                 proc = kControlPopupButtonProc | kControlPopupFixedWidthVariant;
-                minimum = f.kind == Redirect ? 201 : 202;
+                minimum = f.kind == Redirect ? 201 : f.kind == Provider ? 202 : 203;
                 maximum = 0;
             }
             item.control = Control(box, f.kind == Check ? f.label : "",
@@ -621,7 +635,6 @@ public:
                     !item.text) return false;
             }
         }
-        if (providerIndex < 0) return false;
         Load();
         ShowControl(selector);
         ShowControl(save); ShowControl(cancel); ShowControl(revert);
@@ -630,56 +643,86 @@ public:
         return true;
     }
 
-    bool Custom()
+    /* The current value of a deciding setting, as the window shows it. */
+    static const char *Lookup(const char *key, void *ctx)
     {
-        char provider[kValueCapacity];
-        ReadValue(items[providerIndex], kFields[providerIndex], provider);
-        return gw_provider_is_custom(provider) != 0;
+        Preferences *self = static_cast<Preferences *>(ctx);
+        for (int i = 0; i < kFieldCount; ++i)
+            if (!gw_stricmp(kFields[i].key, key)) {
+                ReadValue(self->items[i], kFields[i], self->lookup);
+                return self->lookup;
+            }
+        return nullptr;
     }
 
-    /* Values from the file, then the custom-only rows set for the provider. */
+    bool Applies(int i)
+    {
+        return gw_gate_applies(kFields[i].key, Lookup, this) != 0;
+    }
+
+    /* Values from the file, then the gated rows set for what decides them. */
     void Load()
     {
         LoadValues(items);
-        customShown = Custom();
-        // Under Outlook or Gmail the custom values live on as commented-out
-        // lines; offer those back, or choosing Custom again would show the
-        // provider's values and Save would write them over what was kept.
+        // A row that does not apply lives on in the file as a commented-out
+        // line; offer that back, or restoring the row would show a default
+        // and Save would write it over what was kept.
         for (int i = 0; i < kFieldCount; ++i) {
-            if (customShown) std::strcpy(items[i].custom, items[i].original);
-            else GWConfig_GetCommented(kFields[i].key, items[i].custom,
-                                       sizeof(items[i].custom));
+            Item &item = items[i];
+            if (!gw_gate_gated(kFields[i].key)) continue;
+            item.live = Applies(i);
+            if (item.live) {
+                std::strcpy(item.kept, item.original);
+                item.hasKept = true;
+            } else {
+                item.hasKept = GWConfig_GetCommented(kFields[i].key, item.kept,
+                                                     sizeof(item.kept)) != 0;
+            }
         }
-        ApplyProvider();
+        ApplyGates();
     }
 
     /*
-     * The custom-only rows are live under Custom. Under Outlook or Gmail they
-     * show, dimmed, what that provider uses -- the way TCP/IP shows the
-     * addresses a DHCP server supplies. Leaving Custom keeps what was typed,
-     * so trying Gmail and coming back loses nothing; arriving at Custom with
-     * nothing kept starts from the provider's values rather than blanks.
+     * A gated row is live while it applies and dimmed otherwise. A dimmed
+     * mail server shows what the provider uses -- the way TCP/IP shows the
+     * addresses a DHCP server supplies -- and any other dimmed row shows the
+     * value it will come back with. Leaving a row keeps what was typed, so
+     * switching away and back loses nothing.
      */
-    void ApplyProvider()
+    void ApplyGates()
     {
-        char provider[kValueCapacity];
-        ReadValue(items[providerIndex], kFields[providerIndex], provider);
-        bool custom = gw_provider_is_custom(provider) != 0;
+        const char *provider = Lookup("provider", this);
+        char chosen[16];
+        std::strncpy(chosen, provider ? provider : "", sizeof(chosen) - 1);
+        chosen[sizeof(chosen) - 1] = 0;
         for (int i = 0; i < kFieldCount; ++i) {
             const Field &f = kFields[i];
             Item &item = items[i];
-            if (!item.control || !gw_provider_custom_only(f.key)) continue;
-            if (custom) {
-                if (!customShown && item.custom[0]) ShowValue(item, f, item.custom);
+            if (!item.control || !gw_gate_gated(f.key)) continue;
+            bool now = Applies(i);
+            if (now) {
+                if (!item.live && item.hasKept) ShowValue(item, f, item.kept);
                 ActivateControl(item.control);
             } else {
-                if (customShown) ReadValue(item, f, item.custom);
-                const char *supplied = gw_provider_default(provider, f.key);
-                ShowValue(item, f, supplied ? supplied : "");
+                if (item.live) {
+                    ReadValue(item, f, item.kept);
+                    item.hasKept = true;
+                }
+                const char *supplied = gw_provider_default(chosen, f.key);
+                if (supplied) ShowValue(item, f, supplied);
+                else if (item.hasKept) ShowValue(item, f, item.kept);
                 DeactivateControl(item.control);
             }
+            item.live = now;
         }
-        customShown = custom;
+    }
+
+    /* Whether a control is one whose value can dim or restore other rows. */
+    bool Decides(ControlHandle c) const
+    {
+        for (int i = 0; i < kFieldCount; ++i)
+            if (items[i].control == c) return gw_gate_decides(kFields[i].key) != 0;
+        return false;
     }
 
     /* A row that takes the keyboard: editable, and not dimmed. */
@@ -784,6 +827,13 @@ public:
         RGBColor c; c.red = c.green = c.blue = level; RGBForeColor(&c);
     }
 
+    /* The theme's text colour for a dimmed row; Pen(0) puts black back. */
+    void Dim()
+    {
+        SetThemeTextColor(kThemeTextColorDialogInactive,
+                          (*(*GetGDevice())->gdPMap)->pixelSize, true);
+    }
+
     void DrawList()
     {
         Item &item = items[listIndex];
@@ -832,15 +882,17 @@ public:
                 LabelFont();
                 // A dimmed row's label dims with it.
                 bool dim = item.control && !IsControlActive(item.control);
-                if (dim) SetThemeTextColor(kThemeTextColorDialogInactive,
-                                           (*(*GetGDevice())->gdPMap)->pixelSize, true);
+                if (dim) Dim();
                 Line(kRowLeft, item.labelBase, f.label, std::strlen(f.label));
                 if (dim) Pen(0x0000);
             }
             if (item.hintBase) {
                 HintFont();
+                bool dim = item.control && !IsControlActive(item.control);
+                if (dim) Dim();
                 Caption(f.kind == Check ? kCheckTextLeft : kRowLeft,
                         item.hintBase, f.hint);
+                if (dim) Pen(0x0000);
             }
         }
         if (listIndex >= 0 && kFields[listIndex].pane == pane) DrawList();
@@ -889,16 +941,14 @@ public:
     bool Save()
     {
         char value[kValueCapacity];
-        bool custom = Custom();
         // Validate every pane before writing anything.
         for (short i = 0; i < kFieldCount; ++i) {
             const Field &f = kFields[i];
             ReadValue(items[i], f, value);
             bool valid = true;
-            // Custom has no provider to fall back on: every server and the
-            // token endpoint must be named. Only the scope may be empty.
-            if (custom && f.kind == Text && gw_provider_custom_only(f.key) &&
-                std::strcmp(f.key, "oauth_scope"))
+            // A row that applies and must be named: the Custom servers, the
+            // proxy host. See gw_gate_required.
+            if (gw_gate_required(f.key) && Applies(i))
                 valid = value[0] != 0;
             if (items[i].overflow) {
                 // An oversized on-disk list can be kept, but not truncated by Save.
@@ -925,14 +975,14 @@ public:
             }
         }
         // Write edits across all panes. Preserve any refresh token rotated by
-        // the live core while this window was open. The custom-only rows are
-        // written whole under Custom -- values shown but never typed over
-        // still have to reach the file -- and commented out otherwise, which
-        // keeps them there for the next time Custom is chosen.
+        // the live core while this window was open. A gated row is written
+        // whole while it applies -- a value shown but never typed over still
+        // has to reach the file -- and commented out otherwise, which keeps
+        // it there for the next time it applies.
         for (int i = 0; i < kFieldCount; ++i) {
-            if (gw_provider_custom_only(kFields[i].key)) {
+            if (gw_gate_gated(kFields[i].key)) {
                 int ok;
-                if (custom) {
+                if (Applies(i)) {
                     ReadValue(items[i], kFields[i], value);
                     ok = GWConfig_Set(kFields[i].key, value);
                 } else {
@@ -959,7 +1009,7 @@ public:
         if (listIndex >= 0 && items[listIndex].text) TEDispose(items[listIndex].text);
         // Controls and their TextEdit records belong to the dialog window.
         if (dialog) DisposeDialog(dialog);
-        for (short i = 0; i < 3; ++i) if (menus[i]) {
+        for (short i = 0; i < 4; ++i) if (menus[i]) {
             DeleteMenu(200 + i); DisposeMenu(menus[i]);
         }
     }
@@ -1045,8 +1095,8 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
             if (hit == p->selector) {
                 short selected = GetControlValue(hit) - 1;
                 if (selected >= 0 && selected < kPaneCount) p->SwitchPane(selected);
-            } else if (hit == p->items[p->providerIndex].control) {
-                p->ApplyProvider();
+            } else if (p->Decides(hit)) {
+                p->ApplyGates();
             } else if (hit == p->cancel) done = true;
             else if (hit == p->save) done = p->Save();
             else if (hit == p->revert) {

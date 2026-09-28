@@ -82,15 +82,21 @@ tunnel_local_port  = 2222
 tunnel_remote_host = ssh.example.com
 tunnel_remote_port = 443
 tunnel_tls         = 0
-# tunnel_tls12     = 1
-# tunnel_insecure  = 1
-# tunnel_sni       = none
 
-# Tunnel proxy (none, http or socks5)
-# tunnel_proxy       = none
-# tunnel_proxy_host  = proxy.example.com
-# tunnel_proxy_port  = 8080
+# Used only with tunnel_tls = 1.
+# tunnel_tls12     = 0
+# tunnel_insecure  = 0
+# tunnel_sni       =
+
+# none, http or socks5
+tunnel_proxy = none
+
+# Used only with a proxy.
+# tunnel_proxy_host = proxy.example.com
+# tunnel_proxy_port = 8080
+# tunnel_settle_ms  = 0
+
+# Used only with tunnel_proxy = http.
 # tunnel_proxy_user  =
 # tunnel_proxy_pass  =
-# tunnel_host_header = 0
-# tunnel_settle_ms   = 0
+# tunnel_host_header = 1

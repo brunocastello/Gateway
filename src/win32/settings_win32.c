@@ -36,13 +36,14 @@
 #include "settings_win32.h"
 #include "../gw_config.h"
 #include "../gw_core.h"
+#include "../portable/gw_gate.h"
 #include "../portable/gw_prefs.h"
 #include "../portable/gw_provider.h"
 #include "../portable/gw_util.h"
 
 #define GW_SETTINGS_CLASS "GatewaySettingsClass"
 
-enum { Check, Number, Date, Text, Redirect, Provider, List };
+enum { Check, Number, Date, Text, Redirect, Provider, Proxy, List };
 
 typedef struct {
     int         pane;
@@ -142,11 +143,11 @@ static const Field kFields[] = {
     { 7, Text, "tunnel_sni", "SNI override:", "",
       "Empty sends the remote host; \"none\" omits SNI.\n"
       "The certificate is always checked against the remote host." },
-    { 8, Text, "tunnel_proxy", "Forward proxy:", "none",
-      "none, http (CONNECT) or socks5 (no auth)." },
+    { 8, Proxy, "tunnel_proxy", "Forward proxy:", "none",
+      "HTTP sends CONNECT; SOCKS5 takes no login." },
     { 8, Text, "tunnel_proxy_host", "Proxy host:", "", "" },
     { 8, Number, "tunnel_proxy_port", "Proxy port:", "8080",
-      "8080 for http, 1080 for socks5." },
+      "8080 for HTTP, 1080 for SOCKS5." },
     { 8, Text, "tunnel_proxy_user", "Proxy user:", "", "" },
     { 8, Text, "tunnel_proxy_pass", "Proxy password:", "", "" },
     { 8, Check, "tunnel_host_header", "Send &Host: in the CONNECT request", "1",
@@ -169,6 +170,20 @@ static const char *const kRedirects[] = { "auto", "always", "never" };
 static const char *const kRedirectNames[] = { "Automatic", "Always", "Never" };
 static const char *const kProviders[] = { "outlook", "gmail", "custom" };
 static const char *const kProviderNames[] = { "Outlook", "Gmail", "Custom" };
+static const char *const kProxies[] = { "none", "http", "socks5" };
+static const char *const kProxyNames[] = { "None", "HTTP", "SOCKS5" };
+
+/* A drop-down's values, and the names it shows for them. */
+static const char *const *choices(int kind)
+{
+    return kind == Provider ? kProviders : kind == Proxy ? kProxies : kRedirects;
+}
+
+static const char *const *choice_names(int kind)
+{
+    return kind == Provider ? kProviderNames
+         : kind == Proxy ? kProxyNames : kRedirectNames;
+}
 
 /* The whitelist is shown the way the file keeps it and the way Internet
  * Explorer's proxy exception list is written: semicolons between entries,
@@ -228,8 +243,9 @@ typedef struct {
     HWND hint[MAX_HINT_LINES];
     int  lines;
     char original[VALUE_CAP];
-    char custom[VALUE_CAP];            /* custom-only rows: the value typed under
-                                        * Custom, kept while another provider shows */
+    char kept[VALUE_CAP];              /* gated rows: the value to restore when */
+    int  hasKept;                      /* the row applies again (see gw_gate.h) */
+    int  live;                         /* gated rows: applies as last shown */
     int  overflow;                     /* never silently save a truncated list */
 } Item;
 
@@ -246,8 +262,7 @@ static int       gTallest;
 static Item      gItems[FIELDS];
 static HWND      gIntro[PANES][MAX_HINT_LINES];
 static HWND      gGroup, gCombo, gComboLabel, gSave, gCancel, gUndo;
-static int       gProvider = -1;       /* the provider row's index */
-static int       gCustomShown;         /* the custom-only rows are live */
+static char      gLookup[VALUE_CAP];   /* lookup()'s answer, for gw_gate */
 
 static void show_pane(int pane);
 
@@ -364,9 +379,9 @@ static int build_pane(int pane)
             break;
 
         case Redirect:
-        case Provider: {
-            const char *const *names = f->kind == Redirect ? kRedirectNames
-                                                           : kProviderNames;
+        case Provider:
+        case Proxy: {
+            const char *const *names = choice_names(f->kind);
             it->label = caption(f->label, kRowLeft, y + 4, kFieldLeft - 8, -1);
             it->ctrl = child("COMBOBOX", "",
                              CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0,
@@ -422,7 +437,7 @@ static void read_value(int i, char *out, size_t cap)
         strcpy(out, SendMessageA(it->ctrl, BM_GETCHECK, 0, 0) == BST_CHECKED
                     ? "1" : "0");
     } else {
-        const char *const *values = f->kind == Provider ? kProviders : kRedirects;
+        const char *const *values = choices(f->kind);
         LRESULT n = SendMessageA(it->ctrl, CB_GETCURSEL, 0, 0);
         if (n < 0 || n > 2) n = 0;
         strcpy(out, values[n]);
@@ -442,8 +457,7 @@ static void set_value(int i, const char *value)
         SendMessageA(it->ctrl, BM_SETCHECK,
                      value[0] == '1' ? BST_CHECKED : BST_UNCHECKED, 0);
     } else {
-        const char *const *values = f->kind == Provider ? kProviders
-                                                        : kRedirects;
+        const char *const *values = choices(f->kind);
         int chosen = 0;
         for (n = 0; n < 3; ++n)
             if (gw_stricmp(value, values[n]) == 0) chosen = n;
@@ -496,58 +510,87 @@ static void load_values(void)
     }
 }
 
-static int custom_chosen(void)
+/* The current value of a deciding setting, as the window shows it. */
+static const char *lookup(const char *key, void *ctx)
 {
-    char provider[VALUE_CAP];
-    read_value(gProvider, provider, sizeof(provider));
-    return gw_provider_is_custom(provider);
+    int i;
+
+    (void)ctx;
+    for (i = 0; i < FIELDS; ++i)
+        if (gw_stricmp(kFields[i].key, key) == 0) {
+            read_value(i, gLookup, sizeof(gLookup));
+            return gLookup;
+        }
+    return NULL;
+}
+
+static int applies(int i)
+{
+    return gw_gate_applies(kFields[i].key, lookup, NULL);
 }
 
 /*
- * The custom-only rows are live under Custom. Under Outlook or Gmail they
- * show, disabled, what that provider uses. Leaving Custom keeps what was
- * typed, so trying Gmail and coming back loses nothing; arriving at Custom
- * with nothing kept starts from the provider's values rather than blanks.
+ * A gated row is live while it applies and disabled otherwise. A disabled
+ * mail server shows what the provider uses, and any other disabled row shows
+ * the value it will come back with. Leaving a row keeps what was typed, so
+ * switching away and back loses nothing.
  */
-static void apply_provider(void)
+static void apply_gates(void)
 {
-    char provider[VALUE_CAP];
-    int i, custom;
+    const char *chosen = lookup("provider", NULL);
+    char provider[16];
+    int i, n;
 
-    read_value(gProvider, provider, sizeof(provider));
-    custom = gw_provider_is_custom(provider);
+    /* A copy: lookup() answers every call in one buffer. */
+    strncpy(provider, chosen != NULL ? chosen : "", sizeof(provider) - 1);
+    provider[sizeof(provider) - 1] = '\0';
     for (i = 0; i < FIELDS; ++i) {
         Item *it = &gItems[i];
-        if (!gw_provider_custom_only(kFields[i].key)) continue;
-        if (custom) {
-            if (!gCustomShown && it->custom[0]) set_value(i, it->custom);
+        int now;
+
+        if (!gw_gate_gated(kFields[i].key)) continue;
+        now = applies(i);
+        if (now) {
+            if (!it->live && it->hasKept) set_value(i, it->kept);
         } else {
             const char *supplied = gw_provider_default(provider, kFields[i].key);
-            if (gCustomShown) read_value(i, it->custom, sizeof(it->custom));
-            set_value(i, supplied != NULL ? supplied : "");
+            if (it->live) {
+                read_value(i, it->kept, sizeof(it->kept));
+                it->hasKept = 1;
+            }
+            if (supplied != NULL) set_value(i, supplied);
+            else if (it->hasKept) set_value(i, it->kept);
         }
-        EnableWindow(it->ctrl, custom);
-        if (it->label != NULL) EnableWindow(it->label, custom);
+        EnableWindow(it->ctrl, now);
+        if (it->label != NULL) EnableWindow(it->label, now);
+        for (n = 0; n < it->lines; ++n)
+            if (it->hint[n] != NULL) EnableWindow(it->hint[n], now);
+        it->live = now;
     }
-    gCustomShown = custom;
 }
 
-/* Values from the file, then the custom-only rows set for the provider. */
+/* Values from the file, then the gated rows set for what decides them. */
 static void load(void)
 {
     int i;
 
     load_values();
-    gCustomShown = custom_chosen();
-    /* Under Outlook or Gmail the custom values live on as commented-out
-     * lines; offer those back, or choosing Custom again would show the
-     * provider's values and Save would write them over what was kept. */
+    /* A row that does not apply lives on in the file as a commented-out
+     * line; offer that back, or restoring the row would show a default and
+     * Save would write it over what was kept. */
     for (i = 0; i < FIELDS; ++i) {
-        if (gCustomShown) strcpy(gItems[i].custom, gItems[i].original);
-        else GWConfig_GetCommented(kFields[i].key, gItems[i].custom,
-                                   sizeof(gItems[i].custom));
+        Item *it = &gItems[i];
+        if (!gw_gate_gated(kFields[i].key)) continue;
+        it->live = applies(i);
+        if (it->live) {
+            strcpy(it->kept, it->original);
+            it->hasKept = 1;
+        } else {
+            it->hasKept = GWConfig_GetCommented(kFields[i].key, it->kept,
+                                                sizeof(it->kept));
+        }
     }
-    apply_provider();
+    apply_gates();
 }
 
 /* The Mac beeps and takes focus rather than printing a message; so does this. */
@@ -568,7 +611,7 @@ static void reject(int i)
 static int save_values(void)
 {
     char value[VALUE_CAP];
-    int i, custom = custom_chosen();
+    int i;
 
     /* Validate every pane before writing anything. */
     for (i = 0; i < FIELDS; ++i) {
@@ -577,10 +620,9 @@ static int save_values(void)
 
         read_value(i, value, sizeof(value));
 
-        /* Custom has no provider to fall back on: every server and the token
-         * endpoint must be named. Only the scope may be empty. */
-        if (custom && f->kind == Text && gw_provider_custom_only(f->key) &&
-            strcmp(f->key, "oauth_scope") != 0)
+        /* A row that applies and must be named: the Custom servers, the
+         * proxy host. See gw_gate_required. */
+        if (gw_gate_required(f->key) && applies(i))
             valid = value[0] != '\0';
 
         if (gItems[i].overflow) {
@@ -621,14 +663,14 @@ static int save_values(void)
     }
 
     /* Write edits across all panes. Preserve any refresh token rotated by the
-     * live core while this window was open. The custom-only rows are written
-     * whole under Custom -- values shown but never typed over still have to
-     * reach the file -- and commented out otherwise, which keeps them there
-     * for the next time Custom is chosen. */
+     * live core while this window was open. A gated row is written whole
+     * while it applies -- a value shown but never typed over still has to
+     * reach the file -- and commented out otherwise, which keeps it there
+     * for the next time it applies. */
     for (i = 0; i < FIELDS; ++i) {
-        if (gw_provider_custom_only(kFields[i].key)) {
+        if (gw_gate_gated(kFields[i].key)) {
             int ok;
-            if (custom) {
+            if (applies(i)) {
                 read_value(i, value, sizeof(value));
                 ok = GWConfig_Set(kFields[i].key, value);
             } else {
@@ -741,9 +783,12 @@ static LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             load();
             return 0;
         default:
-            if (LOWORD(wp) == IDC_FIELD + gProvider &&
-                HIWORD(wp) == CBN_SELCHANGE)
-                apply_provider();
+            /* A deciding row changed: the provider or proxy drop-down, or
+             * the far leg's TLS box. */
+            if (LOWORD(wp) >= IDC_FIELD && LOWORD(wp) < IDC_FIELD + FIELDS &&
+                gw_gate_decides(kFields[LOWORD(wp) - IDC_FIELD].key) &&
+                (HIWORD(wp) == CBN_SELCHANGE || HIWORD(wp) == BN_CLICKED))
+                apply_gates();
             break;
         }
         return 0;
@@ -859,9 +904,6 @@ void GWSettings_Show(HINSTANCE inst)
         return;
     }
 
-    for (i = 0; i < FIELDS; ++i)
-        if (kFields[i].kind == Provider) gProvider = i;
-    if (gProvider < 0) { DestroyWindow(gWnd); return; }
     load();
 
     ShowWindow(gComboLabel, SW_SHOW);

@@ -48,7 +48,10 @@ Preferences windows show those rows dimmed with the provider's values and, on
 Save, comment them out or write them back in place (`gw_prefs_comment`, and
 `gw_prefs_set` uncommenting a commented-only key). **Release-notes item:** a
 single overridden host under `outlook` no longer works — it needs `custom`.
-The Tunnel settings get the same treatment next.
+The Tunnel settings got the same treatment: `tunnel_tls` gates the TLS
+options, any `tunnel_proxy` gates the proxy host, port and settle delay, and
+`http` gates the login and Host line; `tunnel_proxy` became a pop-up. The rule
+for both modules lives in `src/portable/gw_gate.c`.
 
 ---
 

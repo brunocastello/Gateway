@@ -68,6 +68,20 @@ data 'MENU' (202, "Mail provider", purgeable) {
     $"00"
 };
 
+/* tunnel_proxy: "none", "http", "socks5", in this order. */
+data 'MENU' (203, "Tunnel proxy", purgeable) {
+    $"00CB"                            /* menu ID 203                       */
+    $"0000 0000"
+    $"0000"
+    $"0000"
+    $"FFFFFFFF"
+    $"00"
+    $"04" "None"           $"00 00 00 00"
+    $"04" "HTTP"           $"00 00 00 00"
+    $"06" "SOCKS5"         $"00 00 00 00"
+    $"00"
+};
+
 /* Empty item list for NewColorDialog (the dialog owns a copied handle). */
 data 'DITL' (209, "Preferences chrome", purgeable) { $"FFFF" };
 

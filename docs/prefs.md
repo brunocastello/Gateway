@@ -9,8 +9,9 @@ The file lives in the System Preferences folder as **Gateway Prefs**. A
 starting point is `docs/prefs-example.txt`. Gateway reads it once at launch,
 and rewrites two lines itself: `refresh_token` when the provider rotates it,
 and `wayback_date`/`wayback_tolerance` when the settings page is used. The
-Preferences window also comments out or restores the custom mail servers (see
-[Provider](#provider)).
+Preferences window also comments out or restores the settings that do not
+apply under the current choices (see [Provider](#provider) and
+[Tunnel](#tunnel)).
 
 The file may be up to 32 KB. Past that Gateway warns loudly in its log and
 every setting after the cut silently reverts to its default — which is exactly
@@ -219,6 +220,20 @@ motivating use, not the protocol: for it, the SSH client points at
 `tunnel_local_port` and authenticates to `sshd` exactly as if the tunnel were
 not there.
 
+Some of these only mean something under another one's value, and the
+example file keeps them commented out in a group of their own:
+
+| Only read when | Settings |
+|---|---|
+| `tunnel_tls = 1` | `tunnel_tls12`, `tunnel_insecure`, `tunnel_sni` |
+| `tunnel_proxy` is `http` or `socks5` | `tunnel_proxy_host`, `tunnel_proxy_port`, `tunnel_settle_ms` |
+| `tunnel_proxy = http` | `tunnel_proxy_user`, `tunnel_proxy_pass`, `tunnel_host_header` |
+
+The Preferences window dims those rows while they do not apply and, on Save,
+comments their lines out, keeping the values; they come back in place when
+the row applies again. The commented values in the example are the defaults,
+so turning TLS on does not quietly bring back `tunnel_insecure = 1`.
+
 | Key | Default | Meaning |
 |---|---|---|
 | `tunnel_local_port` | `2222` | Where the local application connects. |
@@ -229,11 +244,11 @@ not there.
 | `tunnel_insecure` | `0` | Testing only: accept any certificate on the far leg — wrong name, private CA, expired — without checking. The tunnel then proves only that bytes flow, not who they flow to, so turn it back off afterwards. Never applies to mail, the web proxy, or the archive. |
 | `tunnel_sni` | empty | Diagnosis only: what the handshake sends as the SNI extension. Empty (the default) sends `tunnel_remote_host`. `none` omits SNI entirely; anything else is sent instead. One corporate proxy answered a nameless ClientHello and stalled one carrying the hostname, with no other difference on the wire. **This changes only what is sent — the certificate is always checked against `tunnel_remote_host`, never against an override, and never skipped just because SNI was omitted**, unless `tunnel_insecure` is also set. |
 | `tunnel_proxy` | `none` | `none`, `http` (CONNECT, with `Proxy-Authorization` when a user is set) or `socks5` (no-auth only). Anything else drops the client and logs the valid values. |
-| `tunnel_host_header` | `1` | Send a `Host:` line in the proxy CONNECT request. `0` omits it (request line, optional auth, blank line — byte-for-byte what `socat` sends). One proxy answered the `Host` form with 200 and then stalled the tunnel past the handshake timeout, while passing the bare form. HTTP/1.0 does not require `Host`: the authority is already in the request line. |
-| `tunnel_settle_ms` | `0` | Diagnosis: milliseconds to wait after the proxy accepts before starting TLS. One proxy answered 200 before its own upstream splice was ready, so the first flight sent inside a millisecond fell into the void with no RST and no reply; delaying past that race (try `2000`) tells a setup race apart from a byte-level block. Clamped to 30000. |
 | `tunnel_proxy_host` | — | The proxy. Required unless `tunnel_proxy` is `none`. |
 | `tunnel_proxy_port` | `8080` / `1080` | The proxy port: `8080` for `http`, `1080` for `socks5`. Set explicitly to override. |
+| `tunnel_settle_ms` | `0` | Diagnosis: milliseconds to wait after the proxy accepts before starting TLS. One proxy answered 200 before its own upstream splice was ready, so the first flight sent inside a millisecond fell into the void with no RST and no reply; delaying past that race (try `2000`) tells a setup race apart from a byte-level block. Clamped to 30000. |
 | `tunnel_proxy_user`, `tunnel_proxy_pass` | empty | HTTP proxy credentials (Basic). A SOCKS5 login is not implemented: setting one refuses the connection loudly rather than connecting anonymously. |
+| `tunnel_host_header` | `1` | Send a `Host:` line in the proxy CONNECT request. `0` omits it (request line, optional auth, blank line — byte-for-byte what `socat` sends). One proxy answered the `Host` form with 200 and then stalled the tunnel past the handshake timeout, while passing the bare form. HTTP/1.0 does not require `Host`: the authority is already in the request line. |
 
 Up to four sessions run at once; surplus clients wait in the listen backlog.
 A session stuck opening the far leg, talking to a proxy, or negotiating TLS
