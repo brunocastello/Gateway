@@ -62,10 +62,38 @@ int gw_prefs_get_nth_split(const char *text, size_t len, const char *key,
  * spacing elsewhere are left alone, because this file is hand-edited and
  * Gateway only ever has business changing one line of it.
  *
+ * A key with no active line but a commented one ("# key = old") is set by
+ * uncommenting the first such line where it stands, so settings the file
+ * keeps commented out -- the custom mail servers -- come back in place.
+ *
  * Returns the length written, or 0 if it would not fit in cap.
  */
 size_t gw_prefs_set(const char *text, size_t len, const char *key,
                     const char *value, char *out, size_t cap);
+
+/*
+ * Produce a copy of the prefs text with key commented out, so it reads as
+ * unset while its value stays in the file for gw_prefs_set to bring back.
+ * When the file already has a commented copy ("# key = old"), the first one
+ * takes the active value in place and the active lines go; otherwise every
+ * active line gets "# " in front. Either way the first commented copy is the
+ * value that was in force, which is the one gw_prefs_set and
+ * gw_prefs_get_commented read. Text without an active line comes back
+ * unchanged.
+ *
+ * Returns the length written, or 0 if it would not fit in cap.
+ */
+size_t gw_prefs_comment(const char *text, size_t len, const char *key,
+                        char *out, size_t cap);
+
+/*
+ * The value of the first commented copy of key ("# key = value"), for
+ * offering back a setting the file keeps commented out. Returns 1 when such
+ * a line exists, whatever its value, and 0 otherwise (out is set to "").
+ * Active lines are not consulted; gw_prefs_get reads those.
+ */
+int gw_prefs_get_commented(const char *text, size_t len, const char *key,
+                           char *out, size_t cap);
 
 /* Normalize an editable host list in place: trim entries, skip empty ones,
  * and convert semicolons or CR/LF separators to a single semicolon. */

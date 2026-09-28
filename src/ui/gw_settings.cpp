@@ -19,34 +19,41 @@
 #include "gw_settings.h"
 #include "../gw_config.h"
 #include "../gw_core.h"
+#include "../portable/gw_gate.h"
 #include "../portable/gw_prefs.h"
+#include "../portable/gw_provider.h"
 #include "../portable/gw_util.h"
 
 namespace {
-enum Kind { Check, Number, Date, Text, Redirect, Provider, List };
+enum Kind { Check, Number, Date, Text, Redirect, Provider, Proxy, List };
 struct Field {
     short pane;
     Kind kind;
     const char *key, *label, *fallback, *hint;  // hint lines are split on '\n'
 };
-const short kPaneCount = 8;
+const short kPaneCount = 10;
 
 /* The pane names, in the order of MENU 200. */
 const char *const kPanes[kPaneCount] = {
     "Modules", "Web proxy", "Wayback", "Wayback sites",
-    "Mail", "Mail upstream", "OAuth", "Log"
+    "Mail", "Mail upstream", "OAuth", "Tunnel", "Tunnel proxy", "Log"
 };
 
-/* Standing text at the top of a pane, above its first row. */
+/* Standing text at the top of a pane, above its first row. The Tunnel pane's
+ * former intro (no local authentication on the listening port) now lives as
+ * tunnel_local_port's own hint below -- keeping it as a pane intro pushed
+ * this pane past the Web proxy pane, the previous tallest. */
 const char *const kIntro[kPaneCount] = {
     "Stop and start Gateway after changing listeners.",
     "",
     "",
     "",
     "",
-    "Empty host fields use the selected provider's defaults.",
+    "Used only by the Custom provider. Outlook and Gmail supply their own.",
     "Obtain the refresh token outside Gateway, then paste it here.\n"
     "Long values scroll horizontally. Tokens may rotate while running.",
+    "",
+    "",
     "",
 };
 
@@ -55,6 +62,7 @@ const Field kFields[] = {
     { 0, Check, "http_enabled", "Web proxy", "1", "Browse modern sites through the web proxy." },
     { 0, Check, "mail_enabled", "Mail", "1", "Connect a mail client to IMAP, POP and SMTP." },
     { 0, Check, "wayback_enabled", "Wayback proxy", "1", "Browse archived pages from the Wayback Machine." },
+    { 0, Check, "tunnel_enabled", "Tunnel", "0", "A generic TLS relay for one local port; SSH is the use case." },
     { 1, Number, "http_port", "Port:", "8765", "" },
     { 1, Check, "rewrite_https", "Rewrite https:// links to http://", "1",
       "For browsers without modern TLS support." },
@@ -95,22 +103,63 @@ const Field kFields[] = {
     { 5, Number, "smtp_upstream_port", "SMTP port:", "587", "" },
     { 5, Check, "smtp_starttls", "Use STARTTLS on the SMTP port", "1",
       "Port 465 uses TLS immediately; other ports default to STARTTLS." },
-    { 6, Text, "oauth_host", "Token host:", "", "" },
-    { 6, Text, "oauth_path", "Token path:", "", "" },
-    { 6, Text, "oauth_scope", "Scope:", "", "" },
     { 6, Text, "oauth_client_id", "Client ID:", "", "" },
     { 6, Text, "oauth_client_secret", "Client secret:", "", "" },
     { 6, Text, "refresh_token", "Refresh token:", "", "" },
-    { 7, Check, "show_window", "Show the log window at launch", "1",
+    // Custom provider only, like the Mail upstream pane.
+    { 6, Text, "oauth_host", "Token host:", "", "" },
+    { 6, Text, "oauth_path", "Token path:", "", "" },
+    { 6, Text, "oauth_scope", "Scope:", "", "" },
+    { 7, Number, "tunnel_local_port", "Local port:", "2222",
+      "No local authentication: keep this port behind the machine's own\n"
+      "boundary. Stop and start Gateway after changing it." },
+    { 7, Text, "tunnel_remote_host", "Remote host:", "", "Required." },
+    { 7, Number, "tunnel_remote_port", "Remote port:", "443", "" },
+    { 7, Check, "tunnel_tls", "Wrap the far leg in TLS", "1",
+      "Off relays plaintext -- only for a far leg that is already safe." },
+    { 7, Check, "tunnel_tls12", "Speak only TLS 1.2 on the far leg", "0",
+      "For far ends with no TLS 1.3 (an old stunnel)." },
+    { 7, Check, "tunnel_insecure", "Accept any far-end certificate", "0",
+      "Testing only. Proves bytes flow, not who they flow to." },
+    { 7, Text, "tunnel_sni", "SNI override:", "",
+      "Empty sends the remote host; \"none\" omits SNI.\n"
+      "The certificate is always checked against the remote host." },
+    { 8, Proxy, "tunnel_proxy", "Forward proxy:", "none",
+      "HTTP sends CONNECT; SOCKS5 takes no login." },
+    { 8, Text, "tunnel_proxy_host", "Proxy host:", "", "" },
+    { 8, Number, "tunnel_proxy_port", "Proxy port:", "8080",
+      "8080 for HTTP, 1080 for SOCKS5." },
+    { 8, Text, "tunnel_proxy_user", "Proxy user:", "", "" },
+    { 8, Text, "tunnel_proxy_pass", "Proxy password:", "", "" },
+    { 8, Check, "tunnel_host_header", "Send Host: in the CONNECT request", "1",
+      "Off omits it, like socat, for a proxy that answers that form." },
+    { 8, Number, "tunnel_settle_ms", "Settle before TLS (ms):", "0",
+      "Diagnosis only. 0 starts TLS immediately." },
+    { 9, Check, "show_window", "Show the log window at launch", "1",
       "Off launches without a window, menu bar or Application\n"
       "menu entry. Send a Quit Apple event to stop Gateway." },
-    { 7, Check, "log_file", "Also write the log to a file", "0",
+    { 9, Check, "log_file", "Also write the log to a file", "0",
       "The window keeps the last 200 lines.\n"
       "The log file keeps everything." },
+    { 9, Check, "log_debug", "Show engineering detail in the log", "0",
+      "Byte counts, hello bytes and library error numbers,\n"
+      "under each line. For reporting a problem." },
 };
 const int kFieldCount = sizeof(kFields) / sizeof(kFields[0]);
 const char *const kRedirects[] = { "auto", "always", "never" };
 const char *const kProviders[] = { "outlook", "gmail", "custom" };
+const char *const kProxies[] = { "none", "http", "socks5" };
+
+/* A pop-up's values, in the order of its MENU in gateway_settings.r. */
+const char *const *Choices(Kind kind)
+{
+    return kind == Provider ? kProviders : kind == Proxy ? kProxies : kRedirects;
+}
+
+bool Popup(Kind kind)
+{
+    return kind == Redirect || kind == Provider || kind == Proxy;
+}
 const int kValueCapacity = 2048;
 const int kListLimit = 2000;
 
@@ -187,6 +236,10 @@ struct Item {
     short labelBase;               // Charcoal baseline, 0 when the control draws it
     short hintBase;                // Geneva baseline of the first caption line
     char original[kValueCapacity];
+    char kept[kValueCapacity];     // gated rows: the value to restore when
+    bool hasKept;                  // the row applies again (see gw_gate.h)
+    bool live;                     // gated rows: applies as last shown
+    bool appliedAtLoad;            // gated rows: applied when the file was read
     bool overflow;                 // Never silently save a truncated value.
 };
 
@@ -261,7 +314,38 @@ void ReadValue(const Item &item, const Field &field, char *value)
     } else {
         short n = GetControlValue(item.control);
         if (n < 1 || n > 3) n = 1;
-        std::strcpy(value, (field.kind == Provider ? kProviders : kRedirects)[n - 1]);
+        std::strcpy(value, Choices(field.kind)[n - 1]);
+    }
+}
+
+void ShowValue(Item &item, const Field &f, const char *value)
+{
+    if (f.kind == List) {
+        if (item.text) {
+            TESetText(value, std::strlen(value), item.text);
+            (*item.text)->destRect = (*item.text)->viewRect;
+            TECalText(item.text);
+            TESetSelect(0, 0, item.text);
+        }
+    } else if (Editable(f)) {
+        SetControlData(item.control, kControlEntireControl,
+                       kControlEditTextTextTag, std::strlen(value), value);
+        // The framed fields are single-line and scroll horizontally.
+        if (item.text) {
+            (*item.text)->crOnly = -1;
+            TECalText(item.text);
+            TEAutoView(true, item.text);
+            TESetSelect(0, 0, item.text);
+            TESelView(item.text);
+        }
+    } else if (f.kind == Check) {
+        SetControlValue(item.control, value[0] == '1');
+    } else {
+        const char *const *choices = Choices(f.kind);
+        short chosen = 1;
+        for (short n = 0; n < 3; ++n)
+            if (!gw_stricmp(value, choices[n])) chosen = n + 1;
+        SetControlValue(item.control, chosen);
     }
 }
 
@@ -294,35 +378,15 @@ void LoadValues(Item *items)
         } else {
             const char *current = GWConfig_Str(f.key, f.fallback);
             std::strncpy(value, current, sizeof(value) - 1);
+            // "google" or "socks" is Gmail or SOCKS5 to Gateway; showing the
+            // first pop-up item instead would have Save change the file.
+            if (Popup(f.kind)) {
+                const char *canonical = gw_gate_canonical(f.key, value);
+                if (canonical) std::strcpy(value, canonical);
+            }
         }
         std::strcpy(item.original, value);
-        if (f.kind == List) {
-            if (item.text) {
-                TESetText(value, std::strlen(value), item.text);
-                (*item.text)->destRect = (*item.text)->viewRect;
-                TECalText(item.text);
-                TESetSelect(0, 0, item.text);
-            }
-        } else if (Editable(f)) {
-            SetControlData(item.control, kControlEntireControl,
-                           kControlEditTextTextTag, std::strlen(value), value);
-            // The framed fields are single-line and scroll horizontally.
-            if (item.text) {
-                (*item.text)->crOnly = -1;
-                TECalText(item.text);
-                TEAutoView(true, item.text);
-                TESetSelect(0, 0, item.text);
-                TESelView(item.text);
-            }
-        } else if (f.kind == Check) {
-            SetControlValue(item.control, value[0] == '1');
-        } else {
-            const char *const *choices = f.kind == Provider ? kProviders : kRedirects;
-            short chosen = 1;
-            for (short n = 0; n < 3; ++n)
-                if (!gw_stricmp(value, choices[n])) chosen = n + 1;
-            SetControlValue(item.control, chosen);
-        }
+        ShowValue(item, f, value);
     }
 }
 
@@ -332,9 +396,10 @@ public:
     WindowPtr window = nullptr;
     ControlHandle selector = nullptr, save = nullptr;
     ControlHandle cancel = nullptr, revert = nullptr, scroll = nullptr;
-    MenuHandle menus[3] = {};
+    MenuHandle menus[4] = {};
     Item items[kFieldCount] = {};
     short pane = 0, focus = -1, listIndex = -1;
+    char lookup[kValueCapacity];         // Lookup()'s answer, for gw_gate
     short paneHeight[kPaneCount] = {};   // window height, per pane
     short paneBottom[kPaneCount] = {};   // group frame bottom, per pane
     short tallest = 0;
@@ -414,6 +479,7 @@ public:
                     break;
                 case Redirect:
                 case Provider:
+                case Proxy:
                     item.labelBase = static_cast<short>(y + kPopupAscent);
                     item.box.top = y; item.box.left = static_cast<short>(kFieldLeft - 3);
                     item.box.bottom = static_cast<short>(y + kPopupHeight);
@@ -499,7 +565,7 @@ public:
         HintFont();
         ControlHandle root;
         if (CreateRootControl(window, &root) != noErr) return false;
-        for (short n = 0; n < 3; ++n) {
+        for (short n = 0; n < 4; ++n) {
             menus[n] = GetMenu(200 + n);
             if (!menus[n]) return false;
             InsertMenu(menus[n], -1);
@@ -559,9 +625,9 @@ public:
                 // The native edit CDEF frames outside its text rectangle.
                 InsetRect(&box, 3, 3);
                 proc = kControlEditTextProc;
-            } else if (f.kind == Redirect || f.kind == Provider) {
+            } else if (Popup(f.kind)) {
                 proc = kControlPopupButtonProc | kControlPopupFixedWidthVariant;
-                minimum = f.kind == Redirect ? 201 : 202;
+                minimum = f.kind == Redirect ? 201 : f.kind == Provider ? 202 : 203;
                 maximum = 0;
             }
             item.control = Control(box, f.kind == Check ? f.label : "",
@@ -576,12 +642,117 @@ public:
                     !item.text) return false;
             }
         }
-        LoadValues(items);
+        Load();
         ShowControl(selector);
         ShowControl(save); ShowControl(cancel); ShowControl(revert);
         SwitchPane(0);
         ShowWindow(window); SelectWindow(window);
         return true;
+    }
+
+    /* The current value of a deciding setting, as the window shows it. */
+    static const char *Lookup(const char *key, void *ctx)
+    {
+        Preferences *self = static_cast<Preferences *>(ctx);
+        for (int i = 0; i < kFieldCount; ++i)
+            if (!gw_stricmp(kFields[i].key, key)) {
+                ReadValue(self->items[i], kFields[i], self->lookup);
+                return self->lookup;
+            }
+        return nullptr;
+    }
+
+    bool Applies(int i)
+    {
+        return gw_gate_applies(kFields[i].key, Lookup, this) != 0;
+    }
+
+    /* Values from the file, then the gated rows set for what decides them. */
+    void Load()
+    {
+        LoadValues(items);
+        // A row that does not apply lives on in the file as a commented-out
+        // line; offer that back, or restoring the row would show a default
+        // and Save would write it over what was kept.
+        for (int i = 0; i < kFieldCount; ++i) {
+            Item &item = items[i];
+            if (!gw_gate_gated(kFields[i].key)) continue;
+            item.live = item.appliedAtLoad = Applies(i);
+            if (item.live) {
+                std::strcpy(item.kept, item.original);
+                item.hasKept = true;
+            } else {
+                // An active line first: a mail server a 0.3.6 file overrides
+                // under Outlook is ignored now, but it is the user's value,
+                // and choosing Custom must not show and save over it.
+                item.hasKept =
+                    GWConfig_GetNth(kFields[i].key, 0, item.kept, sizeof(item.kept)) ||
+                    GWConfig_GetCommented(kFields[i].key, item.kept, sizeof(item.kept));
+            }
+        }
+        ApplyGates();
+    }
+
+    /*
+     * A gated row is live while it applies and dimmed otherwise. A dimmed
+     * mail server shows what the provider uses -- the way TCP/IP shows the
+     * addresses a DHCP server supplies -- and any other dimmed row shows the
+     * value it will come back with. Leaving a row keeps what was typed, so
+     * switching away and back loses nothing.
+     */
+    void ApplyGates()
+    {
+        const char *provider = Lookup("provider", this);
+        char chosen[16];
+        std::strncpy(chosen, provider ? provider : "", sizeof(chosen) - 1);
+        chosen[sizeof(chosen) - 1] = 0;
+        for (int i = 0; i < kFieldCount; ++i) {
+            const Field &f = kFields[i];
+            Item &item = items[i];
+            if (!item.control || !gw_gate_gated(f.key)) continue;
+            bool now = Applies(i);
+            if (now) {
+                if (!item.live && item.hasKept) ShowValue(item, f, item.kept);
+                ActivateControl(item.control);
+            } else {
+                if (item.live) {
+                    ReadValue(item, f, item.kept);
+                    item.hasKept = true;
+                }
+                // The TLS box and the proxy pop-up share a pane with the rows
+                // they dim, and a click on them leaves the keyboard where it
+                // was: take it off a row that can no longer be typed in.
+                if (focus == i) {
+                    ClearKeyboardFocus(window);
+                    focus = -1;
+                }
+                const char *supplied = gw_provider_default(chosen, f.key);
+                if (supplied) ShowValue(item, f, supplied);
+                else if (item.hasKept) ShowValue(item, f, item.kept);
+                DeactivateControl(item.control);
+            }
+            item.live = now;
+        }
+        // The deciding row can share a pane with the rows it gates (the TLS
+        // box, the proxy pop-up). Their labels and captions are drawn by
+        // Draw(), and SetControlData does not repaint a field, so nothing on
+        // show changed until the pane was left and redrawn -- ask for that now.
+        InvalRect(&bounds);
+    }
+
+    /* Whether a control is one whose value can dim or restore other rows. */
+    bool Decides(ControlHandle c) const
+    {
+        for (int i = 0; i < kFieldCount; ++i)
+            if (items[i].control == c) return gw_gate_decides(kFields[i].key) != 0;
+        return false;
+    }
+
+    /* A row that takes the keyboard: editable, and not dimmed. */
+    bool Live(int i) const
+    {
+        return Editable(kFields[i]) &&
+               (!items[i].control || IsControlActive(items[i].control));
     }
 
     void SwitchPane(short next)
@@ -679,6 +850,13 @@ public:
         RGBColor c; c.red = c.green = c.blue = level; RGBForeColor(&c);
     }
 
+    /* The theme's text colour for a dimmed row; Pen(0) puts black back. */
+    void Dim()
+    {
+        SetThemeTextColor(kThemeTextColorDialogInactive,
+                          (*(*GetGDevice())->gdPMap)->pixelSize, true);
+    }
+
     void DrawList()
     {
         Item &item = items[listIndex];
@@ -725,12 +903,19 @@ public:
             const Item &item = items[i];
             if (item.labelBase) {
                 LabelFont();
+                // A dimmed row's label dims with it.
+                bool dim = item.control && !IsControlActive(item.control);
+                if (dim) Dim();
                 Line(kRowLeft, item.labelBase, f.label, std::strlen(f.label));
+                if (dim) Pen(0x0000);
             }
             if (item.hintBase) {
                 HintFont();
+                bool dim = item.control && !IsControlActive(item.control);
+                if (dim) Dim();
                 Caption(f.kind == Check ? kCheckTextLeft : kRowLeft,
                         item.hintBase, f.hint);
+                if (dim) Pen(0x0000);
             }
         }
         if (listIndex >= 0 && kFields[listIndex].pane == pane) DrawList();
@@ -782,8 +967,16 @@ public:
         // Validate every pane before writing anything.
         for (short i = 0; i < kFieldCount; ++i) {
             const Field &f = kFields[i];
+            // A row that does not apply is commented out, not saved: its
+            // value is no business of Save's, and a bad one would beep and
+            // focus a field the user cannot type in.
+            if (gw_gate_gated(f.key) && !Applies(i)) continue;
             ReadValue(items[i], f, value);
             bool valid = true;
+            // A row that applies and must be named: the Custom servers, the
+            // proxy host. See gw_gate_required.
+            if (gw_gate_required(f.key) && Applies(i))
+                valid = value[0] != 0;
             if (items[i].overflow) {
                 // An oversized on-disk list can be kept, but not truncated by Save.
                 valid = !std::strcmp(value, items[i].original);
@@ -799,7 +992,8 @@ public:
                     valid = valid && (std::strlen(value) == 4 || std::strlen(value) == 6 || std::strlen(value) == 8);
                 else if (std::strstr(f.key, "port"))
                     valid = valid && n <= 65535 && (n > 0 || !std::strcmp(f.key, "wayback_port"));
-                else if (std::strcmp(f.key, "max_body_mb") && std::strcmp(f.key, "wayback_tolerance"))
+                else if (std::strcmp(f.key, "max_body_mb") && std::strcmp(f.key, "wayback_tolerance")
+                         && std::strcmp(f.key, "tunnel_settle_ms"))
                     valid = valid && n > 0;
             }
             if (!valid) {
@@ -807,9 +1001,26 @@ public:
                 return false;
             }
         }
-        // Write edits across all panes. Preserve untouched provider defaults and
-        // any refresh token rotated by the live core while this window was open.
+        // Write edits across all panes. Preserve any refresh token rotated by
+        // the live core while this window was open. A gated row that applies
+        // is written when edited, or when it did not apply as the file was
+        // read -- a value shown but never typed over, such as a provider's
+        // server on switching to Custom, still has to reach the file. One
+        // that does not apply is commented out, which keeps it there for the
+        // next time it does.
         for (int i = 0; i < kFieldCount; ++i) {
+            if (gw_gate_gated(kFields[i].key)) {
+                int ok = 1;
+                if (Applies(i)) {
+                    ReadValue(items[i], kFields[i], value);
+                    if (!items[i].appliedAtLoad || std::strcmp(value, items[i].original))
+                        ok = GWConfig_Set(kFields[i].key, value);
+                } else {
+                    ok = GWConfig_Comment(kFields[i].key);
+                }
+                if (!ok) { SysBeep(1); return false; }
+                continue;
+            }
             ReadValue(items[i], kFields[i], value);
             if (!std::strcmp(value, items[i].original)) continue;
             if (kFields[i].kind == List) gw_prefs_normalize_list(value);
@@ -828,7 +1039,7 @@ public:
         if (listIndex >= 0 && items[listIndex].text) TEDispose(items[listIndex].text);
         // Controls and their TextEdit records belong to the dialog window.
         if (dialog) DisposeDialog(dialog);
-        for (short i = 0; i < 3; ++i) if (menus[i]) {
+        for (short i = 0; i < 4; ++i) if (menus[i]) {
             DeleteMenu(200 + i); DisposeMenu(menus[i]);
         }
     }
@@ -876,7 +1087,7 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
             Point point = event.where; GlobalToLocal(&point);
             bool edited = false;
             for (short i = 0; i < kFieldCount; ++i) {
-                if (kFields[i].pane != p->pane || !Editable(kFields[i])) continue;
+                if (kFields[i].pane != p->pane || !p->Live(i)) continue;
                 Rect hitBox = p->items[i].box;
                 // The whitelist shares its right-hand frame pixel with the
                 // scroll bar; leave that column to the scroll bar.
@@ -914,10 +1125,12 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
             if (hit == p->selector) {
                 short selected = GetControlValue(hit) - 1;
                 if (selected >= 0 && selected < kPaneCount) p->SwitchPane(selected);
+            } else if (p->Decides(hit)) {
+                p->ApplyGates();
             } else if (hit == p->cancel) done = true;
             else if (hit == p->save) done = p->Save();
             else if (hit == p->revert) {
-                LoadValues(p->items);
+                p->Load();
                 p->SwitchPane(p->pane);
             }
         } else if (event.what == keyDown || event.what == autoKey) {
@@ -931,7 +1144,7 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
                 int start = p->focus >= 0 ? p->focus : (step > 0 ? kFieldCount - 1 : 0);
                 for (int n = 1; n <= kFieldCount; ++n) {
                     short i = (start + step * n + kFieldCount) % kFieldCount;
-                    if (kFields[i].pane == p->pane && Editable(kFields[i])) {
+                    if (kFields[i].pane == p->pane && p->Live(i)) {
                         p->Focus(i); break;
                     }
                 }

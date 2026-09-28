@@ -161,9 +161,12 @@ add_library(gw_portable STATIC
     src/portable/gw_http.c
     src/portable/gw_chunked.c
     src/portable/gw_b64.c
+    src/portable/gw_fwd.c
     src/portable/gw_mailcmd.c
     src/portable/gw_oauth.c
     src/portable/gw_prefs.c
+    src/portable/gw_provider.c
+    src/portable/gw_gate.c
     src/portable/gw_log.c
     src/portable/gw_rewrite.c
     src/portable/gw_x509write.c
@@ -186,6 +189,7 @@ add_library(gw_net STATIC
     src/gw_plat_mac.c
     src/gw_ca.c
     src/proxy/gw_httpproxy.c
+    src/proxy/gw_tunnel.c
     src/proxy/gw_mail.c
     src/proxy/gw_token.c
     src/ssl3/ssl3_prf.c

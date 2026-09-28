@@ -33,6 +33,8 @@ data 'MENU' (200, "Preferences panes", purgeable) {
     $"04" "Mail" $"00 00 00 00"
     $"0D" "Mail upstream" $"00 00 00 00"
     $"05" "OAuth" $"00 00 00 00"
+    $"06" "Tunnel" $"00 00 00 00"
+    $"0C" "Tunnel proxy" $"00 00 00 00"
     $"03" "Log" $"00 00 00 00"
     $"00"
 };
@@ -63,6 +65,20 @@ data 'MENU' (202, "Mail provider", purgeable) {
     $"07" "Outlook"        $"00 00 00 00"
     $"05" "Gmail"          $"00 00 00 00"
     $"06" "Custom"         $"00 00 00 00"
+    $"00"
+};
+
+/* tunnel_proxy: "none", "http", "socks5", in this order. */
+data 'MENU' (203, "Tunnel proxy", purgeable) {
+    $"00CB"                            /* menu ID 203                       */
+    $"0000 0000"
+    $"0000"
+    $"0000"
+    $"FFFFFFFF"
+    $"00"
+    $"04" "None"           $"00 00 00 00"
+    $"04" "HTTP"           $"00 00 00 00"
+    $"06" "SOCKS5"         $"00 00 00 00"
     $"00"
 };
 

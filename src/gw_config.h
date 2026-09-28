@@ -69,6 +69,16 @@ int         GWConfig_GetNth(const char *key, int n, char *out, size_t cap);
  */
 int         GWConfig_Set(const char *key, const char *value);
 
+/* Comment out every active line of key and save the file, so it reads as
+ * unset while its value stays for GWConfig_Set to bring back in place. The
+ * settings window does this to the custom mail servers whenever the provider
+ * is not Custom. Returns 1 on success, including when there was nothing to do. */
+int         GWConfig_Comment(const char *key);
+
+/* The value of key's first commented-out line, for the settings window to
+ * offer back what GWConfig_Comment kept. Returns 1 when there is one. */
+int         GWConfig_GetCommented(const char *key, char *out, size_t cap);
+
 /* Human-readable note about where the settings came from, for the log. */
 const char *GWConfig_Source(void);
 

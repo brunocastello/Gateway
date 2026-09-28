@@ -12,11 +12,15 @@
 
 #include "gw_b64.h"
 #include "gw_chunked.h"
+#include "gw_fwd.h"
 #include "gw_http.h"
+#include "gw_log.h"
 #include "gw_mailcmd.h"
 #include "gw_oauth.h"
 #include "gw_pac.h"
 #include "gw_prefs.h"
+#include "gw_provider.h"
+#include "gw_gate.h"
 #include "gw_rewrite.h"
 #include "gw_x509write.h"
 #include "gw_url.h"
@@ -1729,6 +1733,312 @@ static void test_prefs_set_drop(void)
     }
 }
 
+/* Compare a length-counted buffer with a string, reporting both on failure. */
+static void check_buf(const char *got, size_t n, const char *want,
+                      const char *what)
+{
+    char copy[1024];
+    size_t k = n < sizeof(copy) - 1 ? n : sizeof(copy) - 1;
+
+    memcpy(copy, got, k);
+    copy[k] = '\0';
+    check_str(copy, want, what);
+}
+
+/*
+ * The custom mail settings live commented out in the prefs file whenever
+ * the provider is Outlook or Gmail, and the settings window comments and
+ * uncomments them as the provider changes. A commented line has to come back
+ * where it stood, with its alignment, rather than being appended below the
+ * Tunnel section.
+ */
+static void test_prefs_comment(void)
+{
+    static const char custom[] =
+        "provider = custom\n"
+        "# imap_host           = imap.example.com\n"
+        "local_password = x\n";
+    char out[1024], again[1024];
+    size_t n, m;
+
+    printf("prefs comment\n");
+
+    /* Uncommented in place, alignment kept. */
+    n = gw_prefs_set(custom, sizeof(custom) - 1, "imap_host", "mail.x.com",
+                     out, sizeof(out));
+    check_buf(out, n,
+              "provider = custom\n"
+              "imap_host           = mail.x.com\n"
+              "local_password = x\n",
+              "set uncomments a commented-only key where it stands");
+
+    /* An active line wins; the comment beside it is left alone. */
+    {
+        static const char both[] =
+            "provider = outlook\n"
+            "# provider = custom\n";
+        n = gw_prefs_set(both, sizeof(both) - 1, "provider", "gmail",
+                         out, sizeof(out));
+        check_buf(out, n,
+                  "provider = gmail\n"
+                  "# provider = custom\n",
+                  "active line is set, duplicate comment untouched");
+    }
+
+    /* Two commented copies: only the first comes back. */
+    {
+        static const char two[] =
+            "# smtp_host = a\n"
+            "# smtp_host = b\n";
+        n = gw_prefs_set(two, sizeof(two) - 1, "smtp_host", "c",
+                         out, sizeof(out));
+        check_buf(out, n,
+                  "smtp_host = c\n"
+                  "# smtp_host = b\n",
+                  "only the first commented copy is uncommented");
+    }
+
+    /* Prose that happens to contain "key = value" is not a setting. */
+    {
+        static const char prose[] =
+            "# Any other provider: set provider = custom and fill these in.\n";
+        n = gw_prefs_set(prose, sizeof(prose) - 1, "provider", "gmail",
+                         out, sizeof(out));
+        check_buf(out, n,
+                  "# Any other provider: set provider = custom and fill these in.\n"
+                  "provider = gmail\n",
+                  "a prose comment is not uncommented");
+    }
+
+    /* ';' is a comment too, and CR-only files (Mac OS 9) stay CR-only. */
+    {
+        static const char cr[] =
+            "provider = custom\r"
+            ";oauth_host = login.example.com\r";
+        n = gw_prefs_set(cr, sizeof(cr) - 1, "oauth_host", "id.x.com",
+                         out, sizeof(out));
+        check_buf(out, n,
+                  "provider = custom\r"
+                  "oauth_host = id.x.com\r",
+                  "a ';' comment in a CR file is uncommented");
+    }
+
+    /* Commenting out with no commented copy: every active line, indentation
+     * kept. */
+    {
+        static const char active[] =
+            "imap_host = a\r\n"
+            "  imap_host = b\r\n"
+            "pop_host = d\r\n";
+        n = gw_prefs_comment(active, sizeof(active) - 1, "imap_host",
+                             out, sizeof(out));
+        check_buf(out, n,
+                  "# imap_host = a\r\n"
+                  "#   imap_host = b\r\n"
+                  "pop_host = d\r\n",
+                  "comment covers every active copy");
+        check(gw_prefs_get(out, n, "imap_host", again, sizeof(again)) == 0,
+              "a commented key reads as unset");
+    }
+
+    /* A commented copy already there -- the example's placeholder -- takes
+     * the value in place, so the value in force is what comes back, not
+     * the placeholder. Later commented copies are left alone. */
+    {
+        static const char placeholder[] =
+            "# imap_host           = imap.example.com\n"
+            "pop_host = d\n"
+            "# imap_host = older\n"
+            "imap_host = mail.fastmail.com\n";
+        n = gw_prefs_comment(placeholder, sizeof(placeholder) - 1,
+                             "imap_host", out, sizeof(out));
+        check_buf(out, n,
+                  "# imap_host           = mail.fastmail.com\n"
+                  "pop_host = d\n"
+                  "# imap_host = older\n",
+                  "the first commented copy takes the active value");
+        check(gw_prefs_get_commented(out, n, "imap_host", again,
+                                     sizeof(again)) == 1 &&
+              strcmp(again, "mail.fastmail.com") == 0,
+              "and is what reads back");
+        m = gw_prefs_set(out, n, "imap_host", "mail.fastmail.com",
+                         again, sizeof(again));
+        check_buf(again, m,
+                  "imap_host           = mail.fastmail.com\n"
+                  "pop_host = d\n"
+                  "# imap_host = older\n",
+                  "and is what set brings back");
+    }
+
+    /* Absent or already commented: the text comes back unchanged. */
+    n = gw_prefs_comment(custom, sizeof(custom) - 1, "imap_host",
+                         out, sizeof(out));
+    check_buf(out, n, custom, "commenting a commented key changes nothing");
+
+    /* A buffer that cannot hold the result fails rather than truncating. */
+    check(gw_prefs_comment("imap_host = a\n", 14, "imap_host", out, 15) == 0,
+          "comment refuses to overflow");
+
+    /* Reading a commented copy back, so a window reopened under Gmail can
+     * still offer the custom values the file kept. */
+    {
+        static const char kept[] =
+            "provider = gmail\r"
+            "# Any other provider: set imap_host = x first.\r"
+            "# imap_host           = imap.fastmail.com  \r"
+            ";imap_host = second\r"
+            "# oauth_client_secret =\r"
+            "smtp_host = active.example.com\r";
+        char v[64];
+
+        check(gw_prefs_get_commented(kept, sizeof(kept) - 1, "imap_host",
+                                     v, sizeof(v)) == 1,
+              "commented copy is found");
+        check_str(v, "imap.fastmail.com", "first commented copy, trimmed");
+        check(gw_prefs_get_commented(kept, sizeof(kept) - 1,
+                                     "oauth_client_secret", v, sizeof(v)) == 1 &&
+              v[0] == '\0', "an empty commented value is present");
+        check(gw_prefs_get_commented(kept, sizeof(kept) - 1, "smtp_host",
+                                     v, sizeof(v)) == 0 && v[0] == '\0',
+              "an active line is not a commented copy");
+        check(gw_prefs_get_commented(kept, sizeof(kept) - 1, "pop_host",
+                                     v, sizeof(v)) == 0,
+              "an absent key is not found");
+    }
+
+    /* Round trip: custom -> outlook -> custom restores the value. */
+    {
+        static const char set[] =
+            "provider = custom\n"
+            "imap_host           = mail.x.com\n";
+        n = gw_prefs_comment(set, sizeof(set) - 1, "imap_host",
+                             out, sizeof(out));
+        m = gw_prefs_set(out, n, "imap_host", "mail.x.com",
+                         again, sizeof(again));
+        check_buf(again, m, set, "comment then set is a round trip");
+    }
+}
+
+/* Which settings a provider supplies, and that custom supplies none. */
+static void test_provider(void)
+{
+    const char *v;
+
+    printf("gw_provider\n");
+
+    check(gw_provider_is_custom("custom") && gw_provider_is_custom("Custom"),
+          "custom is custom, in any case");
+    check(!gw_provider_is_custom("outlook") && !gw_provider_is_custom(""),
+          "outlook and unset are not custom");
+
+    check(gw_provider_custom_only("imap_host") &&
+          gw_provider_custom_only("SMTP_STARTTLS") &&
+          gw_provider_custom_only("oauth_scope"),
+          "servers, STARTTLS and token endpoint are custom-only");
+    check(!gw_provider_custom_only("oauth_client_id") &&
+          !gw_provider_custom_only("refresh_token") &&
+          !gw_provider_custom_only("imap_port") &&
+          !gw_provider_custom_only("provider"),
+          "token lines and local ports are read for every provider");
+
+    v = gw_provider_default("gmail", "imap_host");
+    check_str(v ? v : "(null)", "imap.gmail.com", "gmail imap host");
+    v = gw_provider_default("google", "oauth_path");
+    check_str(v ? v : "(null)", "/token", "google is gmail");
+    v = gw_provider_default("outlook", "smtp_host");
+    check_str(v ? v : "(null)", "smtp-mail.outlook.com", "outlook smtp host");
+    v = gw_provider_default("", "imap_host");
+    check_str(v ? v : "(null)", "outlook.office365.com", "unset means outlook");
+    v = gw_provider_default("gmail", "smtp_upstream_port");
+    check_str(v ? v : "(null)", "587", "ports are supplied as text");
+
+    check(gw_provider_default("custom", "imap_host") == NULL,
+          "custom supplies nothing");
+    check(gw_provider_default("outlook", "refresh_token") == NULL,
+          "no default for a setting every provider reads");
+}
+
+/* A deciding-settings table for the gate tests: key=value pairs. */
+static const char *gate_lookup(const char *key, void *ctx)
+{
+    const char *const *kv = (const char *const *)ctx;
+    for (; kv[0] != NULL; kv += 2)
+        if (gw_stricmp(kv[0], key) == 0) return kv[1];
+    return NULL;
+}
+
+/* Which rows the settings windows dim, and which they insist on. */
+static void test_gate(void)
+{
+    const char *v;
+    static const char *unset[] = { NULL };
+    static const char *custom[] = { "provider", "custom", NULL };
+    static const char *gmail[] = { "provider", "gmail", NULL };
+    static const char *tls_off[] = { "tunnel_tls", "0", NULL };
+    static const char *http[] = { "tunnel_proxy", "http", NULL };
+    static const char *socks[] = { "tunnel_proxy", "socks5", NULL };
+    static const char *bad[] = { "tunnel_tls", "yes", "tunnel_proxy", "", NULL };
+
+    printf("gw_gate\n");
+
+    check(gw_gate_decides("provider") && gw_gate_decides("TUNNEL_TLS") &&
+          gw_gate_decides("tunnel_proxy") && !gw_gate_decides("imap_host"),
+          "the three deciding settings");
+    check(gw_gate_gated("imap_host") && gw_gate_gated("tunnel_sni") &&
+          gw_gate_gated("tunnel_host_header") && !gw_gate_gated("tunnel_tls") &&
+          !gw_gate_gated("refresh_token") && !gw_gate_gated("tunnel_remote_host"),
+          "gated and ungated settings");
+
+    /* Mail: the custom servers only under custom. */
+    check(!gw_gate_applies("imap_host", gate_lookup, (void *)unset) &&
+          !gw_gate_applies("oauth_scope", gate_lookup, (void *)gmail) &&
+          gw_gate_applies("smtp_starttls", gate_lookup, (void *)custom),
+          "custom mail servers follow the provider");
+    check(gw_gate_applies("refresh_token", gate_lookup, (void *)gmail),
+          "an ungated setting always applies");
+
+    /* Tunnel TLS options: default tunnel_tls is 1. */
+    check(gw_gate_applies("tunnel_insecure", gate_lookup, (void *)unset) &&
+          !gw_gate_applies("tunnel_tls12", gate_lookup, (void *)tls_off),
+          "TLS options follow tunnel_tls");
+
+    /* Proxy rows: any proxy, then HTTP only. */
+    check(!gw_gate_applies("tunnel_proxy_host", gate_lookup, (void *)unset),
+          "no proxy: proxy host does not apply");
+    check(gw_gate_applies("tunnel_proxy_port", gate_lookup, (void *)socks) &&
+          gw_gate_applies("tunnel_settle_ms", gate_lookup, (void *)http),
+          "any proxy: host, port and settle apply");
+    check(gw_gate_applies("tunnel_proxy_user", gate_lookup, (void *)http) &&
+          !gw_gate_applies("tunnel_proxy_pass", gate_lookup, (void *)socks) &&
+          !gw_gate_applies("tunnel_host_header", gate_lookup, (void *)socks),
+          "login and Host line only under http");
+
+    /* Unreadable deciding values take the defaults. */
+    check(gw_gate_applies("tunnel_sni", gate_lookup, (void *)bad) &&
+          !gw_gate_applies("tunnel_proxy_host", gate_lookup, (void *)bad),
+          "unreadable deciding values mean the defaults");
+
+    v = gw_gate_canonical("tunnel_proxy", "SOCKS");
+    check_str(v ? v : "(null)", "socks5", "socks shows as socks5");
+    v = gw_gate_canonical("tunnel_proxy", "connect");
+    check_str(v ? v : "(null)", "http", "connect shows as http");
+    v = gw_gate_canonical("tunnel_proxy", "direct");
+    check_str(v ? v : "(null)", "none", "direct shows as none");
+    check(gw_gate_canonical("tunnel_proxy", "ftp") == NULL,
+          "an unknown proxy kind has no pop-up value");
+    v = gw_gate_canonical("provider", "Google");
+    check_str(v ? v : "(null)", "gmail", "google shows as gmail");
+    v = gw_gate_canonical("provider", "");
+    check_str(v ? v : "(null)", "outlook", "unset shows as outlook");
+    check(gw_gate_canonical("follow_redirects", "auto") == NULL,
+          "other keys have no canonical form here");
+
+    check(gw_gate_required("smtp_host") && gw_gate_required("tunnel_proxy_host") &&
+          !gw_gate_required("oauth_scope") && !gw_gate_required("imap_upstream_port") &&
+          !gw_gate_required("tunnel_proxy_user"),
+          "required while applicable");
+}
+
 /*
  * The two consumers agreeing: proxy and PAC file use the same splitter.
  *
@@ -1844,6 +2154,151 @@ static void test_whitelist_edit(void)
     check_str(value, "a;b", "normalization is idempotent");
 }
 
+static void test_log_codes(void)
+{
+    char longer[300];
+
+    printf("log codes\n");
+    gw_log_reset();
+    gw_log_set_debug(0);
+
+    gw_logc("H12", "#%d the browser gave up", 2);
+    check(strcmp(gw_log_line(gw_log_count() - 1),
+                 "#2 the browser gave up (H12)") == 0,
+          "a coded line ends with its code");
+
+    memset(longer, 'x', sizeof(longer) - 1);
+    longer[sizeof(longer) - 1] = '\0';
+    gw_logc("M03", "%s", longer);
+    {
+        const char *l = gw_log_line(gw_log_count() - 1);
+        size_t n = strlen(l);
+
+        check(n == GW_LOG_WIDTH - 1, "an overlong coded line fills the width");
+        check(n >= 6 && strcmp(l + n - 6, " (M03)") == 0,
+              "the code survives when the sentence is cut");
+    }
+
+    {
+        int before = gw_log_count();
+
+        gw_logd("rx %d", 54);
+        check(gw_log_count() == before, "debug lines are silent by default");
+        gw_log_set_debug(1);
+        gw_logd("rx %d", 54);
+        check(gw_log_count() == before + 1 &&
+              strcmp(gw_log_line(gw_log_count() - 1), "  rx 54") == 0,
+              "log_debug shows the detail, indented");
+        gw_log_set_debug(0);
+    }
+    gw_log_reset();
+}
+
+static void test_fwd(void)
+{
+    char req[512];
+    size_t n, hlen = 0;
+    long code = 0;
+    unsigned char bin[300];
+    static const char reply200[] =
+        "HTTP/1.0 200 Connection established\r\n"
+        "Proxy-Agent: test\r\n"
+        "\r\n";
+    static const char reply407[] =
+        "HTTP/1.1 407 Proxy Authentication Required\r\n"
+        "Content-Length: 0\r\n"
+        "\r\n";
+
+    puts("gw_fwd");
+
+    check(gw_fwd_kind("none") == GW_FWD_NONE, "none");
+    check(gw_fwd_kind("HTTP") == GW_FWD_HTTP, "http is case-insensitive");
+    check(gw_fwd_kind("socks5") == GW_FWD_SOCKS5, "socks5");
+    check(gw_fwd_kind("socks") == GW_FWD_SOCKS5, "socks aliases socks5");
+    check(gw_fwd_kind("socks4") < 0, "socks4 is rejected, not misread");
+
+    n = gw_fwd_connect_req("ssh.example.com", 22, NULL, req, sizeof(req));
+    check(n > 0, "CONNECT request shapes");
+    check_str(req, "CONNECT ssh.example.com:22 HTTP/1.0\r\n"
+                   "Host: ssh.example.com:22\r\n"
+                   "\r\n", "CONNECT request bytes");
+    n = gw_fwd_connect_req_bare("ssh.example.com", 22, NULL,
+                                req, sizeof(req));
+    check(n > 0, "bare CONNECT request shapes");
+    check_str(req, "CONNECT ssh.example.com:22 HTTP/1.0\r\n"
+                   "\r\n", "bare CONNECT omits Host, like socat");
+    n = gw_fwd_connect_req_bare("ssh.example.com", 22, "dXNlcjpwYXNz",
+                                req, sizeof(req));
+    check(n > 0 && strstr(req, "Proxy-Authorization: Basic dXNlcjpwYXNz\r\n")
+          != NULL && strstr(req, "Host:") == NULL,
+          "bare CONNECT keeps auth but never a Host line");
+    n = gw_fwd_connect_req("ssh.example.com", 22, "dXNlcjpwYXNz",
+                           req, sizeof(req));
+    check(n > 0 && strstr(req, "Proxy-Authorization: Basic dXNlcjpwYXNz\r\n")
+          != NULL, "CONNECT carries Basic credentials");
+    check(gw_fwd_connect_req("ssh.example.com", 22, NULL, req, 10) == 0,
+          "a truncated CONNECT is reported, not sent");
+    check(gw_fwd_connect_req("", 22, NULL, req, sizeof(req)) == 0,
+          "an empty host is refused");
+
+    check(gw_fwd_connect_reply(reply200, sizeof(reply200) - 1, &hlen, &code)
+          == 1, "a 200 reply parses");
+    check(code == 200 && hlen == sizeof(reply200) - 1, "code and head length");
+    check(gw_fwd_connect_reply(reply407, sizeof(reply407) - 1, &hlen, &code)
+          == 1 && code == 407, "a 407 parses as a refusal, not garbage");
+    check(gw_fwd_connect_reply("HTTP/1.0 200", 12, &hlen, &code) == 0,
+          "a short reply waits for more");
+    check(gw_fwd_connect_reply("\x05\x01\x00\r\n\r\n", 7, &hlen, &code) < 0,
+          "a SOCKS reply to an HTTP greeting is rejected");
+
+    n = gw_fwd_socks_greet(bin, sizeof(bin));
+    check(n == 3 && bin[0] == 0x05 && bin[1] == 0x01 && bin[2] == 0x00,
+          "SOCKS greeting bytes");
+
+    n = gw_fwd_socks_connect("ssh.example.com", 22, bin, sizeof(bin));
+    check(n == 7 + strlen("ssh.example.com"), "SOCKS connect length");
+    check(bin[0] == 0x05 && bin[1] == 0x01 && bin[3] == 0x03 &&
+          bin[4] == (unsigned char)strlen("ssh.example.com") &&
+          bin[n - 2] == 0x00 && bin[n - 1] == 0x16,
+          "SOCKS connect bytes (domain + port 22)");
+    check(gw_fwd_socks_connect("", 22, bin, sizeof(bin)) == 0,
+          "SOCKS refuses an empty host");
+
+    {
+        static const unsigned char ok[] = { 0x05, 0x00 };
+        static const unsigned char noauth[] = { 0x05, 0xFF };
+        check(gw_fwd_socks_greet_reply(ok, sizeof(ok)) == 1,
+              "SOCKS greeting accepted");
+        check(gw_fwd_socks_greet_reply(ok, 1) == 0,
+              "a short greeting waits");
+        check(gw_fwd_socks_greet_reply(noauth, sizeof(noauth)) < 0,
+              "0xFF (no acceptable methods) fails");
+    }
+    {
+        static const unsigned char granted[] =
+            { 0x05, 0x00, 0x00, 0x01, 1, 2, 3, 4, 0x04, 0x43 };
+        static const unsigned char refused[] =
+            { 0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0 };
+        /* A grant with the far end's banner in the same segment. */
+        static const unsigned char banner[] =
+            { 0x05, 0x00, 0x00, 0x01, 1, 2, 3, 4, 0x04, 0x43,
+              'S', 'S', 'H', '-' };
+        size_t used = 0;
+
+        check(gw_fwd_socks_conn_reply(granted, sizeof(granted), &used) == 1,
+              "SOCKS grant parses");
+        check(used == sizeof(granted), "a bare grant is consumed whole");
+        check(gw_fwd_socks_conn_reply(granted, 4, NULL) == 0,
+              "a short grant waits");
+        check(gw_fwd_socks_conn_reply(refused, sizeof(refused), NULL) < 0,
+              "a SOCKS refusal fails with its REP intact");
+        used = 0;
+        check(gw_fwd_socks_conn_reply(banner, sizeof(banner), &used) == 1 &&
+              used == 10,
+              "bytes past a SOCKS grant are left for the splice");
+    }
+}
+
 int main(void)
 {
     test_util();
@@ -1865,9 +2320,14 @@ int main(void)
     test_prefs_splitter();
     test_whitelist_edit();
     test_prefs_set_drop();
+    test_prefs_comment();
+    test_provider();
+    test_gate();
     test_pac_splitter_agree();
     test_wayback_api();
     test_pac();
+    test_fwd();
+    test_log_codes();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;

@@ -153,6 +153,12 @@ static int begin_connect(GWConn *c)
 {
     struct sockaddr_in sa;
 
+    /* DNS has answered by now. Set the address before anything can fail, so
+     * a failure here is not taken for a lookup that never resolved (the
+     * readable log's T02/T03, and GWConn_PeerIPv4() on OT, which does the
+     * same). */
+    c->addr = ntohl(c->dnsAddr);
+
     c->sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (c->sock == INVALID_SOCKET || !set_nonblocking(c->sock)) {
         c->err = WSAGetLastError();
@@ -172,7 +178,6 @@ static int begin_connect(GWConn *c)
             return 0;
         }
     }
-    c->addr      = ntohl(c->dnsAddr);
     c->startedAt = GetTickCount();
     return 1;
 }
@@ -378,7 +383,11 @@ GWListener *GWListener_Open(UInt16 port, int backlog)
 
     l->sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (l->sock == INVALID_SOCKET) {
-        gw_log("listen %u: socket %d", (unsigned)port, WSAGetLastError());
+        int err = WSAGetLastError();   /* before the log's file write */
+
+        gw_logc("G30", "Gateway could not listen on port %u",
+                (unsigned)port);
+        gw_logd("socket %d", err);
         DisposePtr((Ptr)l);
         return NULL;
     }
@@ -398,7 +407,11 @@ GWListener *GWListener_Open(UInt16 port, int backlog)
     if (bind(l->sock, (struct sockaddr *)&sa, sizeof(sa)) == SOCKET_ERROR ||
         listen(l->sock, backlog) == SOCKET_ERROR ||
         !set_nonblocking(l->sock)) {
-        gw_log("listen %u: bind/listen %d", (unsigned)port, WSAGetLastError());
+        int err = WSAGetLastError();   /* before the log's file write */
+
+        gw_logc("G31", "port %u could not be claimed: is something else "
+                "using it?", (unsigned)port);
+        gw_logd("bind/listen %d", err);
         closesocket(l->sock);
         DisposePtr((Ptr)l);
         return NULL;

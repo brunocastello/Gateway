@@ -612,7 +612,8 @@ private:
         if (GW_IsRunning()) {
             GW_Stop();
         } else if (!GW_Start()) {
-            gw_log("could not start: the ports may still be in use");
+            gw_logc("G05", "Gateway could not start: the ports may still "
+                    "be in use");
         }
         UpdateWindowMenuItem();
         Redraw();

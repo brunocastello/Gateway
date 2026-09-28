@@ -16,6 +16,7 @@
 
 #include "gw_httpproxy.h"
 
+#include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -101,6 +102,14 @@
 #define GW_POOL_SIZE    6
 #define GW_POOL_IDLE    (45 * 60)   /* ticks: drop after 45 seconds idle */
 #define GW_IDLE_TIMEOUT (45 * 60)           /* ticks: 45 seconds */
+/*
+ * How much longer a backpressured session may live with no byte moving
+ * either way. Four further windows: about three minutes of complete
+ * standstill. A slow-but-alive client resets the allowance every time any
+ * byte moves; only a client that is gone without closing runs it out. See
+ * the idle check in session_step().
+ */
+#define GW_IDLE_GRACE   (4 * GW_IDLE_TIMEOUT)
 
 typedef enum {
     kHPFree = 0,
@@ -190,6 +199,12 @@ typedef struct {
     long          reqBodyLeft;
     int           status;
     unsigned long lastActivity;
+    /*
+     * When the idle exemption below started covering this session; 0 while
+     * bytes are moving. Bounds waiting_on_client so an abandoned transfer
+     * cannot hold its slot forever.
+     */
+    unsigned long exemptAt;
 } GWHttpSession;
 
 typedef struct {
@@ -363,9 +378,12 @@ static void session_reset(GWHttpSession *s)
     s->state = kHPFree;
 }
 
-/* Queue a NUL-terminated status line for the client and stop talking upstream. */
+/*
+ * Queue a NUL-terminated status line for the client and stop talking upstream.
+ * The reason is a plain sentence with its code (docs/log-codes.md).
+ */
 static void session_fail(GWHttpSession *s, const char *statusLine,
-                         const char *reason)
+                         const char *code, const char *fmt, ...)
 {
     /*
      * Spliced into every error Gateway generates itself.
@@ -389,7 +407,15 @@ static void session_fail(GWHttpSession *s, const char *statusLine,
     const char  *rest;
     size_t       head, tail;
 
-    gw_log("#%ld %s", s->id, reason);
+    {
+        char    reason[GW_LOG_WIDTH];
+        va_list ap;
+
+        va_start(ap, fmt);
+        vsnprintf(reason, sizeof reason, fmt, ap);
+        va_end(ap);
+        gw_logc(code, "#%ld %s", s->id, reason);
+    }
 
     rest = strstr(statusLine, "\r\n");
     head = (rest != NULL) ? (size_t)(rest - statusLine) + 2 : 0;
@@ -515,7 +541,7 @@ static int wayback_settings(GWHttpSession *s)
         if (gw_wayback_apply_query(query, strlen(query), set,
                                    target, sizeof(target))) {
             GW_WaybackSave();
-            gw_log("#%ld wayback: %s, going to %.40s",
+            gw_log("#%ld the Wayback date is now %s; back to %.40s",
                    s->id, set->date, target);
             session_redirect(s, target);
             return 1;
@@ -527,7 +553,8 @@ static int wayback_settings(GWHttpSession *s)
     if (n == 0) {
         session_fail(s, "HTTP/1.0 500 Internal Server Error\r\n"
                         "Connection: close\r\n\r\n",
-                     "settings page would not fit");
+                     "W01", "the Wayback settings page did not fit its "
+                     "buffer");
         return 1;
     }
     session_serve(s, "text/html", page, n);
@@ -588,7 +615,8 @@ static void session_serve_pac(GWHttpSession *s)
     if (n == 0) {
         session_fail(s, "HTTP/1.0 500 Internal Server Error\r\n"
                         "Connection: close\r\n\r\n",
-                     "auto-configuration script would not fit");
+                     "H01", "the auto-configuration script did not fit its "
+                     "buffer");
         return;
     }
     gw_log("#%ld proxy.pac for %s: %s", s->id, s->req.url.host,
@@ -619,7 +647,8 @@ static void session_serve_ca(GWHttpSession *s)
     if (!GWCa_Init() || (ca = GWCa_Cert(&caLen)) == NULL || caLen == 0) {
         session_fail(s, "HTTP/1.0 503 Service Unavailable\r\n"
                         "Connection: close\r\n\r\n",
-                     "no certificate authority to serve");
+                     "G01", "Gateway has no certificate authority to hand "
+                     "out");
         return;
     }
     gw_log("#%ld serving the authority certificate, %lu bytes",
@@ -684,7 +713,8 @@ static int wayback_prepare(GWHttpSession *s)
         return wayback_settings(s);
 
     if (GW_WaybackHostIsLive(s->req.url.host)) {
-        gw_log("#%ld live: %s", s->id, s->req.url.host);
+        gw_logc("W04", "#%ld %s is on wayback_live, so it comes from the "
+                "live web", s->id, s->req.url.host);
         return 0;
     }
 
@@ -698,7 +728,8 @@ static int wayback_prepare(GWHttpSession *s)
      * the shipped prefs list both for every host. Naming the host that missed
      * puts the answer next to the question.
      */
-    gw_log("#%ld archive: %s is not on wayback_live", s->id, s->req.url.host);
+    gw_logc("W05", "#%ld %s is not on wayback_live, so it comes from the "
+            "archive", s->id, s->req.url.host);
 
     /* GeoCities is not in the archive so much as at its successor. */
     if (set->geocities &&
@@ -707,7 +738,8 @@ static int wayback_prepare(GWHttpSession *s)
         s->req.url.tls = 1;
         s->req.url.port = 443;
         s->target = s->req.url;
-        gw_log("#%ld geocities -> %s", s->id, host);
+        gw_logc("W06", "#%ld GeoCities is served by its successor, %s",
+                s->id, host);
         return 0;
     }
 
@@ -715,7 +747,7 @@ static int wayback_prepare(GWHttpSession *s)
     if (gw_wayback_path(set->date, &s->waybackOrigin, path, sizeof(path)) == 0) {
         session_fail(s, "HTTP/1.0 414 URI Too Long\r\n"
                         "Connection: close\r\n\r\n",
-                     "archived URL would not fit");
+                     "W02", "the archived address for this page is too long");
         return 1;
     }
 
@@ -743,14 +775,28 @@ static int wayback_prepare(GWHttpSession *s)
  * ok" as a failure reason says nothing at all. The observation and the error
  * are different facts and the line now carries both.
  */
-static const char *upstream_why(GWHttpSession *s, const char *what,
-                                char *out, size_t cap)
+/*
+ * A failure talking to the far end. When the stream holds an error, the
+ * sentence and code are the stream's own (the T table), which name the
+ * actual fault -- a certificate, a name that did not resolve. Otherwise it
+ * closed on us, and the caller's sentence and code say when. The stream's
+ * bracketed detail goes under log_debug either way.
+ */
+static void session_fail_upstream(GWHttpSession *s, const char *statusLine,
+                                  const char *host, const char *code,
+                                  const char *fallback)
 {
-    char desc[192];
+    char        why[GW_LOG_WIDTH];
+    char        desc[192];
+    const char *tcode = GWStream_Explain(&s->up, host, why, sizeof why);
 
-    snprintf(out, cap, "%s %s: %s", s->upHost[0] ? s->upHost : "upstream",
-             what, GWStream_Describe(&s->up, desc, sizeof(desc)));
-    return out;
+    /* Before session_fail(), which destroys the stream. */
+    GWStream_Describe(&s->up, desc, sizeof desc);
+    if (tcode != NULL)
+        session_fail(s, statusLine, tcode, "%s", why);
+    else
+        session_fail(s, statusLine, code, fallback, host);
+    gw_logd("%s", desc);
 }
 
 static void session_start_upstream(GWHttpSession *s)
@@ -762,7 +808,7 @@ static void session_start_upstream(GWHttpSession *s)
     if (s->ureqLen == 0) {
         session_fail(s, "HTTP/1.0 502 Bad Gateway\r\nConnection: close\r\n\r\n"
                         "Gateway: request headers too large.\r\n",
-                     "request headers too large");
+                     "H02", "the request's headers are too large to forward");
         return;
     }
     s->ureqSent = 0;
@@ -806,7 +852,8 @@ static void session_start_upstream(GWHttpSession *s)
     if (!ok) {
         session_fail(s, "HTTP/1.0 502 Bad Gateway\r\nConnection: close\r\n\r\n"
                         "Gateway: could not start the upstream connection.\r\n",
-                     "upstream connect failed to start");
+                     "H03", "Gateway could not start a connection to %s",
+                     s->upHost);
         return;
     }
     s->state = kHPConnect;
@@ -821,7 +868,7 @@ static int session_retry_fresh(GWHttpSession *s)
 {
     if (!s->upPooled) return 0;
 
-    gw_log("#%ld pooled connection was stale, reconnecting", s->id);
+    gw_logd("#%ld pooled connection was stale, reconnecting", s->id);
     GWStream_Destroy(&s->up);
     s->upPooled = 0;
     s->ureqSent = 0;
@@ -865,7 +912,7 @@ static void step_recv_request(GWHttpSession *s)
     if (s->cheadLen >= (size_t)GW_HEAD_MAX) {
         session_fail(s, "HTTP/1.0 431 Request Header Fields Too Large\r\n"
                         "Connection: close\r\n\r\n",
-                     "client head exceeded 16K");
+                     "H04", "the browser's request is larger than 16 KB");
         return;
     }
 
@@ -886,7 +933,7 @@ static void step_recv_request(GWHttpSession *s)
     if (parsed < 0) {
         session_fail(s, "HTTP/1.0 400 Bad Request\r\nConnection: close\r\n\r\n"
                         "Gateway: could not parse that request.\r\n",
-                     "malformed request");
+                     "H05", "the browser's request could not be understood");
         return;
     }
 
@@ -953,7 +1000,8 @@ static void step_recv_request(GWHttpSession *s)
         if (!GWStream_ConnectPlain(&s->up, s->req.url.host, s->req.url.port)) {
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
-                         "CONNECT upstream failed to start");
+                         "H06", "Gateway could not start a tunnel to %s",
+                         s->req.url.host);
             return;
         }
         /* Anything the client already sent past the request head is tunnel
@@ -975,9 +1023,11 @@ static void step_send_request(GWHttpSession *s)
                                 s->ureqLen - s->ureqSent);
         if (n < 0) {
             if (session_retry_fresh(s)) return;
-            session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                            "Connection: close\r\n\r\n",
-                         "upstream write failed");
+            session_fail_upstream(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                     "Connection: close\r\n\r\n",
+                                  s->upHost, "H07",
+                                  "%s closed the connection before taking "
+                                  "the request");
             return;
         }
         if (n == 0) return;
@@ -994,9 +1044,11 @@ static void step_send_request(GWHttpSession *s)
             if ((long)take > s->reqBodyLeft) take = (size_t)s->reqBodyLeft;
             n = GWStream_Write(&s->up, s->chead + s->cheadSent, take);
             if (n < 0) {
-                session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                                "Connection: close\r\n\r\n",
-                             "upstream body write failed");
+                session_fail_upstream(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                         "Connection: close\r\n\r\n",
+                                      s->upHost, "H08",
+                                      "%s closed the connection during the "
+                                      "upload");
                 return;
             }
             if (n > 0) {
@@ -1015,9 +1067,11 @@ static void step_send_request(GWHttpSession *s)
             {
                 long w = GWStream_Write(&s->up, s->raw, (size_t)n);
                 if (w < 0) {
-                    session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                                    "Connection: close\r\n\r\n",
-                                 "upstream body write failed");
+                    session_fail_upstream(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                             "Connection: close\r\n\r\n",
+                                          s->upHost, "H08",
+                                          "%s closed the connection during "
+                                          "the upload");
                     return;
                 }
                 s->reqBodyLeft -= w;
@@ -1028,9 +1082,6 @@ static void step_send_request(GWHttpSession *s)
 
     s->state = kHPRecvHead;
 }
-
-static void session_fail(GWHttpSession *s, const char *statusLine,
-                         const char *reason);
 
 /*
  * Whether to chase this redirect ourselves.
@@ -1057,14 +1108,14 @@ static int redirect_should_follow(GWHttpSession *s, const GWResponse *res)
         int n;
 
         if (!gw_wayback_in_tolerance(set->date, stamp, set->tolerance)) {
-            gw_log("#%ld snapshot %.8s is outside +%ld days of %s",
-                   s->id, stamp, set->tolerance, set->date);
             session_fail(s, "HTTP/1.0 404 Not Found\r\n"
                             "Content-Type: text/html\r\n"
                             "Connection: close\r\n\r\n"
                             "<html><body><p>No snapshot of this page near the "
                             "date Gateway is set to.</p></body></html>\r\n",
-                         "snapshot outside the tolerance");
+                         "W03", "the archive has no snapshot within %ld days "
+                         "of %s; the nearest is %.8s",
+                         set->tolerance, set->date, stamp);
             return 0;
         }
 
@@ -1098,8 +1149,6 @@ static void step_recv_head(GWHttpSession *s)
             s->uheadLen += (size_t)n;
             s->lastActivity = GWNet_Ticks();
         } else if (n == -1) {
-            char why[320];
-
             if (s->uheadLen == 0 && session_retry_fresh(s)) return;
             /*
              * This path reported nothing but the fact of failure, which left
@@ -1107,9 +1156,9 @@ static void step_recv_head(GWHttpSession *s)
              * identical -- and they are set from the same place inside the TLS
              * library, so the distinction has to come from here.
              */
-            session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                            "Connection: close\r\n\r\n",
-                         upstream_why(s, "read failed", why, sizeof(why)));
+            session_fail_upstream(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                     "Connection: close\r\n\r\n",
+                                  s->upHost, "H09", "%s stopped answering");
             return;
         }
     }
@@ -1119,10 +1168,9 @@ static void step_recv_head(GWHttpSession *s)
         if (s->uheadLen >= (size_t)GW_HEAD_MAX)
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
-                         "response head exceeded 16K");
+                         "H10", "%s sent response headers larger than 16 KB",
+                         s->upHost);
         else if (s->up.eof) {
-            char why[320];
-
             if (s->uheadLen == 0 && session_retry_fresh(s)) return;
             /*
              * Describe rather than assert. "Closed before sending a response"
@@ -1130,17 +1178,60 @@ static void step_recv_head(GWHttpSession *s)
              * alert, a socket error and an orderly close all reach here
              * looking identical.
              */
-            session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                            "Connection: close\r\n\r\n",
-                         upstream_why(s, "closed before responding",
-                                      why, sizeof(why)));
+            session_fail_upstream(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                     "Connection: close\r\n\r\n",
+                                  s->upHost, "H11",
+                                  "%s closed the connection without "
+                                  "answering");
         }
         return;
     }
     if (parsed < 0) {
         session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                         "Connection: close\r\n\r\n",
-                     "unparsable response head");
+                     "H12", "%s sent a response Gateway could not "
+                     "understand", s->upHost);
+        return;
+    }
+
+    /*
+     * An interim response is not the answer -- discard it and keep waiting.
+     *
+     * A client that sent `Expect: 100-continue` (carried upstream verbatim;
+     * it is not hop-by-hop) is answered by one of these before the origin's
+     * real response, and treating it as final would strand both sides: the
+     * client holds its body for a 100 Gateway already consumed, while the
+     * origin holds its final response for a body that never arrives. The
+     * head is dropped from uhead here and the session stays in kHPRecvHead
+     * for the final status.
+     *
+     * The client hop is always HTTP/1.0 here (see CLAUDE.md), and RFC 9110
+     * §15.2 says a proxy "MUST NOT forward a 1xx response to an HTTP/1.0
+     * client" -- 1.0 has no informational status class of its own, so a
+     * forwarded one would read to a 1997 browser as a malformed, bodyless
+     * final response rather than the "keep waiting" it means. So this
+     * swallows the interim rather than relaying it, which is simpler than
+     * relaying anyway: nothing is queued to the client, so there is no
+     * partial-flush case to hold state over.
+     *
+     * Everything 1xx except 101 Switching Protocols, which is final by
+     * definition (and unreachable anyway -- the Upgrade header it answers
+     * never leaves here).
+     */
+    if (res.status >= 100 && res.status < 200 && res.status != 101) {
+        gw_logd("#%ld <- %d %s (interim, not forwarded to an HTTP/1.0 client)",
+               s->id, res.status, s->req.url.host);
+        s->lastActivity = GWNet_Ticks();
+        /*
+         * An interim response proves the origin has the request, and the
+         * client's body may already be spent on it. A pooled connection
+         * dropped after this point must fail, not be retried on a fresh one
+         * with the head alone.
+         */
+        s->upPooled = 0;
+        s->uheadLen -= res.head_len;
+        if (s->uheadLen > 0)
+            memmove(s->uhead, s->uhead + res.head_len, s->uheadLen);
         return;
     }
 
@@ -1167,8 +1258,8 @@ static void step_recv_head(GWHttpSession *s)
             gw_copy_n(range, sizeof(range), cr, crLen);
             gw_log("#%ld <- 206 %s %s", s->id, s->req.url.host, range);
         } else {
-            gw_log("#%ld <- 206 %s with no Content-Range, which is a fault",
-                   s->id, s->req.url.host);
+            gw_logc("H17", "#%ld %s sent part of a file without saying "
+                    "which part", s->id, s->req.url.host);
         }
     } else if (res.has_content_length)
         gw_log("#%ld <- %d %s %ld bytes", s->id, res.status,
@@ -1202,7 +1293,8 @@ static void step_recv_head(GWHttpSession *s)
             session_fail(s, "HTTP/1.0 508 Loop Detected\r\n"
                             "Connection: close\r\n\r\n"
                             "Gateway: too many redirects.\r\n",
-                         "redirect limit reached");
+                         "H13", "the page redirected %d times, so Gateway "
+                         "stopped following", s->redirects);
             return;
         }
         {
@@ -1305,7 +1397,8 @@ static void step_recv_head(GWHttpSession *s)
         if (filtered == 0) {
             session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
                             "Connection: close\r\n\r\n",
-                         "rewritten response head too large");
+                         "H14", "the response headers from %s are too large "
+                         "once rewritten", s->upHost);
             return;
         }
         s->outLen = filtered;
@@ -1411,8 +1504,8 @@ static void step_body(GWHttpSession *s)
     if (flushed == 0) return;                /* client is flow controlled */
 
     if (s->bodyCap > 0 && s->bodyBytes > s->bodyCap) {
-        gw_log("#%ld body hit the %ld MiB cap, truncating",
-               s->id, s->bodyCap / (1024L * 1024L));
+        gw_logc("H18", "#%ld the page is larger than max_body_mb (%ld MB), "
+                "so it was cut short", s->id, s->bodyCap / (1024L * 1024L));
         s->upReusable = 0;                   /* the rest is still on the wire */
         session_finish_body(s);
         return;
@@ -1422,8 +1515,8 @@ static void step_body(GWHttpSession *s)
     if (s->uheadLen > 0) {
         long used = body_emit(s, s->uhead, s->uheadLen);
         if (used < 0) {
-            gw_log("#%ld malformed chunked body after %ld bytes",
-                   s->id, s->bodyBytes);
+            gw_logc("H19", "#%ld %s sent a broken body; the page was cut "
+                    "short after %ld bytes", s->id, s->upHost, s->bodyBytes);
             s->upReusable = 0;
             session_finish_body(s);
             return;
@@ -1469,8 +1562,8 @@ static void step_body(GWHttpSession *s)
     {
         long used = body_emit(s, s->raw, (size_t)n);
         if (used < 0) {
-            gw_log("#%ld malformed chunked body after %ld bytes",
-                   s->id, s->bodyBytes);
+            gw_logc("H19", "#%ld %s sent a broken body; the page was cut "
+                    "short after %ld bytes", s->id, s->upHost, s->bodyBytes);
             s->upReusable = 0;
             session_finish_body(s);
             return;
@@ -1491,7 +1584,17 @@ static void step_tunnel_connect(GWHttpSession *s)
     static const char kEstablished[] =
         "HTTP/1.0 200 Connection Established\r\n\r\n";
 
-    if (!session_queue(s, kEstablished, sizeof(kEstablished) - 1)) {
+    /*
+     * Queue the 200 exactly once. A partial flush leaves the state at
+     * kHPTunnelConnect and this runs again next tick; re-queueing then would
+     * put a second 200 on the wire, which the client reads as the start of
+     * its tunneled response. Anything still queued means the first copy is
+     * already there, so the short-circuit skips session_queue entirely.
+     */
+    if (s->outLen == 0 &&
+        !session_queue(s, kEstablished, sizeof(kEstablished) - 1)) {
+        gw_logc("H20", "#%ld a CONNECT was dropped: Gateway had no room to "
+                "answer it", s->id);
         s->state = kHPDone;
         return;
     }
@@ -1546,19 +1649,142 @@ static void step_tunnel_connect(GWHttpSession *s)
              * the request inside will say what to fetch, and it may not even
              * be this host once redirects are followed. */
             GWStream_Destroy(&s->up);
-            gw_log("#%ld terminating TLS for %s:%u", s->id, s->mitmHost,
-                   (unsigned)s->mitmPort);
+            gw_logc("H21", "#%ld Gateway answers the browser's secure "
+                    "connection to %s:%u itself", s->id, s->mitmHost,
+                    (unsigned)s->mitmPort);
             s->state = kHPMitmWait;
             return;
         }
 
-        gw_log("#%ld no certificate for %s -- tunnelling instead",
-               s->id, s->req.url.host);
+        gw_logc("H22", "#%ld no certificate could be made for %s, so the "
+                "tunnel stays encrypted", s->id, s->req.url.host);
     }
 
     gw_log("#%ld tunnel open to %s:%u", s->id, s->req.url.host,
            (unsigned)s->req.url.port);
     s->state = kHPTunnel;
+}
+
+/*
+ * The engineer's lines under a MITM outcome: BearSSL's number, what the hello
+ * and the engine said, and the first bytes the browser sent. Only with
+ * log_debug on; the sentence above them carries the diagnosis without.
+ */
+static void log_mitm_detail(GWHttpSession *s, int err)
+{
+    char line[160];
+
+    if (!gw_log_debug())
+        return;
+    if (err >= 512)
+        gw_logd("BearSSL %d: we sent alert %d", err, err - 512);
+    else if (err >= 256)
+        gw_logd("BearSSL %d: the browser sent alert %d", err, err - 256);
+    else if (err != 0)
+        gw_logd("BearSSL %d", err);
+    GWStream_ServerDescribe(&s->cli, line, sizeof line);
+    if (line[0] != '\0')
+        gw_logd("%s", line);
+    GWStream_ServerHelloHex(&s->cli, line, sizeof line);
+    if (line[0] != '\0')
+        gw_logd("first bytes: %s", line);
+}
+
+/*
+ * One sentence for a browser handshake that did not complete. The BearSSL
+ * number is the diagnosis, and with a client this old it cannot be reported
+ * any other way: an error page would have to travel down the connection that
+ * just failed. So each number that means something gets its own sentence and
+ * code (docs/log-codes.md), and the number itself goes under log_debug.
+ */
+static void log_mitm_failure(GWHttpSession *s)
+{
+    int err = GWStream_ServerError(&s->cli);
+
+    if (err == 0) {
+        /*
+         * Not an error: the browser closed the connection. Where it was when
+         * it did is the whole diagnosis -- a browser that walks away on our
+         * certificate is one that did not trust it, or Internet Explorer
+         * probing with a hello it never meant to finish.
+         */
+        switch (GWStream_ServerStage(&s->cli)) {
+        case kGWStageNothing:
+            gw_logc("S01", "#%ld the browser closed the secure connection "
+                    "without starting it", s->id);
+            break;
+        case kGWStageHello:
+            gw_logc("S02", "#%ld the browser left before Gateway answered "
+                    "its hello", s->id);
+            break;
+        case kGWStageCertificate:
+            gw_logc("S03", "#%ld the browser gave up after seeing our "
+                    "certificate", s->id);
+            break;
+        case kGWStageReplied:
+            gw_logc("S04", "#%ld the browser answered our certificate, "
+                    "then gave up", s->id);
+            break;
+        default:
+            gw_logc("S05", "#%ld the browser finished its side of the "
+                    "handshake, then closed", s->id);
+            break;
+        }
+    }
+    /*
+     * 3 was, until PATCHES.md §22, what every Internet Explorer produced:
+     * BearSSL threw out the SSL 2.0 record framing that IE sends by default
+     * before it read a field. That framing is accepted now, which leaves 3
+     * meaning what it says -- the hello itself asked for a version below
+     * 3.0, so the browser has SSL 3.0 and TLS 1.0 both off, or has neither.
+     */
+    else if (err == 3)
+        gw_logc("S10", "#%ld the browser asked for SSL 2.0, which Gateway "
+                "does not speak: tick \"Use TLS 1.0\" in its options", s->id);
+    /*
+     * 70 is protocol_version, and which direction it went matters. Sent by
+     * us, Gateway is refusing a hello below its minimum, and the version the
+     * browser offered is the whole diagnosis. Sent by the browser, it is
+     * refusing our answer.
+     */
+    else if (err == 512 + 70) {
+        unsigned int ver  = GWStream_ClientHelloVersion(&s->cli);
+        const char  *name = tls_version_name(ver);
+
+        if (ver == 0x0300 && !GW_AllowSSLv3())
+            gw_logc("S11", "#%ld the browser speaks SSL 3.0 at best, and "
+                    "allow_sslv3 is off", s->id);
+        else if (name != NULL)
+            gw_logc("S12", "#%ld the browser speaks %s at best, older than "
+                    "Gateway will", s->id, name);
+        else
+            gw_logc("S12", "#%ld the browser speaks version 0x%04X, which "
+                    "Gateway does not", s->id, ver);
+    }
+    else if (err == 256 + 70)
+        gw_logc("S13", "#%ld the browser refused the version Gateway "
+                "answered with", s->id);
+    else if (err == 16)
+        gw_logc("S14", "#%ld the browser and Gateway have no cipher in "
+                "common (a 40-bit browser?)", s->id);
+    else if (err == 4)
+        gw_logc("S15", "#%ld the browser's records did not match the "
+                "version it asked for", s->id);
+    else if (err == 8)
+        gw_logc("S16", "#%ld Gateway had no randomness for the handshake, "
+                "which is Gateway's fault", s->id);
+    /* bad_certificate, certificate_unknown, unknown_ca */
+    else if (err == 256 + 42 || err == 256 + 46 || err == 256 + 48)
+        gw_logc("S17", "#%ld the browser rejected our certificate: is "
+                "Gateway's authority installed?", s->id);
+    else if (err > 512)
+        gw_logc("S18", "#%ld Gateway refused the browser's handshake", s->id);
+    else if (err > 256)
+        gw_logc("S19", "#%ld the browser refused the handshake", s->id);
+    else
+        gw_logc("S20", "#%ld the handshake with the browser failed", s->id);
+
+    log_mitm_detail(s, err);
 }
 
 /*
@@ -1572,11 +1798,17 @@ static void step_tunnel_connect(GWHttpSession *s)
 static void step_mitm_wait(GWHttpSession *s)
 {
     switch (GWStream_Pump(&s->cli)) {
-    case kGWStreamReady:
+    case kGWStreamReady: {
+        const char *name = tls_version_name(GWStream_ServerVersion(&s->cli));
+
+        gw_log("#%ld secure connection with the browser, %s", s->id,
+               name != NULL ? name : "unknown version");
+        log_mitm_detail(s, 0);
         s->cheadLen = 0;
         s->cheadSent = 0;
         s->state = kHPRecvRequest;
         break;
+    }
 
     case kGWStreamError:
     case kGWStreamClosed:
@@ -1586,81 +1818,15 @@ static void step_mitm_wait(GWHttpSession *s)
          * is nothing to send an error page down -- the connection it would go
          * on is the one that just failed.
          */
-        /*
-         * The number is the diagnosis, so it goes in the line. With a client
-         * this old the ones that matter are 3 and the protocol_version alert,
-         * both meaning the browser cannot reach TLS 1.0 and neither saying so
-         * in the same way, and 16, meaning it offered no cipher suite BearSSL
-         * implements, which an export-grade build will not. None of them can
-         * be reported any other way: an error page would have to travel down
-         * the connection that just failed.
-         */
-        {
-            int         err = GWStream_ServerError(&s->cli);
-            const char *why = "";
-            char        why_buf[128];
-
-            /*
-             * 3 was, until PATCHES.md §22, what every Internet Explorer
-             * produced: BearSSL threw out the SSL 2.0 record framing that IE
-             * sends by default before it read a field, so the box marked
-             * "Use SSL 2.0" had to be unticked whatever the hello inside
-             * asked for. That framing is accepted now, which leaves 3
-             * meaning what it says -- the hello itself asked for a version
-             * below 3.0, so the browser has SSL 3.0 and TLS 1.0 both off,
-             * or has neither to turn on.
-             */
-            if (err == 3)
-                why = ": its hello asked for SSL 2.0, which has no "
-                      "implementation here -- tick \"Use TLS 1.0\" in "
-                      "Internet Options > Advanced";
-            /*
-             * 70 is protocol_version, and which direction it went matters.
-             * Sent by us, BearSSL is refusing a hello below its TLS 1.0
-             * minimum, and the version the browser offered is the whole
-             * diagnosis. Sent by the browser, it is refusing our answer.
-             */
-            else if (err == 512 + 70 || err == 256 + 70) {
-                unsigned int ver = GWStream_ClientHelloVersion(&s->cli);
-                const char *name = tls_version_name(ver);
-                const char *dir = (err > 512)
-                    ? "we refused its hello" : "it refused our answer";
-
-                if (name != NULL)
-                    snprintf(why_buf, sizeof why_buf,
-                        ": it offered %s at best and TLS 1.0 is the floor "
-                        "(%s)", name, dir);
-                else
-                    snprintf(why_buf, sizeof why_buf,
-                        ": it offered version 0x%04X and TLS 1.0 is the "
-                        "floor (%s)", ver, dir);
-                why = why_buf;
-            }
-            else if (err == 0)
-                why = ": the browser closed it, which is not an error "
-                      "-- see the line above for what it was offered";
-            else if (err == 16)
-                why = ": no cipher suite in common (a 40-bit browser?)";
-            else if (err == 4)
-                why = ": record version did not match the handshake";
-            else if (err == 8)
-                why = ": the engine had no randomness, which is our fault";
-            else if (err > 512)
-                why = ": we sent a fatal alert";
-            else if (err > 256)
-                why = ": the browser sent a fatal alert";
-
-            gw_log("#%ld handshake with the browser %s for %s "
-                   "(BearSSL %d%s)", s->id,
-                   err == 0 ? "was abandoned" : "failed",
-                   s->mitmHost, err, why);
-        }
+        log_mitm_failure(s);
         s->state = kHPDone;
         break;
 
     default:
         if (GWNet_Ticks() - s->cli.startTicks > GW_IDLE_TIMEOUT) {
-            gw_log("#%ld handshake with the browser timed out", s->id);
+            gw_logc("S21", "#%ld the browser's handshake stalled and was "
+                    "dropped", s->id);
+            log_mitm_detail(s, 0);
             s->state = kHPDone;
         }
         break;
@@ -1725,6 +1891,15 @@ static void session_step(GWHttpSession *s)
      * connected is not idle: it is waiting, which is what backpressure looks
      * like from this side. GWStream_PeerGone still ends it if the browser
      * actually leaves, so a slot cannot be held by a client that is gone.
+     *
+     * But "waiting" cannot mean forever. A client that stops reading without
+     * closing -- a downloader that timed out and abandoned the socket, say
+     * -- is indistinguishable from a slow one by GWStream_PeerGone, and
+     * refreshing lastActivity unconditionally here used to let that session
+     * hold its slot for good, with nothing in the log to say why. exemptAt
+     * marks when the exemption started; it is cleared the moment a byte
+     * moves again, so a genuinely slow client never runs it out, and only a
+     * standstill lasting the whole grace period ends the session.
      */
     if (GWNet_Ticks() - s->lastActivity > GW_IDLE_TIMEOUT) {
         int waiting_on_client = (s->outLen > s->outSent ||
@@ -1732,11 +1907,23 @@ static void session_step(GWHttpSession *s)
                                 !GWStream_PeerGone(&s->cli);
 
         if (!waiting_on_client) {
-            gw_log("#%ld idle timeout", s->id);
+            gw_logc("H23", "#%ld nothing moved for %d seconds, so the "
+                    "connection was closed", s->id, GW_IDLE_TIMEOUT / 60);
             s->state = kHPDone;
         } else {
-            s->lastActivity = GWNet_Ticks();
+            unsigned long now = GWNet_Ticks();
+
+            if (s->exemptAt == 0) s->exemptAt = now;
+            if (now - s->exemptAt > GW_IDLE_GRACE) {
+                gw_logc("H24", "#%ld the browser stopped reading, so the "
+                        "connection was dropped", s->id);
+                gw_logd("%u bytes unsent",
+                        (unsigned)(s->outLen - s->outSent));
+                s->state = kHPDone;
+            }
         }
+    } else {
+        s->exemptAt = 0;
     }
 
     GWStream_Pump(&s->cli);
@@ -1783,14 +1970,11 @@ static void session_step(GWHttpSession *s)
                 s->state = kHPRetryWait;
                 break;
             }
-            {
-                char why[320];
-                session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                                "Connection: close\r\n\r\n"
-                                "Gateway: could not reach the origin server.\r\n",
-                             upstream_why(s, "could not be reached",
-                                          why, sizeof(why)));
-            }
+            session_fail_upstream(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                     "Connection: close\r\n\r\n"
+                                     "Gateway: could not reach the origin "
+                                     "server.\r\n",
+                                  s->upHost, "H15", "%s could not be reached");
         }
         break;
 
@@ -1803,8 +1987,9 @@ static void session_step(GWHttpSession *s)
 
     case kHPRetryWait:
         if (GWNet_Ticks() >= s->retryAt) {
-            gw_log("#%ld retrying (%d of %d)", s->id, s->retries,
-                   GW_WB_RETRIES);
+            gw_logc("W07", "#%ld %s refused the connection; trying again "
+                    "(%d of %d)", s->id, s->upHost, s->retries,
+                    GW_WB_RETRIES);
             s->lastActivity = GWNet_Ticks();
             session_start_upstream(s);
         }
@@ -1827,9 +2012,10 @@ static void session_step(GWHttpSession *s)
             step_tunnel_connect(s);
         } else if (s->up.state == kGWStreamError ||
                    s->up.state == kGWStreamClosed) {
-            session_fail(s, "HTTP/1.0 502 Bad Gateway\r\n"
-                            "Connection: close\r\n\r\n",
-                         "CONNECT upstream unreachable");
+            session_fail_upstream(s, "HTTP/1.0 502 Bad Gateway\r\n"
+                                     "Connection: close\r\n\r\n",
+                                  s->req.url.host, "H16",
+                                  "%s closed the tunnel before it opened");
         }
         break;
 
@@ -1856,7 +2042,8 @@ static void session_step(GWHttpSession *s)
          *
          * It cannot hang. A browser that stops reading leaves bytes pending,
          * which counts as waiting on the client in the idle check above, and
-         * that ends the session on the ordinary timeout.
+         * that ends the session once GW_IDLE_GRACE runs out on top of the
+         * ordinary timeout.
          */
         if (r < 0) {
             s->state = kHPDone;
@@ -1913,7 +2100,8 @@ int GWProxy_Accept(GWConn *c, int wayback)
 
         memset(s, 0, sizeof(*s));
         if (!session_alloc_buffers(s)) {
-            gw_log("out of memory accepting a connection");
+            gw_logc("H25", "out of memory: a browser's connection was "
+                    "refused");
             return 0;
         }
         GWStream_Adopt(&s->cli, c);

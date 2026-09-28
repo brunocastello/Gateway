@@ -10,6 +10,51 @@ and is not worth trying again.
 
 ---
 
+## 0.3.7 — six fixes ported from roytam1's fork
+
+Independent of the readable-log work in item 4 below: six bug fixes from
+roytam1's `gw034` fork, re-applied by hand against current code rather than
+cherry-picked (the fork branched at fa64f91, long before this file existed).
+An idle-but-open session no longer holds its slot forever — a backpressured
+client now gets a bounded grace period rather than an unconditional clock
+refresh. A partial flush of a CONNECT's `200 Connection Established` can no
+longer queue a second copy behind the first. A 1xx interim response is now
+swallowed rather than treated as the final answer: RFC 9110 §15.2 says a
+proxy must not forward one to an HTTP/1.0 client, which the client hop
+always is here. On the Certainly side, the TLS 1.2 fallback no longer tries
+to redial an adopted STARTTLS connection on port 0 (PATCHES.md §29); its
+ClientHello record now goes out as `03 01` rather than `03 03` (§30); and a
+peer that hangs up mid-handshake or mid-transfer is now caught on both
+transports' close conventions — OT's and Win32's disagree — instead of
+riding out a 30-second timeout (§31).
+
+Also landed in 0.3.7: **Module 4, the generic TLS tunnel** (`:2222`, off by
+default), ported from roytam1's `gw034` fork -- a plaintext local port
+relayed to a fixed far end over TLS, optionally through an HTTP CONNECT or
+SOCKS5 proxy. SSH is the motivating use, not the protocol. `tunnel_tls12`
+(PATCHES.md §32) and `tunnel_insecure` (§33) came from the fork mostly as
+written; `tunnel_sni` (§34) did not -- the fork's version let an overridden
+or omitted SNI change what was validated, up to skipping the hostname check
+entirely, and was rewritten around an X.509 vtable guard so `tunnel_sni`
+changes only the wire and the certificate is always checked against
+`tunnel_remote_host`. See `docs/prefs.md`'s Tunnel section and
+`third_party/certainly/PATCHES.md` §32-§34.
+
+Also landed in 0.3.7: **the custom mail servers follow the provider.** The
+upstream hosts, ports, `smtp_starttls` and the token endpoint are read only
+under `provider = custom`; under Outlook or Gmail the provider's values stand
+and a copy in the file is ignored (`src/portable/gw_provider.c`). Both
+Preferences windows show those rows dimmed with the provider's values and, on
+Save, comment them out or write them back in place (`gw_prefs_comment`, and
+`gw_prefs_set` uncommenting a commented-only key). **Release-notes item:** a
+single overridden host under `outlook` no longer works — it needs `custom`.
+The Tunnel settings got the same treatment: `tunnel_tls` gates the TLS
+options, any `tunnel_proxy` gates the proxy host, port and settle delay, and
+`http` gates the login and Host line; `tunnel_proxy` became a pop-up. The rule
+for both modules lives in `src/portable/gw_gate.c`.
+
+---
+
 ## 1. TLS session resumption
 
 **The evidence.** IE 5.1.7 for Mac OS 9 loading howsmyssl.com with
@@ -77,6 +122,13 @@ PCT unticked and SSL 2/3 ticked (tried 2026-09-20). Its failure is before
 protocol selection, so it says nothing about the 32-bit build.
 
 ## 4. For 0.3.7: a log a person can read, without losing the material
+
+**Done on `gw037`, 2026-09-28.** Every module's lines are converted; the
+codes are in `docs/log-codes.md`. Two things the spec below did not foresee:
+Certainly no longer writes its own MITM lines (they had no `#N`), and hands
+the proxy what they said instead (`PATCHES.md` §35); and failures reaching a
+far end go through one explainer, `GWStream_Explain()`, shared by the proxy,
+mail, token refresh and tunnel, which is where the `T` codes come from.
 
 The log window is the only diagnostic Gateway has, and this weekend it did its
 job — but only for someone who knows what `rx-after-flight 0` means. The

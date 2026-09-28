@@ -3,19 +3,20 @@
 # Copy into the System Preferences folder, named "Gateway Prefs".
 # Reference for every setting: docs/prefs.md
 
-
-# ------------------------------------------------------------ Application
+# --------------------------------------------------------- Application
 
 show_window     = 1
 http_enabled    = 1
 mail_enabled    = 1
 wayback_enabled = 1
+tunnel_enabled  = 0
 max_sessions    = 12
 max_connects    = 8
 log_file        = 0
+log_debug       = 0
 
 
-# ------------------------------------------------------------- Web proxy
+# --------------------------------------------------------- Web proxy
 
 http_port        = 8765
 follow_redirects = auto
@@ -28,17 +29,14 @@ allow_sslv3      = 1
 # --------------------------------------------------------- Wayback proxy
 
 wayback_port      = 8888
-wayback_connects = 1
+wayback_connects  = 1
 wayback_date      = 20011231
 wayback_tolerance = 730
 wayback_geocities = 1
 wayback_settings  = 1
 wayback_cache     = 1
 
-# Hosts fetched live instead of from the archive. Repeat the key; * and ? work.
-# A plain host name covers the site and everything under it, so
-# "frogfind.com" also matches "www.frogfind.com". A pattern with * or ? is
-# a glob and means only what it says.
+# Hosts fetched live, instead of from the archive (one per line; * and ? work)
 wayback_live = frogfind.com
 wayback_live = 68k.news
 wayback_live = macintoshgarden.org
@@ -56,18 +54,16 @@ pop_port       = 1995
 smtp_port      = 1587
 local_password = change-me
 
+# outlook, gmail or custom
 provider = outlook
 
-# Run get-email-token.py on a modern computer; it prints these four lines.
+# Run get-email-token.py on a modern computer to print these four lines.
 oauth_user          = you@example.com
 oauth_client_id     = 00000000-0000-0000-0000-000000000000
 oauth_client_secret =
 refresh_token       = paste-your-refresh-token-here
 
-
-# Any other provider: set provider = custom and fill these in.
-#
-# provider            = custom
+# Used only with provider = custom; Outlook and Gmail supply their own.
 # imap_host           = imap.example.com
 # imap_upstream_port  = 993
 # pop_host            = pop.example.com
@@ -78,3 +74,29 @@ refresh_token       = paste-your-refresh-token-here
 # oauth_host          = login.example.com
 # oauth_path          = /oauth2/v2.0/token
 # oauth_scope         = offline_access mail.read mail.send
+
+
+# ------------------------------------------------------------------ Tunnel
+
+tunnel_local_port  = 2222
+tunnel_remote_host = ssh.example.com
+tunnel_remote_port = 443
+tunnel_tls         = 0
+
+# Used only with tunnel_tls = 1.
+# tunnel_tls12     = 0
+# tunnel_insecure  = 0
+# tunnel_sni       =
+
+# none, http or socks5
+tunnel_proxy = none
+
+# Used only with a proxy.
+# tunnel_proxy_host = proxy.example.com
+# tunnel_proxy_port = 8080
+# tunnel_settle_ms  = 0
+
+# Used only with tunnel_proxy = http.
+# tunnel_proxy_user  =
+# tunnel_proxy_pass  =
+# tunnel_host_header = 1

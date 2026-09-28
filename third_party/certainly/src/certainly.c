@@ -108,6 +108,90 @@ void MacTLS_Shutdown(void)
     /* Currently nothing to clean up at library level */
 }
 
+/* ── X.509 validation-identity guard (PATCHES.md §34) ── */
+
+/*
+ * Both TLS engines' validation is pointed at this vtable rather than at the
+ * real validator (`xc`) directly (installed in setup_bearssl()), so that
+ * whatever name a handshake's SNI actually carried -- the real host, an
+ * override, or none at all (MacTLS_SetSNI) -- start_chain() always
+ * receives the connection's real host. tunnel_sni changes only what goes
+ * out on the wire; this is what keeps the certificate check from ever
+ * moving with it.
+ *
+ * Every other call forwards straight through to the real validator,
+ * unchanged, so ordinary chain validation -- trust anchors, signatures,
+ * dates, the name check itself -- is untouched.
+ */
+static void sniguard_start_chain(const br_x509_class **ctx,
+                                 const char *server_name)
+{
+    MacTLS_SniGuardCtx *gc = (MacTLS_SniGuardCtx *)(void *)ctx;
+    const br_x509_class **real =
+        (const br_x509_class **)(void *)&gc->owner->xc.vtable;
+
+    (void)server_name;   /* ignored on purpose -- see the comment above */
+    (*real)->start_chain(real, gc->owner->host);
+}
+
+static void sniguard_start_cert(const br_x509_class **ctx, uint32_t length)
+{
+    MacTLS_SniGuardCtx *gc = (MacTLS_SniGuardCtx *)(void *)ctx;
+    const br_x509_class **real =
+        (const br_x509_class **)(void *)&gc->owner->xc.vtable;
+
+    (*real)->start_cert(real, length);
+}
+
+static void sniguard_append(const br_x509_class **ctx,
+                            const unsigned char *buf, size_t len)
+{
+    MacTLS_SniGuardCtx *gc = (MacTLS_SniGuardCtx *)(void *)ctx;
+    const br_x509_class **real =
+        (const br_x509_class **)(void *)&gc->owner->xc.vtable;
+
+    (*real)->append(real, buf, len);
+}
+
+static void sniguard_end_cert(const br_x509_class **ctx)
+{
+    MacTLS_SniGuardCtx *gc = (MacTLS_SniGuardCtx *)(void *)ctx;
+    const br_x509_class **real =
+        (const br_x509_class **)(void *)&gc->owner->xc.vtable;
+
+    (*real)->end_cert(real);
+}
+
+static unsigned sniguard_end_chain(const br_x509_class **ctx)
+{
+    MacTLS_SniGuardCtx *gc = (MacTLS_SniGuardCtx *)(void *)ctx;
+    const br_x509_class **real =
+        (const br_x509_class **)(void *)&gc->owner->xc.vtable;
+
+    return (*real)->end_chain(real);
+}
+
+static const br_x509_pkey *sniguard_get_pkey(
+    const br_x509_class *const *ctx, unsigned *usages)
+{
+    const MacTLS_SniGuardCtx *gc =
+        (const MacTLS_SniGuardCtx *)(const void *)ctx;
+    const br_x509_class **real =
+        (const br_x509_class **)(void *)&gc->owner->xc.vtable;
+
+    return (*real)->get_pkey(real, usages);
+}
+
+static const br_x509_class sni_guard_vtable = {
+    sizeof(MacTLS_SniGuardCtx),
+    sniguard_start_chain,
+    sniguard_start_cert,
+    sniguard_append,
+    sniguard_end_cert,
+    sniguard_end_chain,
+    sniguard_get_pkey
+};
+
 /* ── BearSSL setup helpers ── */
 
 /*
@@ -168,6 +252,17 @@ static void setup_bearssl(MacTLS_Context *ctx)
      */
     br_ssl_client_init_full(&ctx->sc, &ctx->xc, tas, tas_count);
 
+    /*
+     * Point the engine's validation at the guard rather than at `xc`
+     * directly (PATCHES.md §34), so start_chain() always receives the real
+     * host regardless of what name MacTLS_SetSNI later puts on the wire.
+     * MacTLS_SetInsecure() overrides this again, deliberately bypassing the
+     * guard along with validation itself.
+     */
+    ctx->sni_guard.vtable = &sni_guard_vtable;
+    ctx->sni_guard.owner  = ctx;
+    br_ssl_engine_set_x509(&ctx->sc.eng, &ctx->sni_guard.vtable);
+
     /* Override with our preferred cipher suites */
     br_ssl_engine_set_suites(&ctx->sc.eng, suites,
                              sizeof(suites) / sizeof(suites[0]));
@@ -195,11 +290,13 @@ static void setup_bearssl(MacTLS_Context *ctx)
      * 1.3, we fall back to BearSSL's T0 engine for TLS 1.2.
      *
      * The X.509 validator is shared between both paths — BearSSL's
-     * br_ssl_client_init_full already set up ctx->xc, and we point
-     * the TLS 1.3 context at it.
+     * br_ssl_client_init_full already set up ctx->xc, and we point the TLS
+     * 1.3 context at the same guard the 1.2 engine goes through above, so
+     * both share the §34 host substitution rather than one of them reaching
+     * `xc` directly.
      */
     tls13_handshake_init(&ctx->hs13);
-    ctx->hs13.x509_ctx = (const br_x509_class **)&ctx->xc.vtable;
+    ctx->hs13.x509_ctx = &ctx->sni_guard.vtable;
     /* The TLS 1.3 handshake borrows BearSSL's engine only for its PRNG. */
     ctx->hs13.eng = &ctx->sc.eng;
 
@@ -212,6 +309,59 @@ static void setup_bearssl(MacTLS_Context *ctx)
      * record I/O buffers. br_ssl_client_reset() is only called on the
      * TLS 1.2 fallback path (see tls13_pump_handshake / kTLS13_Fallback12).
      */
+}
+
+/*
+ * First-record compatibility (PATCHES.md §30): reset the client engine with
+ * the ClientHello record's own version dropped to TLS 1.0, not just the
+ * handshake's.
+ *
+ * br_ssl_client_reset() stamps version_min into version_out
+ * (ssl_client.c:48) and then, before it returns, runs jump_handshake()
+ * (ssl_engine.c:1476) -- whose processor never leaves an unfinished
+ * outgoing record. So the ClientHello is assembled and flush-record()
+ * bakes its 5-byte header through sendpld_flush() using version_out at
+ * that instant (ssl_engine.c:1101): a stamp applied after the reset
+ * returns never reaches the wire, because the header bytes are already
+ * fixed in the output buffer by then.
+ *
+ * version_min is the only lever the header reads while the reset runs, so
+ * it is dropped to 0x0301 across the call and restored to setup_bearssl()'s
+ * 0x0303 pin straight after. That pin's only other consumer is the
+ * read-ServerHello range check (ssl_hs_client.t0:656), which runs long
+ * after this returns, so restoring it leaves that check exactly as strict
+ * as before. version_max is left untouched throughout: it supplies the
+ * ClientHello's legacy_version (ssl_hs_client.t0:462) and the ServerHello
+ * upper bound, both staying 0x0303.
+ *
+ * Every other stack puts 0x0301 in that header, and a version-intolerant
+ * middlebox forwards only 03 01 first records, so 03 03 there is both
+ * unusual and fragile. read-ServerHello overwrites version_out with the
+ * negotiated version, so only the pre-negotiation flight is affected.
+ */
+static int client_first_record_compat(MacTLS_Context *ctx, const char *name)
+{
+    int ok;
+    uint16_t saved_min = ctx->sc.eng.version_min;
+
+    ctx->sc.eng.version_min = BR_TLS10;
+    ok = br_ssl_client_reset(&ctx->sc, name, 0);
+    ctx->sc.eng.version_min = saved_min;
+    return ok;
+}
+
+/*
+ * The name a handshake offers as SNI (PATCHES.md §34, MacTLS_SetSNI): the
+ * dial hostname by default, an override, or none. Used only to shape the
+ * ClientHello -- every X.509 start_chain() call goes through sni_guard
+ * instead, which always substitutes ctx->host, so this has no bearing on
+ * what gets validated.
+ */
+static const char *eff_sni(const MacTLS_Context *ctx)
+{
+    if (ctx->sni_mode == 2) return NULL;
+    if (ctx->sni_mode == 1) return ctx->sni_override;
+    return ctx->host;
 }
 
 /* ── Connection lifecycle ── */
@@ -299,6 +449,69 @@ MacTLS_Context *MacTLS_CreateOnEndpoint(const char *host, CTSocket sock)
     return ctx;
 }
 
+/*
+ * Adopted, but for a far end with no TLS 1.3: BearSSL's 1.2 engine drives
+ * from the first pump, and the 1.3 ClientHello is never sent -- so there is
+ * no ServerHello to fall back from and no reconnect to perform. The engine
+ * is reset here (hostname for SNI), exactly as the fallback path does after
+ * re-arming it; setup_bearssl() deliberately leaves that to its callers.
+ */
+MacTLS_Context *MacTLS_CreateOnEndpointTLS12(const char *host, CTSocket sock)
+{
+    MacTLS_Context *ctx;
+
+    if (sock == CT_SOCKET_NONE) return NULL;
+
+    ctx = (MacTLS_Context *)NewPtrClear(sizeof(MacTLS_Context));
+    if (ctx == NULL) {
+        /* Ownership transferred unconditionally, so it is ours to close. */
+        ct_socket_close(sock);
+        return NULL;
+    }
+
+    ctx->state  = kMacTLS_Connecting;
+    ctx->config = NULL;
+
+    if (strlen(host) > 253 || strlen(host) >= sizeof(ctx->host)) {
+        ctx->state = kMacTLS_Error;
+        ctx->error = kMacTLS_ErrDNS;
+        ct_socket_close(sock);
+        return ctx;
+    }
+
+    strncpy(ctx->host, host, sizeof(ctx->host) - 1);
+    ctx->host[sizeof(ctx->host) - 1] = '\0';
+
+    ctx->transport = ct_transport_adopt(sock);
+    if (ctx->transport == NULL) {
+        ctx->state = kMacTLS_Error;
+        ctx->error = kMacTLS_ErrMemory;
+        ct_socket_close(sock);
+        return ctx;
+    }
+
+    setup_bearssl(ctx);
+
+    /*
+     * Nothing to re-arm: the engine has never run, so set_buffer() in
+     * setup_bearssl() is its first arming. The reset only fails on a name
+     * too long for the engine or an RNG that will not seed. It goes through
+     * client_first_record_compat() like the fallback path, so the hello's
+     * record header is 03 01 here too (PATCHES.md §30).
+     */
+    if (!client_first_record_compat(ctx, eff_sni(ctx))) {
+        ctx->state = kMacTLS_Error;
+        ctx->error = kMacTLS_ErrHandshake;
+        return ctx;
+    }
+
+    ctx->force_tls12 = true;
+    ctx->tls13_active = false;
+    ctx->tls13_started = false;
+
+    return ctx;
+}
+
 /* ── TLS 1.3 Pump Helpers ── */
 
 /*
@@ -320,6 +533,8 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
 {
     tls13_hs_result r;
     int n;
+    /* The peer has closed and this pass read nothing: no more bytes, ever. */
+    int closed_now = 0;
 
     /*
      * Step 1: If there's outgoing data in msg_buf, send it.
@@ -362,16 +577,25 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
                               space);
         if (n > 0) {
             ctx->tls13_recv_len += (size_t)n;
-        } else if (n < 0) {
+        } else {
+            closed_now = ct_transport_peer_closed(ctx->transport);
             /*
-             * OT reports no more data. If the peer has closed,
-             * we may still have pending data in tls13_recv_buf
-             * that needs to be processed. Don't return Closed
-             * immediately — fall through to handshake_step to
-             * drain the buffer. If there's no pending data AND
-             * no handshake work to do, the handshake code will
-             * report WantRead and we'll come back here next time
-             * with still no data — at which point we mark Closed.
+             * The transports report an orderly close differently: Win32
+             * returns n == 0 with ct_transport_peer_closed() set
+             * (transport_win32.c), OT returns n < 0 once ordRel has arrived
+             * and its queue is drained (transport_ot.c). A close check that
+             * lived only in the n < 0 arm never fired on Win32, the
+             * handshake read WantRead forever, and it died on the 30-second
+             * timeout instead of on the peer's FIN (PATCHES.md §31). Test
+             * peer_closed on both arms.
+             *
+             * If the peer has closed we may still have pending data in
+             * tls13_recv_buf that needs to be processed. Don't return
+             * Closed immediately — fall through to handshake_step to
+             * drain the buffer. If there's no pending data AND no
+             * handshake work to do, the handshake code will report
+             * WantRead and we'll come back here next time with still no
+             * data — at which point we mark Closed.
              */
             if (ct_transport_peer_closed(ctx->transport) &&
                 ctx->tls13_recv_len == 0 &&
@@ -379,7 +603,7 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
                 ctx->state = kMacTLS_Closed;
                 return ctx->state;
             }
-            if (!ct_transport_peer_closed(ctx->transport)) {
+            if (n < 0 && !ct_transport_peer_closed(ctx->transport)) {
                 ctx->state = kMacTLS_Error;
                 ctx->error = kMacTLS_ErrRead;
                 return ctx->state;
@@ -396,7 +620,7 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
     r = tls13_handshake_step(&ctx->hs13,
                              ctx->tls13_recv_buf,
                              &ctx->tls13_recv_len,
-                             ctx->host);
+                             eff_sni(ctx));
 
     switch (r) {
     case kTLS13_OK:
@@ -405,7 +629,17 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
         break;
 
     case kTLS13_WantRead:
-        /* Need more data from network */
+        /*
+         * Need more data from network -- unless the peer has already
+         * closed and this pass brought nothing, in which case the
+         * handshake is stuck on a record that can never complete, and
+         * waiting would only reach the same failure 30 seconds later.
+         */
+        if (closed_now) {
+            ctx->state = kMacTLS_Error;
+            ctx->error = kMacTLS_ErrRead;
+            break;
+        }
         ctx->state = kMacTLS_Handshaking;
         break;
 
@@ -436,6 +670,27 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
         {
             uint16_t port = ct_transport_port(ctx->transport);
 
+            /*
+             * An adopted transport -- SMTP STARTTLS (gw_mail.c), which hands
+             * Certainly a socket already mid-conversation via
+             * ct_transport_adopt() -- has no route to redial: adopt stores
+             * no host or port, so port reads 0 here, and even with them a
+             * fresh dial would bypass the plaintext STARTTLS prologue the
+             * server is waiting on. What this used to do was dial port 0
+             * directly: the adopted socket was torn down first, so the far
+             * end saw a plain disconnect while Gateway reported an
+             * empty-handed handshake failure that read like a proxy
+             * problem, when the actual event is a version problem -- the
+             * server chose TLS 1.2 (PATCHES.md §29). Fail with the original
+             * connection intact and let fell_back_no_route name the remedy.
+             */
+            if (port == 0) {
+                ctx->fell_back_no_route = true;
+                ctx->state = kMacTLS_Error;
+                ctx->error = kMacTLS_ErrHandshake;
+                return ctx->state;
+            }
+
             /* Close and destroy the current transport */
             ct_transport_close(ctx->transport);
             ct_transport_destroy(ctx->transport);
@@ -465,8 +720,13 @@ static MacTLS_State tls13_pump_handshake(MacTLS_Context *ctx)
             br_ssl_engine_set_buffer(&ctx->sc.eng, ctx->iobuf,
                                      sizeof(ctx->iobuf), 0);
 
-            /* Re-init BearSSL for TLS 1.2 (the T0 engine will drive) */
-            if (!br_ssl_client_reset(&ctx->sc, ctx->host, 0)) {
+            /*
+             * Re-init BearSSL for TLS 1.2 (the T0 engine will drive).
+             * client_first_record_compat() is the reset itself, not a step
+             * after it -- see PATCHES.md §30 for why the stamp has to ride
+             * inside the call.
+             */
+            if (!client_first_record_compat(ctx, eff_sni(ctx))) {
                 /*
                  * Nothing is retryable past this point: the reset only
                  * fails on a name too long for the engine or an RNG that
@@ -533,6 +793,20 @@ static int tls13_flush_out(MacTLS_Context *ctx);
 static void tls13_recv_records(MacTLS_Context *ctx)
 {
     int n;
+    /*
+     * Set when the loop below stops on a complete record it cannot decrypt
+     * yet for want of app_buf room -- as opposed to an incomplete one it is
+     * still waiting on bytes for. See the peer_closed check after the loop
+     * (PATCHES.md §31).
+     */
+    int waiting_for_room = 0;
+    /*
+     * Set when this call tried to read and got nothing. A close is honoured
+     * only then: bytes that arrived on this very pass, or a pass that
+     * skipped the read because recv_buf was full, may be followed by more
+     * still queued, whatever peer_closed already says.
+     */
+    int read_dry = 0;
 
     /*
      * Step 1: Read raw bytes from OT transport into recv_buf.
@@ -546,13 +820,24 @@ static void tls13_recv_records(MacTLS_Context *ctx)
                               space);
         if (n > 0) {
             ctx->tls13_recv_len += n;
-        } else if (n < 0) {
+        } else {
+            read_dry = 1;
             /*
-             * Peer closed or error. Mark for closure AFTER processing
-             * any pending records below. Real errors (not peer close)
-             * still bail immediately.
+             * The two transports disagree on how a close is reported: OT
+             * returns n < 0 once ordRel has arrived and its queue is drained
+             * (transport_ot.c), while Win32 returns n == 0 with
+             * ct_transport_peer_closed() set instead (transport_win32.c) --
+             * so a test only in the n < 0 arm misses Win32's close and a
+             * test only on n == 0 misses OT's. Reading peer_closed on both
+             * arms handles either convention (PATCHES.md §31).
+             *
+             * Real errors (not a close) still bail immediately; a close
+             * falls through so any already-buffered records get processed,
+             * and the peer_closed decision after the loop below tells a
+             * truncated trailing record apart from one merely waiting on
+             * app_buf room.
              */
-            if (!ct_transport_peer_closed(ctx->transport)) {
+            if (n < 0 && !ct_transport_peer_closed(ctx->transport)) {
                 ctx->state = kMacTLS_Error;
                 ctx->error = kMacTLS_ErrRead;
                 return;
@@ -655,7 +940,10 @@ static void tls13_recv_records(MacTLS_Context *ctx)
                     ctx->error = kMacTLS_ErrRead;
                     return;
                 }
-                if (room < plain) break;   /* wait for the reader to drain */
+                if (room < plain) {
+                    waiting_for_room = 1;
+                    break;              /* wait for the reader to drain */
+                }
             }
         }
 
@@ -767,13 +1055,37 @@ static void tls13_recv_records(MacTLS_Context *ctx)
     }
 
     /*
-     * After processing all buffered records: if the peer closed and
-     * there's no more data to read, mark as Closed. The app can still
-     * drain tls13_app_buf via MacTLS_Read in the Closed state.
+     * After processing all buffered records: the peer is gone, so no more
+     * bytes are ever coming. Requiring recv_len == 0 here left a trailing
+     * partial record -- one truncated by the close, which can never
+     * complete -- stuck forever: the next pump finds the same unfinished
+     * bytes, ct_transport_recv() reports the close again, and the loop
+     * above breaks on the same incomplete record with nothing to time it
+     * out (PATCHES.md §31, the same close-detection gap as
+     * tls13_pump_handshake and MacTLS_Pump's BearSSL read, missed here
+     * originally because this site's n < 0 arm already read as harmless).
+     *
+     * waiting_for_room is the one case where leftover bytes are not lost
+     * data: a complete record is sitting there, blocked only on app_buf
+     * space, and MacTLS_Read() draining app_buf will let a later pump
+     * finish it -- closing now would discard it instead. The app can still
+     * drain tls13_app_buf via MacTLS_Read() from the Closed state either
+     * way, so nothing already delivered is lost by closing.
+     *
+     * Leftover bytes that are not a room-blocked record are a record cut
+     * off by the close, and that is an error, not an end of stream. Called
+     * Closed, a FIN injected mid-record would pass a truncated body off as
+     * complete whenever the response has no length of its own to check it
+     * against. A close at a record boundary stays Closed, as before.
      */
-    if (ct_transport_peer_closed(ctx->transport) &&
-        ctx->tls13_recv_len == 0) {
-        ctx->state = kMacTLS_Closed;
+    if (read_dry && ct_transport_peer_closed(ctx->transport) &&
+        !waiting_for_room) {
+        if (ctx->tls13_recv_len > 0) {
+            ctx->state = kMacTLS_Error;
+            ctx->error = kMacTLS_ErrRead;
+        } else {
+            ctx->state = kMacTLS_Closed;
+        }
     }
 }
 
@@ -870,20 +1182,24 @@ MacTLS_State MacTLS_Pump(MacTLS_Context *ctx)
      * handshake state machine. This bypasses BearSSL's T0 engine
      * entirely during the handshake phase.
      */
-    if (!ctx->tls13_started && ctx->hs13.is_tls13 == false &&
+    if (!ctx->force_tls12 &&
+        !ctx->tls13_started && ctx->hs13.is_tls13 == false &&
         ctx->hs13.state == kTLS13_SendClientHello) {
         /*
          * First time through after TCP connect — start the TLS 1.3
          * handshake. The tls13_started flag prevents re-entry after
          * a TLS 1.2 fallback (where we've cleared the flag and want
-         * BearSSL to drive).
+         * BearSSL to drive). force_tls12 (PATCHES.md §32) skips this
+         * branch entirely, so the BearSSL 1.2 engine drives from the
+         * very first pump instead.
          */
         ctx->tls13_started = true;
         ctx->state = kMacTLS_Handshaking;
         return tls13_pump_handshake(ctx);
     }
 
-    if (ctx->tls13_started && ctx->state != kMacTLS_Connected) {
+    if (!ctx->force_tls12 &&
+        ctx->tls13_started && ctx->state != kMacTLS_Connected) {
         /*
          * TLS 1.3 handshake in progress.
          * Keep pumping the TLS 1.3 state machine until it completes,
@@ -971,13 +1287,20 @@ MacTLS_State MacTLS_Pump(MacTLS_Context *ctx)
             n = ct_transport_recv(ctx->transport, buf, len);
             if (n > 0) {
                 br_ssl_engine_recvrec_ack(&ctx->sc.eng, n);
+            } else if (ct_transport_peer_closed(ctx->transport)) {
+                /*
+                 * The peer is gone. OT reports that as n < 0 once ordRel has
+                 * drained (transport_ot.c); Win32 reports it as n == 0
+                 * instead (transport_win32.c) -- so this test has to read
+                 * peer_closed directly rather than sit inside the n < 0 arm,
+                 * or Win32's close is never seen and the handshake rides out
+                 * its 30-second timeout instead of closing on the peer's
+                 * close (PATCHES.md §31).
+                 */
+                br_ssl_engine_close(&ctx->sc.eng);
+                ctx->state = kMacTLS_Closed;
+                return ctx->state;
             } else if (n < 0) {
-                /* Recv failed — if peer closed, treat as normal close */
-                if (ct_transport_peer_closed(ctx->transport)) {
-                    br_ssl_engine_close(&ctx->sc.eng);
-                    ctx->state = kMacTLS_Closed;
-                    return ctx->state;
-                }
                 ctx->state = kMacTLS_Error;
                 ctx->error = kMacTLS_ErrRead;
                 return ctx->state;
@@ -1367,6 +1690,157 @@ int MacTLS_GetTls13Error(const MacTLS_Context *ctx)
     return ctx->hs13.error;
 }
 
+int MacTLS_FallbackNoRoute(const MacTLS_Context *ctx)
+{
+    if (ctx == NULL) return 0;
+    return ctx->fell_back_no_route ? 1 : 0;
+}
+
+/* ── Trust-any validator (testing only, PATCHES.md §33) ── */
+
+/*
+ * Accept any chain and return the end-entity public key, decoded from the
+ * first certificate. Signatures, names, dates and trust anchors are all
+ * ignored by design -- this exists to test against a far end whose
+ * certificate cannot validate (wrong name, private CA), and must never be
+ * enabled for anything carrying credentials. Modelled on BearSSL's own
+ * knownkey engine (x509_knownkey.c), except the key comes out of the peer's
+ * certificate via the decoder instead of being configured in advance.
+ *
+ * Only the first certificate is fed to the decoder; the rest of the chain
+ * is skipped. An undecodable end-entity certificate fails the chain with
+ * the decoder's own error, so the engine reports a handshake failure
+ * rather than dereferencing a NULL key.
+ *
+ * MacTLS_InsecureCtx is defined once, in certainly_internal.h, rather than
+ * kept in sync with a duplicate here.
+ */
+static void insecure_start_chain(const br_x509_class **ctx,
+                                 const char *server_name)
+{
+    MacTLS_InsecureCtx *cc = (MacTLS_InsecureCtx *)(void *)ctx;
+
+    (void)server_name;
+    cc->cert_index = 0;
+}
+
+static void insecure_start_cert(const br_x509_class **ctx, uint32_t length)
+{
+    MacTLS_InsecureCtx *cc = (MacTLS_InsecureCtx *)(void *)ctx;
+
+    (void)length;
+    if (cc->cert_index == 0)
+        br_x509_decoder_init(&cc->dc, 0, 0);
+}
+
+static void insecure_append(const br_x509_class **ctx,
+                            const unsigned char *buf, size_t len)
+{
+    MacTLS_InsecureCtx *cc = (MacTLS_InsecureCtx *)(void *)ctx;
+
+    if (cc->cert_index == 0)
+        br_x509_decoder_push(&cc->dc, buf, len);
+}
+
+static void insecure_end_cert(const br_x509_class **ctx)
+{
+    MacTLS_InsecureCtx *cc = (MacTLS_InsecureCtx *)(void *)ctx;
+
+    cc->cert_index++;
+}
+
+static unsigned insecure_end_chain(const br_x509_class **ctx)
+{
+    MacTLS_InsecureCtx *cc = (MacTLS_InsecureCtx *)(void *)ctx;
+
+    if (cc->cert_index == 0)
+        return BR_ERR_X509_EMPTY_CHAIN;
+    return (unsigned)br_x509_decoder_last_error(&cc->dc);
+}
+
+static const br_x509_pkey *insecure_get_pkey(
+    const br_x509_class *const *ctx, unsigned *usages)
+{
+    MacTLS_InsecureCtx *cc = (MacTLS_InsecureCtx *)(void *)ctx;
+
+    /* Both uses permitted, as in BearSSL's own test tool (twrch.c). */
+    if (usages != NULL)
+        *usages = BR_KEYTYPE_KEYX | BR_KEYTYPE_SIGN;
+    return br_x509_decoder_get_pkey(&cc->dc);
+}
+
+static const br_x509_class insecure_vtable = {
+    sizeof(MacTLS_InsecureCtx),
+    insecure_start_chain,
+    insecure_start_cert,
+    insecure_append,
+    insecure_end_cert,
+    insecure_end_chain,
+    insecure_get_pkey
+};
+
+/*
+ * Testing only: stop validating the far end's certificate. Swaps both
+ * validation paths -- BearSSL's 1.2 engine and the 1.3 state machine, which
+ * shares its validator through hs13.x509_ctx -- onto the trust-any engine
+ * above, bypassing the §34 guard entirely rather than routing through it:
+ * there is no host to defend once nothing is being checked. Must be called
+ * before the first Pump; the handshake has not run yet at that point, so
+ * neither engine has touched a validator.
+ */
+void MacTLS_SetInsecure(MacTLS_Context *ctx)
+{
+    if (ctx == NULL) return;
+
+    ctx->insecure.vtable = &insecure_vtable;
+    br_ssl_engine_set_x509(&ctx->sc.eng, &ctx->insecure.vtable);
+    ctx->hs13.x509_ctx = &ctx->insecure.vtable;
+}
+
+/* ── SNI override (testing/diagnosis, PATCHES.md §34) ── */
+
+/*
+ * Replace the server name the handshake sends as SNI. sni == NULL omits SNI
+ * entirely; otherwise that name is sent instead of the connection's real
+ * host. Must run before the first Pump: both engines are idle then, so
+ * re-resetting BearSSL here is the same call the force-1.2 entry point and
+ * the fallback make themselves. The 1.3 state machine picks the name up
+ * through eff_sni() in MacTLS_Pump().
+ *
+ * This never touches validation. sni_guard (installed in setup_bearssl())
+ * always hands start_chain() ctx->host, whatever name ends up here -- so an
+ * omitted or overridden SNI changes only what is sent, never what is
+ * checked, unless MacTLS_SetInsecure() has turned checking off entirely.
+ */
+void MacTLS_SetSNI(MacTLS_Context *ctx, const char *sni)
+{
+    if (ctx == NULL) return;
+
+    if (sni == NULL) {
+        ctx->sni_mode = 2;
+    } else {
+        if (strlen(sni) >= sizeof(ctx->sni_override))
+            return;             /* overlong: keep the previous name */
+        strcpy(ctx->sni_override, sni);
+        ctx->sni_mode = 1;
+    }
+    if (ctx->state != kMacTLS_Connecting)
+        return;             /* handshake running or failed: the name is fixed */
+    /*
+     * BearSSL reads its name only at reset. A fresh engine takes a reset as
+     * ordinary initialisation; on the fallback path below the same call
+     * re-arms it, so this stays consistent however the handshake proceeds.
+     * A reset that fails here fails the context the same way the other
+     * call sites do.
+     */
+    br_ssl_engine_set_buffer(&ctx->sc.eng, ctx->iobuf,
+                             sizeof(ctx->iobuf), 0);
+    if (!client_first_record_compat(ctx, eff_sni(ctx))) {
+        ctx->state = kMacTLS_Error;
+        ctx->error = kMacTLS_ErrHandshake;
+    }
+}
+
 int MacTLS_GetBearSSLError(const MacTLS_Context *ctx)
 {
     /*
@@ -1383,8 +1857,24 @@ MacTLS_Version MacTLS_GetVersion(const MacTLS_Context *ctx)
     /* Only meaningful once the handshake has completed. tls13_active is
      * latched true after a successful TLS 1.3 handshake; otherwise the
      * connection ran through BearSSL's T0 engine, which we pin to 1.2. */
-    if (ctx->state != kMacTLS_Connected) return kMacTLS_VersionUnknown;
-    return ctx->tls13_active ? kMacTLS_Version13 : kMacTLS_Version12;
+    if (ctx == NULL) return kMacTLS_VersionUnknown;
+    if (ctx->state == kMacTLS_Connected)
+        return ctx->tls13_active ? kMacTLS_Version13 : kMacTLS_Version12;
+    /*
+     * A peer that sends its ServerHello and then hangs up leaves state at
+     * something other than Connected, so the test above used to answer
+     * Unknown -- read by GWStream_Describe() as "without answering the
+     * ClientHello", when it plainly did (PATCHES.md §31). BearSSL writes
+     * the negotiated version into session.version the moment the
+     * ServerHello arrives, so read it from there while the engine is still
+     * around; 0 means no ServerHello was ever received, which is the case
+     * this is meant to tell apart from the one above.
+     */
+    if (!ctx->tls13_active &&
+        br_ssl_engine_get_version(&ctx->sc.eng) == BR_TLS12) {
+        return kMacTLS_Version12;
+    }
+    return kMacTLS_VersionUnknown;
 }
 
 /* ── Configuration ── */

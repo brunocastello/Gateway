@@ -1114,3 +1114,340 @@ a browser that can manage TLS 1.0 still gets TLS 1.0.
 the client engines that talk TLS 1.2 and 1.3 upstream and will never use it.
 At the default twelve concurrent sessions that is under 100 KB against an 8 MB
 partition, which is why it is a fixed buffer rather than an allocation.
+
+## §29 — the TLS 1.2 fallback reconnected an adopted connection to port 0
+
+Contributed by [roytam1](https://github.com/roytam1/Gateway/tree/gw034).
+
+The TLS 1.3 → 1.2 fallback in `tls13_pump_handshake()`'s `kTLS13_Fallback12`
+case reconnects: it closes the transport, dials the same host and port
+again, and lets BearSSL's T0 engine run the whole TLS 1.2 handshake over the
+fresh connection (§23 is what made that reconnect survivable at all). That
+is only possible for a transport Certainly dialed itself with
+`ct_transport_create()`. An adopted one — `ct_transport_adopt()`, which is
+how SMTP STARTTLS hands Certainly a socket already mid-conversation
+(`GWStream_UpgradeToTLS()` in `gw_stream.c`, called from `gw_mail.c`'s
+`step_up_starttls()`) — stores no host or port, so `ct_transport_port()`
+read 0, and even with them a fresh dial would bypass the plaintext SMTP
+prologue the far end is waiting on.
+
+What this used to do was dial that port 0 directly. The adopted socket was
+torn down first, so the far end logged an ordinary disconnect while Gateway
+reported an empty-handed handshake failure — no BearSSL code, no transport
+error, no resolved address — which reads like a network problem when the
+actual event is a version choice: the far end chose TLS 1.2.
+
+The fallback now checks `port == 0` before doing anything else and fails
+immediately, leaving the original connection alone rather than tearing it
+down for a redial that cannot work. `fell_back_no_route` is set on the
+context, and `MacTLS_FallbackNoRoute()` lets a caller ask whether that is
+what happened; `gw_mail.c`'s STARTTLS handshake wait (`kMSUpHandshake`)
+checks it and logs the actual remedy — the mail server needs TLS 1.3 —
+instead of the generic handshake-failed text. Falling back across STARTTLS
+would mean re-running the plaintext SMTP prologue from inside the TLS
+library, which does not know it, so that stays unimplemented rather than
+silently wrong.
+
+## §30 — the 1.2 ClientHello record went out as 03 03 instead of 03 01
+
+Contributed by [roytam1](https://github.com/roytam1/Gateway/tree/gw034).
+
+`br_ssl_client_reset()` stamps `version_min` into `version_out`, and the
+1.2-only pin in `setup_bearssl()` (`br_ssl_engine_set_versions(&ctx->sc.eng,
+BR_TLS12, BR_TLS12)`) makes that 0x0303 — so BearSSL's ClientHello record on
+the TLS 1.2 fallback path reads `16 03 03` where OpenSSL, browsers, and
+Certainly's own TLS 1.3 stack all send `16 03 01`. A version-intolerant
+middlebox that only forwards 03 01 first records drops it silently: same
+destination, the TCP handshake completes, then nothing, while an OpenSSL
+hello through the same path flows. The direct path never showed it because
+servers accept either.
+
+**Why the stamp has to ride inside the reset.** The first shape of this fix
+set `version_out` *after* `br_ssl_client_reset()` returned, and the tap kept
+showing `03 03`. It had to: `br_ssl_client_reset()` does not just reset
+state, it runs `jump_handshake()` (`ssl_engine.c:1476`) before returning, and
+that processor never leaves an unfinished outgoing record — so the
+ClientHello is assembled and `flush-record()` bakes its 5-byte header
+through `sendpld_flush()` using `version_out` at that instant
+(`ssl_engine.c:1101`). By the time a post-reset stamp ran, the header bytes
+were already fixed in the output buffer; setting a field the header has
+already copied is a no-op on the wire.
+
+So `client_first_record_compat()` is the reset itself: it drops
+`version_min` to `BR_TLS10` across the `br_ssl_client_reset()` call, then
+restores it to `BR_TLS12`. `version_min` is the only lever the header reads
+while the reset runs (`ssl_client.c:48`). Its sole other client-side
+consumer is the `read-ServerHello` range check (`ssl_hs_client.t0:656`),
+which runs long after this returns, so the 1.2-only pin ends up exactly as
+strict as it was — a ServerHello asking for 0x0301 or 0x0302 still fails.
+`version_max` is never touched: it supplies the ClientHello's
+`legacy_version` (`ssl_hs_client.t0:462`) and the ServerHello upper bound,
+both staying 0x0303.
+
+`read-ServerHello` overwrites `version_out` with the negotiated version, so
+only the pre-negotiation flight is affected and everything after
+ServerHello is byte-identical to before. Unconditional — 03 01 first is the
+ecosystem convention, not a workaround, so every TLS 1.2 fallback
+connection gets it.
+
+## §31 — a peer that hung up mid-handshake waited out the 30-second timeout
+
+Contributed by [roytam1](https://github.com/roytam1/Gateway/tree/gw034), in
+`src/certainly.c` (`tls13_pump_handshake()`, `tls13_recv_records()`,
+`MacTLS_Pump()`, `MacTLS_GetVersion()`), `src/server.c`
+(`MacTLS_ServerPump()`) and `src/transport_win32.c` (`ct_transport_adopt()`,
+`ct_transport_send()`).
+
+The two transport backends disagree on how a close is reported, and every
+close test in this file had been written against only one convention. OT's
+`ct_transport_recv()` returns `n < 0` once the peer's orderly release has
+arrived and its queue is drained (`transport_ot.c`), with
+`ct_transport_peer_closed()` saying why. Win32's returns `n == 0` instead,
+with `ct_transport_peer_closed()` set the same way for both an orderly FIN
+and a `WSAECONNRESET`/`WSAECONNABORTED` (`transport_win32.c`) — its own
+header comment says so: *"The peer closed its side. The interface reports
+that through `ct_transport_peer_closed()`, not through this return value."*
+A close test that lived only inside `n < 0` therefore worked on OT and
+missed every Win32 close: recv kept answering "nothing available", the
+handshake state machine kept answering `WantRead`, and nothing observed the
+close at all.
+
+What the caller saw on Windows builds was therefore the timeout, not the
+close. `br_ssl_engine_last_error()` stays 0 — the engine never failed, it
+was waiting — so `MacTLS_GetBearSSLError()` reports 0 and
+`GWStream_Describe()` produced `TLS handshake failed [connected, OT 0,
+TLS 0, name unresolved]`. Every word of that was wrong in a different
+direction: `connected` comes from `MacTLS_GetPhase()`, which reads the
+*transport* state, and a transport that has received a FIN is still
+`kCTransport_Connected` — `peerClosed` is a separate flag; `OT 0` and
+`TLS 0` are both true, because there is genuinely no error anywhere, only a
+peer nobody asked; and `name unresolved` is `t->addr`, which
+`ct_transport_adopt()` never filled in, because an adopted socket skipped
+the resolve step that would have set it.
+
+**The fix** reads `ct_transport_peer_closed()` as its own arm rather than
+nested inside `n < 0`, at every read site that drives a handshake or the
+TLS 1.3 application-data path: `tls13_pump_handshake()`'s record read,
+`tls13_recv_records()`'s record read (missed in an earlier pass at this
+codebase's fixes, because its `n < 0` arm already read as harmless with
+`peer_closed` folded into it — the actual gap was the tail check requiring
+`tls13_recv_len == 0`, which left a trailing partial record, truncated by
+the close and unable to ever complete, waiting forever; a `waiting_for_room`
+flag keeps that from closing early on a complete record that is merely
+blocked on `tls13_app_buf` space instead), the BearSSL path's
+`BR_SSL_RECVREC` arm in `MacTLS_Pump()`, and the matching arm in
+`MacTLS_ServerPump()` (`server.c`) — which keeps its existing "MITM
+handshake abandoned by the browser" log by moving it into the new
+peer_closed arm rather than dropping it. `MacTLS_GetVersion()` also stops
+answering Unknown whenever `state` is not `Connected`: `session.version` is
+set the instant a ServerHello arrives, so a peer that sends one and then
+hangs up now reports the version it chose rather than "without answering
+the ClientHello".
+
+Two supporting changes, both in `transport_win32.c`. `ct_transport_send()`
+sets `peerClosed` on `WSAECONNRESET`/`WSAECONNABORTED`, so the send arm's
+existing close test — already correctly nested inside `n < 0`, since a send
+failure has no "0 means closed" ambiguity — can fire before a recv has ever
+run. `ct_transport_adopt()` calls `getpeername()` so an adopted connection
+(STARTTLS, or the browser-facing leg of `connect_mitm`) names its peer
+instead of reporting that nothing resolved it. The Win32 `recv()` contract
+itself — 0 for "nothing available" as well as for a close, told apart only
+by `peerClosed` — is unchanged; every fix above reads that flag rather than
+asking `recv()` to report differently.
+
+The same silence was seen from a TLS 1.2-only far end holding a TLS 1.3
+ClientHello it would never answer, and the two were indistinguishable in the
+log for the same reason — nothing had arrived to distinguish them. This is
+what makes that case readable now: the tap shows zero bytes back, and the
+log says so immediately, instead of 30 seconds later under an error name.
+
+A close is not an end of stream when it cuts a record in half. In
+`tls13_recv_records()`, bytes left in `tls13_recv_buf` after the peer has
+closed — and that are not a complete record waiting only for `app_buf` room
+— are a record truncated by the close, and the connection ends in
+`kMacTLS_Error`, not `kMacTLS_Closed`. Reported as Closed, a FIN injected
+mid-record would pass a cut-off body off as complete whenever the response
+carries no length of its own to check it against. A close at a record
+boundary is still Closed, as before. The close is also honoured only on a
+pass whose read was tried and came back empty, so bytes still queued behind
+a `peer_closed` flag are read before anything is decided. The TLS 1.3
+handshake applies the same rule: a peer that has closed while the handshake
+waits on a partial record ends it at once, rather than on the 30-second
+timeout.
+
+---
+
+## §32 — adopted connections can start in TLS 1.2 for far ends without 1.3
+
+Contributed by [roytam1](https://github.com/roytam1/Gateway/tree/gw034),
+for Module 4, the generic tunnel (`src/proxy/gw_tunnel.c`). Ported by hand
+against current code; the fork's own numbering for this is §29.
+
+§29 named the remedy for an adopted connection that falls back to TLS 1.2 as
+"enable TLS 1.3 on the far end", and the tunnel's own use case cannot: an
+SSH endpoint behind a stunnel built against a pre-1.3 OpenSSL. For an
+adopted connection the 1.3 ClientHello buys nothing there — only the
+fallback that §29 shows cannot run through a proxy tunnel or a STARTTLS
+prologue either — so the library now offers to skip it entirely.
+
+`MacTLS_CreateOnEndpointTLS12()` adopts the socket exactly like
+`MacTLS_CreateOnEndpoint()`, resets BearSSL's 1.2 engine onto it directly
+through `client_first_record_compat()`, as the fallback path does after
+re-arming it, so the first record goes out as `16 03 01` (§30) — a forced
+1.2 far end behind a 03-01-only middlebox is exactly the case §30 exists
+for (see §34 for what the hostname passed now means) — and sets `force_tls12`, which keeps
+both TLS 1.3 branches of `MacTLS_Pump()` from ever starting:
+
+```c
+if (!ctx->force_tls12 &&
+    !ctx->tls13_started && ctx->hs13.is_tls13 == false &&
+    ctx->hs13.state == kTLS13_SendClientHello) {
+```
+
+Everything below that — record I/O, version reporting, close — is the same
+engine path §29's fallback already uses, so `MacTLS_GetVersion()` reports 12
+on success with no further special cases. The tunnel selects it with
+`tunnel_tls12 = 1`, in `gw_tunnel.c`'s `begin_tls_or_splice()`; the default
+path, and every other module, is untouched.
+
+## §33 — a trust-any validator for testing against unvalidatable far ends
+
+Contributed by [roytam1](https://github.com/roytam1/Gateway/tree/gw034),
+for the tunnel's `tunnel_insecure` pref. Ported by hand; the fork's own
+numbering for this is §30. The fork's patch defined the same context struct
+twice — once in `certainly.c` as a local `InsecureCtx`, once in
+`certainly_internal.h` as `MacTLS_InsecureCtx` — kept in sync only by a
+comment saying so. That is fixed here: `MacTLS_InsecureCtx` is defined once,
+in `certainly_internal.h`, and `certainly.c` uses that type directly.
+
+The first far end past the tunnel failed validation rather than the
+handshake: a publicly trusted chain for another name (`TLS 56`), on a host
+whose certificate cannot be fixed from here. The library had no way to say
+"encrypt without authenticating" — `MacTLS_ConfigAddCA` is still a stub, so
+not even a private CA can be installed — which left testing fully blocked
+behind a correct rejection.
+
+`MacTLS_SetInsecure()` swaps both validation paths (BearSSL's 1.2 engine and
+the 1.3 state machine's shared `x509_ctx`) onto a trust-any engine that
+decodes only the end-entity certificate, for its public key, and accepts
+everything else without checking. It is modelled on BearSSL's own knownkey
+engine, except the key comes out of the peer's certificate through the
+decoder instead of being configured in advance; an undecodable certificate
+fails the chain with the decoder's own error, so the engine reports a
+handshake failure rather than dereferencing a NULL key. Both key usages are
+reported permitted, as in BearSSL's test tool. This bypasses the §34 guard
+entirely rather than routing through it — there is no host left to defend
+once nothing is being checked.
+
+Deliberately narrow: the setter must run before the first Pump, the tunnel
+logs a WARNING naming the pref every time it takes effect, and the mail
+module has no path to it whatever the prefs say.
+
+## §34 — the SNI name is overridable, without ever weakening validation
+
+Contributed by [roytam1](https://github.com/roytam1/Gateway/tree/gw034),
+for `tunnel_sni`, and substantially rewritten here. The fork's own numbering
+for this is §31; its approach is not what ships.
+
+**The problem it addresses.** Through one corporate proxy (BlueCoat-style,
+`Via: 1.1 wcg`), a handshake carrying no SNI completed while an otherwise
+identical one carrying the far hostname stalled past the 30-second timeout:
+the CONNECT was accepted in both cases, and a nameless TLS 1.2 ClientHello
+flowed where Gateway's SNI-bearing one did not. Nothing in the failure says
+so — it reads as the same empty-handed handshake failure as §29.
+
+**The fork's approach, and why it is not ported as-is.** The fork's
+`MacTLS_SetSNI()` replaced one name with another everywhere: the ClientHello
+extension, *and* the name passed to `xc->start_chain()` for certificate
+validation, on both the 1.2 and 1.3 paths. `tunnel_sni = none` passes `NULL`
+as that single name, and BearSSL's `xm_start_chain()`
+(`bearssl/src/x509/x509_minimal.c`) treats a `NULL` or empty `server_name`
+as "perform no hostname check at all" — `cc->server_name = NULL`, read back
+later by the name-matching step. An override name is validated *instead of*
+the real host, and no SNI means no validation of any name whatsoever. That
+turns a diagnostic knob into a way to accept a certificate for anyone, or no
+name check at all, on the one module (the tunnel) that most needs the check
+to hold — it is the only leg with no application-layer authentication of its
+own to fall back on.
+
+**What ships instead.** `tunnel_sni` (and `MacTLS_SetSNI()`) now control
+*only* what the ClientHello's SNI extension carries. Certificate validation
+is handled by a separate mechanism that never sees the override: an X.509
+vtable wrapper, `sni_guard` (`certainly.c`, `certainly_internal.h`
+`MacTLS_SniGuardCtx`), installed in `setup_bearssl()` in place of `xc` on
+both `br_ssl_engine_set_x509()` (the 1.2 path) and `hs13.x509_ctx` (the 1.3
+state machine, which shares one validator with the 1.2 engine already).
+Every vtable call but `start_chain()` forwards straight through to the real
+validator (`xc`) unchanged — ordinary chain validation, trust anchors,
+signatures, dates, the name check itself, are all untouched. `start_chain()`
+alone ignores whatever name it is handed and substitutes `ctx->host` — the
+real, dialled remote host — always:
+
+```c
+static void sniguard_start_chain(const br_x509_class **ctx,
+                                 const char *server_name)
+{
+    MacTLS_SniGuardCtx *gc = (MacTLS_SniGuardCtx *)(void *)ctx;
+    const br_x509_class **real =
+        (const br_x509_class **)(void *)&gc->owner->xc.vtable;
+
+    (void)server_name;   /* ignored on purpose */
+    (*real)->start_chain(real, gc->owner->host);
+}
+```
+
+This is the same wrapper shape §33's `insecure_vtable` uses — a vtable
+struct whose first field is the `br_x509_class *`, cast back to reach the
+owning context — except `sni_guard` forwards to the *real* validator instead
+of replacing it, so ordinary certificate checking still happens; only the
+name fed into it is pinned.
+
+`eff_sni()` is the one place that reads `sni_mode`/`sni_override` and is used
+purely to shape the wire: the 1.3 ClientHello builder (through
+`tls13_handshake_step()`'s `hostname` parameter) and every
+`br_ssl_client_reset()` call site (`MacTLS_CreateOnEndpointTLS12()`, the
+fallback's `client_first_record_compat()`, and `MacTLS_SetSNI()`'s own
+re-arm). None of those call sites reach `start_chain()` — `sni_guard` sits
+between the engines and `xc` for that — so changing what `eff_sni()` returns
+changes only what goes out, never what is checked.
+
+`tls13_build_client_hello()`'s one `strlen(hostname)` assumed a name always
+exists, which an omitted SNI disproves on the first handshake; it now treats
+`NULL` (and empty, matching BearSSL) as "omit the extension" and skips the
+SNI block entirely rather than writing a zero-length name.
+
+**Result.** `tunnel_sni = none` sends a nameless ClientHello, exactly as
+before, for the SNI-policing proxies this exists for — but the certificate
+that comes back is still checked against `tunnel_remote_host`, in every
+case, on both the TLS 1.2 and TLS 1.3 paths, unless `tunnel_insecure` has
+turned checking off entirely (§33, which bypasses `sni_guard` on purpose,
+since there is nothing left to defend once nothing is being checked). An
+override name changes only the extension; it is never treated as the
+identity to verify against.
+
+## §35 — the server says how far the browser got, and the host writes the line
+
+Gateway's readable log (0.3.7) writes one sentence per event with the
+session's number, `#N`, and a code. Certainly's server side had been writing
+its own lines — `MITM client hello: …`, `MITM handshake abandoned by the
+browser: …`, `… failed: BearSSL …`, `… done: …` — with no session number,
+because it has none, and the proxy then wrote a second line of its own that
+could only say "see the line above". With several tunnels opening at once
+the two were not reliably adjacent.
+
+`server.c` now writes none of those lines. It keeps what they said and
+hands it over:
+
+- `MacTLS_ServerGetStage()` — how far the client got: nothing, a hello,
+  our certificate with no reply, a reply then gone, its second flight
+  finished, or done. This is what the old line's bracketed "no client reply
+  after our certificate" said, as a value.
+- `MacTLS_ServerDescribe()` — the rest of the old line: hello framing,
+  version and suite, byte counts, record type, `incrypt`.
+- `MacTLS_ServerHelloHex()` — the first 24 bytes the client sent, kept in
+  the struct (`helloHead`) rather than logged on the first read.
+- `MacTLS_ServerSessionVersion()` — the version agreed, for the line that
+  says the handshake completed.
+
+The `GW_DEBUG_IO` hex dumps are untouched: they are the developer's build
+flag, not the log a user reads.

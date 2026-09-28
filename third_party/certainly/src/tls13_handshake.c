@@ -311,7 +311,10 @@ static int tls13_build_client_hello(tls13_hs_ctx *hs,
     unsigned char *buf = hs->msg_buf;
     size_t buf_size = sizeof(hs->msg_buf);
     size_t pos = 0;
-    size_t hostname_len = strlen(hostname);
+    /* NULL omits SNI (MacTLS_SetSNI); an empty string is treated the same
+     * way, matching BearSSL, where a zero-length server name also
+     * suppresses the extension. */
+    size_t hostname_len = (hostname != NULL) ? strlen(hostname) : 0;
     size_t num_tls13_suites = sizeof(tls13_cipher_suites) / sizeof(tls13_cipher_suites[0]);
     size_t num_tls12_suites = sizeof(tls12_cipher_suites) / sizeof(tls12_cipher_suites[0]);
     size_t total_suites = num_tls13_suites + num_tls12_suites;
@@ -402,8 +405,14 @@ static int tls13_build_client_hello(tls13_hs_ctx *hs,
     pos += 2;  /* skip extensions length (filled later) */
     ext_start = pos;
 
-    /* ── Extension: SNI (Server Name Indication) — type 0 ── */
-    {
+    /*
+     * ── Extension: SNI (Server Name Indication) — type 0 ──
+     *
+     * Omitted entirely when there is no name to send (hostname == NULL,
+     * MacTLS_SetSNI): the extension list carries its own length, so
+     * skipping this one needs no other adjustment.
+     */
+    if (hostname_len > 0) {
         /*
          * Format:
          *   ext_type (2)

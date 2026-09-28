@@ -10,6 +10,7 @@
 
 #include "gw_mail.h"
 
+#include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -61,6 +62,8 @@ typedef struct {
     int           tlsUp;                    /* the upgrade has happened  */
     int           xoauthSent;               /* POP: payload sent after "+" */
     char          upHost[GW_NET_HOST_MAX];  /* kept for SNI on the upgrade */
+    char          refusal[160];             /* what the server said when it
+                                               refused the token, for log_debug */
     unsigned long lastActivity;
 } GWMailSession;
 
@@ -163,13 +166,58 @@ static const char *mail_error_text(GWMailSession *s, const char *what)
     return sText;
 }
 
+/*
+ * Tell the client, log a plain sentence with its code (docs/log-codes.md),
+ * and close. clientText may be mail_error_text()'s static buffer, so the
+ * sentence is formatted into a buffer of its own.
+ */
 static void mail_fail(GWMailSession *s, const char *clientText,
-                      const char *reason)
+                      const char *code, const char *fmt, ...)
 {
-    gw_log("mail #%ld %s", s->id, reason);
+    char    reason[GW_LOG_WIDTH];
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(reason, sizeof reason, fmt, ap);
+    va_end(ap);
+    gw_logc(code, "mail #%ld %s", s->id, reason);
     say_client(s, clientText);
     GWStream_Destroy(&s->up);
     s->state = kMSFlushClose;
+}
+
+/*
+ * A failure reaching the mail server. The stream's own sentence and T code
+ * when it holds an error (a certificate, a name that did not resolve, a
+ * server that speaks only TLS 1.2 on a STARTTLS connection); otherwise the
+ * caller's. The bracketed detail goes under log_debug.
+ */
+static void mail_fail_upstream(GWMailSession *s, const char *clientText,
+                               const char *code, const char *fallback)
+{
+    char        why[GW_LOG_WIDTH];
+    char        desc[192];
+    const char *tcode = GWStream_Explain(&s->up, s->upHost, why, sizeof why);
+
+    GWStream_Describe(&s->up, desc, sizeof desc);
+    if (tcode != NULL)
+        mail_fail(s, clientText, tcode, "%s", why);
+    else
+        mail_fail(s, clientText, code, fallback, s->upHost);
+    gw_logd("%s", desc);
+}
+
+/*
+ * The server refused the access token. What it said -- usually a base64
+ * JSON challenge that tells an expired token from one with the wrong scope
+ * -- was kept as it arrived, and goes under the sentence for log_debug.
+ */
+static void mail_fail_refused(GWMailSession *s, const char *clientText)
+{
+    mail_fail(s, clientText, "M16", "the mail server %s refused the access "
+              "token", s->upHost);
+    if (s->refusal[0] != '\0')
+        gw_logd("the server said: %s", s->refusal);
 }
 
 /* ------------------------------------------------------------------ */
@@ -193,9 +241,11 @@ static int local_password_check(const char *pass)
 static void log_auth_failure(long id, const char *proto, int verdict)
 {
     if (verdict < 0)
-        gw_log("mail #%ld %s refused: prefs have no local_password", id, proto);
+        gw_logc("M01", "mail #%ld %s sign-in refused: the prefs file has no "
+                "local_password", id, proto);
     else
-        gw_log("mail #%ld %s refused: password did not match prefs", id, proto);
+        gw_logc("M02", "mail #%ld %s sign-in refused: the password does not "
+                "match local_password", id, proto);
 }
 
 static void begin_upstream(GWMailSession *s)
@@ -455,14 +505,14 @@ static int build_xoauth2(GWMailSession *s, char *out, size_t cap)
 }
 
 /*
- * Decode and log whatever the server said when it refused the token.
+ * Decode and keep whatever the server said when it refused the token.
  *
  * A SASL failure normally comes back as a base64 challenge holding a small
  * JSON object, e.g. {"status":"401","schemes":"Bearer","scope":"..."}, which
  * distinguishes an expired token from one issued for the wrong scope. Throwing
  * it away, as this used to, leaves nothing to act on.
  */
-static void log_xoauth2_rejection(GWMailSession *s, const char *line)
+static void keep_xoauth2_refusal(GWMailSession *s, const char *line)
 {
     const char *payload = NULL;
     char decoded[256];
@@ -481,11 +531,17 @@ static void log_xoauth2_rejection(GWMailSession *s, const char *line)
                           sizeof(decoded) - 1);
         if (n != (size_t)-1 && n > 0) {
             decoded[n] = '\0';
-            gw_log("mail #%ld upstream said: %s", s->id, decoded);
-            return;
+            line = decoded;
         }
     }
-    gw_log("mail #%ld upstream said: %s", s->id, line);
+    /* A challenge and then the final refusal both arrive here; keep both. */
+    n = strlen(s->refusal);
+    if (n > 0 && n + 3 < sizeof(s->refusal)) {
+        strcpy(s->refusal + n, " / ");
+        n += 3;
+    }
+    if (n + 1 < sizeof(s->refusal))
+        gw_copy_n(s->refusal + n, sizeof(s->refusal) - n, line, strlen(line));
 }
 
 static void send_xoauth2(GWMailSession *s)
@@ -510,7 +566,8 @@ static void send_xoauth2(GWMailSession *s)
 
     if (!build_xoauth2(s, blob, sizeof(blob))) {
         mail_fail(s, mail_error_text(s, "Gateway could not build an XOAUTH2 token"),
-                  "no access token, or the XOAUTH2 blob would not fit");
+                  "M10", "the XOAUTH2 sign-in could not be built: no "
+                  "access token, or it is too long");
         return;
     }
 
@@ -532,7 +589,8 @@ static void step_up_greet(GWMailSession *s)
     if (s->kind == kMailImap) {
         if (gw_strnicmp(line, "* OK", 4) != 0) {
             mail_fail(s, "* BYE Upstream IMAP server refused the session\r\n",
-                      "upstream IMAP greeting was not OK");
+                      "M11", "the IMAP server %s refused the session at "
+                      "its greeting", s->upHost);
             return;
         }
         send_xoauth2(s);
@@ -542,7 +600,8 @@ static void step_up_greet(GWMailSession *s)
     if (s->kind == kMailPop) {
         if (line[0] != '+') {
             mail_fail(s, "-ERR Upstream POP server refused the session\r\n",
-                      "upstream POP greeting was not +OK");
+                      "M11", "the POP server %s refused the session at "
+                      "its greeting", s->upHost);
             return;
         }
         send_xoauth2(s);
@@ -551,7 +610,8 @@ static void step_up_greet(GWMailSession *s)
 
     if (line[0] != '2') {
         mail_fail(s, "421 4.4.1 Upstream SMTP server refused the session\r\n",
-                  "upstream SMTP greeting was not 2xx");
+                  "M11", "the SMTP server %s refused the session at its "
+                  "greeting", s->upHost);
         return;
     }
     if (line[3] == '-') return;             /* multi-line banner, keep reading */
@@ -567,7 +627,8 @@ static void step_up_ehlo(GWMailSession *s)
     while (take_line(s->ubuf, &s->uLen, line, sizeof(line))) {
         if (line[0] != '2') {
             mail_fail(s, "421 4.4.1 Upstream SMTP server rejected EHLO\r\n",
-                      "upstream EHLO failed");
+                      "M12", "the SMTP server %s rejected EHLO",
+                      s->upHost);
             return;
         }
         if (line[3] != '-') {               /* final line of the 250 block */
@@ -595,22 +656,24 @@ static void step_up_starttls(GWMailSession *s)
 
     if (line[0] != '2') {
         mail_fail(s, "421 4.4.1 Upstream refused STARTTLS\r\n",
-                  "upstream refused STARTTLS");
+                  "M13", "the SMTP server %s refused STARTTLS", s->upHost);
         return;
     }
     if (s->uLen != 0) {
         mail_fail(s, "421 4.4.1 Upstream sent data before TLS\r\n",
-                  "upstream spoke before the TLS handshake");
+                  "M14", "the SMTP server sent data before the TLS "
+                  "handshake, which could be an attack");
         return;
     }
 
     if (!GWStream_UpgradeToTLS(&s->up, s->upHost)) {
         mail_fail(s, "421 4.4.1 Gateway could not start TLS\r\n",
-                  "STARTTLS upgrade failed");
+                  "M15", "Gateway could not start TLS on the connection to "
+                  "%s", s->upHost);
         return;
     }
     s->tlsUp = 1;
-    gw_log("mail #%ld STARTTLS accepted, negotiating", s->id);
+    gw_logd("mail #%ld STARTTLS accepted, negotiating", s->id);
     s->state = kMSUpHandshake;
 }
 
@@ -624,7 +687,7 @@ static void step_up_auth(GWMailSession *s)
             if (line[0] == '+') {
                 /* An error challenge: an empty line cancels the exchange and
                  * makes the server send its tagged NO. */
-                log_xoauth2_rejection(s, line);
+                keep_xoauth2_refusal(s, line);
                 say_up(s, "\r\n");
                 continue;
             }
@@ -632,15 +695,15 @@ static void step_up_auth(GWMailSession *s)
                 snprintf(reply, sizeof(reply), "%s OK LOGIN completed\r\n",
                          s->tag);
                 say_client(s, reply);
-                gw_log("mail #%ld IMAP splice established", s->id);
+                gw_log("mail #%ld signed in to the IMAP server", s->id);
                 s->state = kMSSplice;
                 return;
             }
             if (gw_strnicmp(line, "GW1 ", 4) == 0) {
-                log_xoauth2_rejection(s, line);
+                keep_xoauth2_refusal(s, line);
                 snprintf(reply, sizeof(reply),
                          "%s NO Upstream rejected XOAUTH2\r\n", s->tag);
-                mail_fail(s, reply, "upstream rejected XOAUTH2");
+                mail_fail_refused(s, reply);
                 return;
             }
             continue;                       /* untagged chatter: ignore */
@@ -649,7 +712,7 @@ static void step_up_auth(GWMailSession *s)
         if (s->kind == kMailPop) {
             if (gw_strnicmp(line, "+OK", 3) == 0) {
                 say_client(s, "+OK Logged in\r\n");
-                gw_log("mail #%ld POP splice established", s->id);
+                gw_log("mail #%ld signed in to the POP server", s->id);
                 s->state = kMSSplice;
                 return;
             }
@@ -666,7 +729,8 @@ static void step_up_auth(GWMailSession *s)
                     if (!build_xoauth2(s, blob, sizeof(blob))) {
                         say_up(s, "*\r\n");
                         mail_fail(s, "-ERR Gateway could not build an XOAUTH2 token\r\n",
-                                  "no access token, or the blob would not fit");
+                                  "M10", "the XOAUTH2 sign-in could not be "
+                                  "built: no access token, or it is too long");
                         return;
                     }
                     snprintf(out, sizeof(out), "%s\r\n", blob);
@@ -676,32 +740,30 @@ static void step_up_auth(GWMailSession *s)
                 }
 
                 /* Anything else is an error challenge; '*' cancels it. */
-                log_xoauth2_rejection(s, line);
+                keep_xoauth2_refusal(s, line);
                 say_up(s, "*\r\n");
                 continue;
             }
 
-            log_xoauth2_rejection(s, line);
-            mail_fail(s, "-ERR Upstream rejected XOAUTH2\r\n",
-                      "upstream rejected XOAUTH2");
+            keep_xoauth2_refusal(s, line);
+            mail_fail_refused(s, "-ERR Upstream rejected XOAUTH2\r\n");
             return;
         }
 
         if (line[0] == '3') {
-            log_xoauth2_rejection(s, line + 4);   /* skip the "334 " */
+            keep_xoauth2_refusal(s, line + 4);   /* skip the "334 " */
             say_up(s, "\r\n");
             continue;
         }
         if (gw_strnicmp(line, "235", 3) == 0) {
             say_client(s, "235 2.7.0 Authentication successful\r\n");
-            gw_log("mail #%ld SMTP splice established", s->id);
+            gw_log("mail #%ld signed in to the SMTP server", s->id);
             s->state = kMSSplice;
             return;
         }
         if (line[0] == '4' || line[0] == '5') {
-            gw_log("mail #%ld upstream said: %s", s->id, line);
-            mail_fail(s, "535 5.7.8 Upstream rejected XOAUTH2\r\n",
-                      "upstream rejected XOAUTH2");
+            keep_xoauth2_refusal(s, line);
+            mail_fail_refused(s, "535 5.7.8 Upstream rejected XOAUTH2\r\n");
             return;
         }
     }
@@ -781,7 +843,8 @@ static void session_step(GWMailSession *s)
     if (s->state == kMSFree) return;
 
     if (GWNet_Ticks() - s->lastActivity > GW_MAIL_IDLE) {
-        gw_log("mail #%ld idle timeout", s->id);
+        gw_logc("M17", "mail #%ld nothing moved for %d minutes, so the "
+                "connection was closed", s->id, GW_MAIL_IDLE / 3600);
         s->state = kMSDone;
     }
 
@@ -861,7 +924,8 @@ static void session_step(GWMailSession *s)
                       : GWStream_ConnectTLS(&s->up, host, (UInt16)port))) {
                 mail_fail(s,
                           mail_error_text(s, "Gateway could not reach the mail server"),
-                          "upstream TLS connect failed to start");
+                          "M18", "Gateway could not start a connection to %s",
+                          host);
                 break;
             }
             s->state = kMSUpConnect;
@@ -870,7 +934,8 @@ static void session_step(GWMailSession *s)
         case kGWTokenFailed:
             mail_fail(s,
                       mail_error_text(s, "Gateway could not refresh its access token"),
-                      GWToken_Error());
+                      "M19", "there is no access token to sign in with; "
+                      "the line before says why");
             break;
         case kGWTokenIdle:
             GWToken_Request();
@@ -885,12 +950,9 @@ static void session_step(GWMailSession *s)
             s->state = kMSUpGreet;
         } else if (s->up.state == kGWStreamError ||
                    s->up.state == kGWStreamClosed) {
-            {
-                char why[160];
-                mail_fail(s,
-                          mail_error_text(s, "Gateway could not reach the mail server"),
-                          GWStream_Describe(&s->up, why, sizeof(why)));
-            }
+            mail_fail_upstream(s,
+                    mail_error_text(s, "Gateway could not reach the mail server"),
+                    "M20", "the mail server %s closed the connection");
         }
         break;
 
@@ -902,11 +964,19 @@ static void session_step(GWMailSession *s)
             s->state = kMSUpEhlo;
         } else if (s->up.state == kGWStreamError ||
                    s->up.state == kGWStreamClosed) {
-            {
-                char why[160];
-                mail_fail(s, "421 4.4.1 TLS handshake with the mail server failed\r\n",
-                          GWStream_Describe(&s->up, why, sizeof(why)));
-            }
+            /*
+             * A TLS 1.2-only mail server cannot be served here: STARTTLS
+             * hands Certainly a socket it did not dial, so the fallback has
+             * no host or port to redial and fails outright rather than
+             * silently reconnecting to port 0 (PATCHES.md §29).
+             * GWStream_Explain() names that case plainly (T20) instead of the
+             * generic handshake-failed text, which reads like a network
+             * problem when the actual fix is enabling TLS 1.3 on the server.
+             */
+            mail_fail_upstream(s,
+                    "421 4.4.1 TLS handshake with the mail server failed\r\n",
+                    "M21", "the mail server %s closed the connection during "
+                    "the TLS handshake");
         }
         break;
 
@@ -920,8 +990,10 @@ static void session_step(GWMailSession *s)
         }
         n = fill(&s->up, s->ubuf, &s->uLen, (size_t)GW_MAIL_BUF);
         if (n == -1 || n == -2) {
-            mail_fail(s, mail_error_text(s, "Upstream closed the connection"),
-                      "upstream closed during login");
+            mail_fail_upstream(s,
+                    mail_error_text(s, "Upstream closed the connection"),
+                    "M22", "the mail server %s closed the connection during "
+                    "sign-in");
             break;
         }
         if (s->state == kMSUpGreet)          step_up_greet(s);
@@ -991,7 +1063,8 @@ static int mail_accept(GWConn *c, GWMailKind kind)
         if (s->cbuf == NULL || s->ubuf == NULL ||
             s->oq == NULL || s->pq == NULL) {
             session_reset(s);
-            gw_log("out of memory accepting a mail connection");
+            gw_logc("M23", "out of memory: a mail client's connection was "
+                    "refused");
             return 0;
         }
         GWStream_Adopt(&s->cli, c);

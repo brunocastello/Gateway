@@ -165,6 +165,14 @@ void          GWStream_Adopt(GWStream *s, GWConn *c);
 int           GWStream_UpgradeToTLS(GWStream *s, const char *host);
 
 /*
+ * The same detach, but for a far end with no TLS 1.3: BearSSL's 1.2 engine
+ * drives from the first pump and no fallback reconnect is needed, which is
+ * what makes 1.2-only servers reachable through a proxy tunnel or STARTTLS.
+ * Returns 0 if the stream is not in a state that can be upgraded.
+ */
+int           GWStream_UpgradeToTLS12(GWStream *s, const char *host);
+
+/*
  * The same upgrade with the roles reversed: Gateway answers the handshake
  * instead of starting it, presenting `leaf` for whatever host the client
  * asked for. For the browser side of a CONNECT that Gateway terminates.
@@ -203,6 +211,28 @@ int           GWStream_TlsVersion(const GWStream *s);
  * (0x0300 = SSL 3.0, 0x0301 = TLS 1.0, and so on). 0 when unknown, plain, or
  * before the hello arrived. Server side only, so connect_mitm. */
 unsigned int  GWStream_ClientHelloVersion(const GWStream *s);
+/*
+ * How far the browser got with a server-side handshake, for the log line
+ * that says what happened to it. Mirrors Certainly's MacTLS_ServerStage
+ * without this header having to see Certainly's.
+ */
+enum {
+    kGWStageNothing = 0,    /* no bytes at all */
+    kGWStageHello,          /* a hello, then gone before we answered */
+    kGWStageCertificate,    /* our certificate went out, nothing came back */
+    kGWStageReplied,        /* it answered our certificate, then left */
+    kGWStageFinished,       /* it finished its side, then left */
+    kGWStageDone            /* the handshake completed */
+};
+int           GWStream_ServerStage(const GWStream *s);
+/* Engineer's detail for log_debug: one line on the hello and the engine, and
+ * the first bytes the browser sent, in hex. Empty strings when not a
+ * server-side stream. */
+void          GWStream_ServerDescribe(const GWStream *s, char *out, size_t cap);
+void          GWStream_ServerHelloHex(const GWStream *s, char *out, size_t cap);
+/* The version the browser's handshake settled on, 0x0300 = SSL 3.0 and so
+ * on, or 0 before it completed. */
+unsigned int  GWStream_ServerVersion(const GWStream *s);
 /* 1 while TLS still holds bytes that have not reached the socket. A write to
  * a TLS stream only stages plaintext, so closing on the strength of the write
  * having returned throws the tail away. Plain streams always answer 0: the
@@ -211,11 +241,51 @@ int           GWStream_SendPending(const GWStream *s);
 const char   *GWStream_ErrorText(const GWStream *s);
 
 /*
+ * 1 when a TLS handshake failure was a TLS 1.2 fallback that could not run
+ * on this stream because it was adopted (STARTTLS) rather than dialed by
+ * Certainly itself -- see MacTLS_FallbackNoRoute(). The remedy is specific
+ * (the far end needs TLS 1.3 enabled), which GWStream_Describe()'s generic
+ * failure text cannot say.
+ */
+int           GWStream_FallbackNoRoute(const GWStream *s);
+
+/*
+ * Testing only (tunnel_insecure): stop validating the far end's certificate
+ * on this stream. Client side only -- never use on a mail or web-proxy
+ * stream. Must run before the first Pump, i.e. right after an Upgrade call
+ * returns.
+ */
+void          GWStream_SetInsecure(GWStream *s);
+
+/*
+ * Diagnosis (tunnel_sni): replace the name the handshake sends as SNI, or
+ * omit SNI entirely when sni is NULL. Client side only, before the first
+ * Pump. This changes only what goes out on the wire -- certificate
+ * validation always checks the host the stream was upgraded with
+ * (PATCHES.md §34), never this override.
+ */
+void          GWStream_SetSNI(GWStream *s, const char *sni);
+
+/*
  * A failure line with enough in it to act on: what went wrong, how far the
  * connection got, the Open Transport error number, and the address DNS
  * produced. Writes into out and returns it, so it can be passed straight to a
  * logging call.
  */
 const char   *GWStream_Describe(const GWStream *s, char *out, size_t cap);
+
+/*
+ * The readable half of the same diagnosis: one plain sentence naming the far
+ * end ("the certificate for mail.example.com has expired") written into out,
+ * and its code (docs/log-codes.md, the T table) returned for gw_logc().
+ * GWStream_Describe() is then the log_debug line under it.
+ *
+ * NULL, with out empty, when the stream holds no error to explain -- a far end
+ * that simply closed, or one that never started -- so the caller says what
+ * happened in its own words and with its own code. host is the name to put in
+ * the sentence; NULL reads "the far end".
+ */
+const char   *GWStream_Explain(const GWStream *s, const char *host,
+                               char *out, size_t cap);
 
 #endif /* GW_TRANSPORT_H */

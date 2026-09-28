@@ -36,12 +36,14 @@
 #include "settings_win32.h"
 #include "../gw_config.h"
 #include "../gw_core.h"
+#include "../portable/gw_gate.h"
 #include "../portable/gw_prefs.h"
+#include "../portable/gw_provider.h"
 #include "../portable/gw_util.h"
 
 #define GW_SETTINGS_CLASS "GatewaySettingsClass"
 
-enum { Check, Number, Date, Text, Redirect, Provider, List };
+enum { Check, Number, Date, Text, Redirect, Provider, Proxy, List };
 
 typedef struct {
     int         pane;
@@ -49,23 +51,28 @@ typedef struct {
     const char *key, *label, *fallback, *hint;  /* hint lines split on '\n' */
 } Field;
 
-#define PANES 8
+#define PANES 10
 
 static const char *const kPanes[PANES] = {
     "Modules", "Web proxy", "Wayback", "Wayback sites",
-    "Mail", "Mail upstream", "OAuth", "Log"
+    "Mail", "Mail upstream", "OAuth", "Tunnel", "Tunnel proxy", "Log"
 };
 
-/* Standing text at the top of a pane, above its first row. */
+/* Standing text at the top of a pane, above its first row. The Tunnel pane's
+ * former intro (no local authentication on the listening port) now lives as
+ * tunnel_local_port's own hint below -- keeping it as a pane intro pushed
+ * this pane past the Web proxy pane, the previous tallest. */
 static const char *const kIntro[PANES] = {
     "Stop and start Gateway after changing listeners.",
     "",
     "",
     "",
     "",
-    "Empty host fields use the selected provider's defaults.",
+    "Used only by the Custom provider. Outlook and Gmail supply their own.",
     "Obtain the refresh token outside Gateway, then paste it here.\n"
     "Long values scroll horizontally. Tokens may rotate while running.",
+    "",
+    "",
     "",
 };
 
@@ -74,6 +81,7 @@ static const Field kFields[] = {
     { 0, Check, "http_enabled", "&Web proxy", "1", "Browse modern sites through the web proxy." },
     { 0, Check, "mail_enabled", "&Mail", "1", "Connect a mail client to IMAP, POP and SMTP." },
     { 0, Check, "wayback_enabled", "Wa&yback proxy", "1", "Browse archived pages from the Wayback Machine." },
+    { 0, Check, "tunnel_enabled", "Tu&nnel", "0", "A generic TLS relay for one local port; SSH is the use case." },
     { 1, Number, "http_port", "Port:", "8765", "" },
     { 1, Check, "rewrite_https", "&Rewrite https:// links to http://", "1",
       "For browsers without modern TLS support." },
@@ -114,18 +122,47 @@ static const Field kFields[] = {
     { 5, Number, "smtp_upstream_port", "SMTP port:", "587", "" },
     { 5, Check, "smtp_starttls", "Use START&TLS on the SMTP port", "1",
       "Port 465 uses TLS immediately; other ports default to STARTTLS." },
-    { 6, Text, "oauth_host", "Token host:", "", "" },
-    { 6, Text, "oauth_path", "Token path:", "", "" },
-    { 6, Text, "oauth_scope", "Scope:", "", "" },
     { 6, Text, "oauth_client_id", "Client ID:", "", "" },
     { 6, Text, "oauth_client_secret", "Client secret:", "", "" },
     { 6, Text, "refresh_token", "Refresh token:", "", "" },
-    { 7, Check, "show_window", "Show the &log window at launch", "1",
+    /* Custom provider only, like the Mail upstream pane. */
+    { 6, Text, "oauth_host", "Token host:", "", "" },
+    { 6, Text, "oauth_path", "Token path:", "", "" },
+    { 6, Text, "oauth_scope", "Scope:", "", "" },
+    { 7, Number, "tunnel_local_port", "Local port:", "2222",
+      "No local authentication: keep this port behind the machine's own\n"
+      "boundary. Stop and start Gateway after changing it." },
+    { 7, Text, "tunnel_remote_host", "Remote host:", "", "Required." },
+    { 7, Number, "tunnel_remote_port", "Remote port:", "443", "" },
+    { 7, Check, "tunnel_tls", "&Wrap the far leg in TLS", "1",
+      "Off relays plaintext -- only for a far leg that is already safe." },
+    { 7, Check, "tunnel_tls12", "Speak only &TLS 1.2 on the far leg", "0",
+      "For far ends with no TLS 1.3 (an old stunnel)." },
+    { 7, Check, "tunnel_insecure", "&Accept any far-end certificate", "0",
+      "Testing only. Proves bytes flow, not who they flow to." },
+    { 7, Text, "tunnel_sni", "SNI override:", "",
+      "Empty sends the remote host; \"none\" omits SNI.\n"
+      "The certificate is always checked against the remote host." },
+    { 8, Proxy, "tunnel_proxy", "Forward proxy:", "none",
+      "HTTP sends CONNECT; SOCKS5 takes no login." },
+    { 8, Text, "tunnel_proxy_host", "Proxy host:", "", "" },
+    { 8, Number, "tunnel_proxy_port", "Proxy port:", "8080",
+      "8080 for HTTP, 1080 for SOCKS5." },
+    { 8, Text, "tunnel_proxy_user", "Proxy user:", "", "" },
+    { 8, Text, "tunnel_proxy_pass", "Proxy password:", "", "" },
+    { 8, Check, "tunnel_host_header", "Send &Host: in the CONNECT request", "1",
+      "Off omits it, like socat, for a proxy that answers that form." },
+    { 8, Number, "tunnel_settle_ms", "Settle before TLS (ms):", "0",
+      "Diagnosis only. 0 starts TLS immediately." },
+    { 9, Check, "show_window", "Show the &log window at launch", "1",
       "Off starts with the notification area icon only. Where there is no\n"
       "notification area the window always appears." },
-    { 7, Check, "log_file", "Also &write the log to a file", "0",
+    { 9, Check, "log_file", "Also &write the log to a file", "0",
       "The window keeps the last 200 lines.\n"
       "The log file keeps everything." },
+    { 9, Check, "log_debug", "Show engineering &detail in the log", "0",
+      "Byte counts, hello bytes and library error numbers,\n"
+      "under each line. For reporting a problem." },
 };
 #define FIELDS ((int)(sizeof(kFields) / sizeof(kFields[0])))
 
@@ -133,6 +170,20 @@ static const char *const kRedirects[] = { "auto", "always", "never" };
 static const char *const kRedirectNames[] = { "Automatic", "Always", "Never" };
 static const char *const kProviders[] = { "outlook", "gmail", "custom" };
 static const char *const kProviderNames[] = { "Outlook", "Gmail", "Custom" };
+static const char *const kProxies[] = { "none", "http", "socks5" };
+static const char *const kProxyNames[] = { "None", "HTTP", "SOCKS5" };
+
+/* A drop-down's values, and the names it shows for them. */
+static const char *const *choices(int kind)
+{
+    return kind == Provider ? kProviders : kind == Proxy ? kProxies : kRedirects;
+}
+
+static const char *const *choice_names(int kind)
+{
+    return kind == Provider ? kProviderNames
+         : kind == Proxy ? kProxyNames : kRedirectNames;
+}
 
 /* The whitelist is shown the way the file keeps it and the way Internet
  * Explorer's proxy exception list is written: semicolons between entries,
@@ -192,6 +243,10 @@ typedef struct {
     HWND hint[MAX_HINT_LINES];
     int  lines;
     char original[VALUE_CAP];
+    char kept[VALUE_CAP];              /* gated rows: the value to restore when */
+    int  hasKept;                      /* the row applies again (see gw_gate.h) */
+    int  live;                         /* gated rows: applies as last shown */
+    int  appliedAtLoad;                /* gated rows: applied when the file was read */
     int  overflow;                     /* never silently save a truncated list */
 } Item;
 
@@ -208,6 +263,7 @@ static int       gTallest;
 static Item      gItems[FIELDS];
 static HWND      gIntro[PANES][MAX_HINT_LINES];
 static HWND      gGroup, gCombo, gComboLabel, gSave, gCancel, gUndo;
+static char      gLookup[VALUE_CAP];   /* lookup()'s answer, for gw_gate */
 
 static void show_pane(int pane);
 
@@ -324,9 +380,9 @@ static int build_pane(int pane)
             break;
 
         case Redirect:
-        case Provider: {
-            const char *const *names = f->kind == Redirect ? kRedirectNames
-                                                           : kProviderNames;
+        case Provider:
+        case Proxy: {
+            const char *const *names = choice_names(f->kind);
             it->label = caption(f->label, kRowLeft, y + 4, kFieldLeft - 8, -1);
             it->ctrl = child("COMBOBOX", "",
                              CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0,
@@ -382,10 +438,31 @@ static void read_value(int i, char *out, size_t cap)
         strcpy(out, SendMessageA(it->ctrl, BM_GETCHECK, 0, 0) == BST_CHECKED
                     ? "1" : "0");
     } else {
-        const char *const *values = f->kind == Provider ? kProviders : kRedirects;
+        const char *const *values = choices(f->kind);
         LRESULT n = SendMessageA(it->ctrl, CB_GETCURSEL, 0, 0);
         if (n < 0 || n > 2) n = 0;
         strcpy(out, values[n]);
+    }
+}
+
+static void set_value(int i, const char *value)
+{
+    const Field *f = &kFields[i];
+    const Item *it = &gItems[i];
+    int n;
+
+    if (editable(f->kind)) {
+        SetWindowTextA(it->ctrl, value);
+        SendMessageA(it->ctrl, EM_SETSEL, 0, 0);
+    } else if (f->kind == Check) {
+        SendMessageA(it->ctrl, BM_SETCHECK,
+                     value[0] == '1' ? BST_CHECKED : BST_UNCHECKED, 0);
+    } else {
+        const char *const *values = choices(f->kind);
+        int chosen = 0;
+        for (n = 0; n < 3; ++n)
+            if (gw_stricmp(value, values[n]) == 0) chosen = n;
+        SendMessageA(it->ctrl, CB_SETCURSEL, chosen, 0);
     }
 }
 
@@ -427,25 +504,104 @@ static void load_values(void)
             const char *current = GWConfig_Str(f->key, f->fallback);
             strncpy(value, current, sizeof(value) - 1);
             value[sizeof(value) - 1] = '\0';
+            /* "google" or "socks" is Gmail or SOCKS5 to Gateway; showing the
+             * first drop-down item instead would have Save change the file. */
+            if (f->kind == Provider || f->kind == Proxy) {
+                const char *canonical = gw_gate_canonical(f->key, value);
+                if (canonical != NULL) strcpy(value, canonical);
+            }
         }
 
         strcpy(it->original, value);
+        set_value(i, value);
+    }
+}
 
-        if (editable(f->kind)) {
-            SetWindowTextA(it->ctrl, value);
-            SendMessageA(it->ctrl, EM_SETSEL, 0, 0);
-        } else if (f->kind == Check) {
-            SendMessageA(it->ctrl, BM_SETCHECK,
-                         value[0] == '1' ? BST_CHECKED : BST_UNCHECKED, 0);
+/* The current value of a deciding setting, as the window shows it. */
+static const char *lookup(const char *key, void *ctx)
+{
+    int i;
+
+    (void)ctx;
+    for (i = 0; i < FIELDS; ++i)
+        if (gw_stricmp(kFields[i].key, key) == 0) {
+            read_value(i, gLookup, sizeof(gLookup));
+            return gLookup;
+        }
+    return NULL;
+}
+
+static int applies(int i)
+{
+    return gw_gate_applies(kFields[i].key, lookup, NULL);
+}
+
+/*
+ * A gated row is live while it applies and disabled otherwise. A disabled
+ * mail server shows what the provider uses, and any other disabled row shows
+ * the value it will come back with. Leaving a row keeps what was typed, so
+ * switching away and back loses nothing.
+ */
+static void apply_gates(void)
+{
+    const char *chosen = lookup("provider", NULL);
+    char provider[16];
+    int i, n;
+
+    /* A copy: lookup() answers every call in one buffer. */
+    strncpy(provider, chosen != NULL ? chosen : "", sizeof(provider) - 1);
+    provider[sizeof(provider) - 1] = '\0';
+    for (i = 0; i < FIELDS; ++i) {
+        Item *it = &gItems[i];
+        int now;
+
+        if (!gw_gate_gated(kFields[i].key)) continue;
+        now = applies(i);
+        if (now) {
+            if (!it->live && it->hasKept) set_value(i, it->kept);
         } else {
-            const char *const *values = f->kind == Provider ? kProviders
-                                                            : kRedirects;
-            int chosen = 0;
-            for (n = 0; n < 3; ++n)
-                if (gw_stricmp(value, values[n]) == 0) chosen = n;
-            SendMessageA(it->ctrl, CB_SETCURSEL, chosen, 0);
+            const char *supplied = gw_provider_default(provider, kFields[i].key);
+            if (it->live) {
+                read_value(i, it->kept, sizeof(it->kept));
+                it->hasKept = 1;
+            }
+            if (supplied != NULL) set_value(i, supplied);
+            else if (it->hasKept) set_value(i, it->kept);
+        }
+        EnableWindow(it->ctrl, now);
+        if (it->label != NULL) EnableWindow(it->label, now);
+        for (n = 0; n < it->lines; ++n)
+            if (it->hint[n] != NULL) EnableWindow(it->hint[n], now);
+        it->live = now;
+    }
+}
+
+/* Values from the file, then the gated rows set for what decides them. */
+static void load(void)
+{
+    int i;
+
+    load_values();
+    /* A row that does not apply lives on in the file as a commented-out
+     * line; offer that back, or restoring the row would show a default and
+     * Save would write it over what was kept. */
+    for (i = 0; i < FIELDS; ++i) {
+        Item *it = &gItems[i];
+        if (!gw_gate_gated(kFields[i].key)) continue;
+        it->live = it->appliedAtLoad = applies(i);
+        if (it->live) {
+            strcpy(it->kept, it->original);
+            it->hasKept = 1;
+        } else {
+            /* An active line first: a mail server a 0.3.6 file overrides
+             * under Outlook is ignored now, but it is the user's value, and
+             * choosing Custom must not show and save over it. */
+            it->hasKept =
+                GWConfig_GetNth(kFields[i].key, 0, it->kept, sizeof(it->kept)) ||
+                GWConfig_GetCommented(kFields[i].key, it->kept, sizeof(it->kept));
         }
     }
+    apply_gates();
 }
 
 /* The Mac beeps and takes focus rather than printing a message; so does this. */
@@ -473,7 +629,17 @@ static int save_values(void)
         const Field *f = &kFields[i];
         int valid = 1;
 
+        /* A row that does not apply is commented out, not saved: its value
+         * is no business of Save's, and a bad one would beep and focus a
+         * field the user cannot type in. */
+        if (gw_gate_gated(f->key) && !applies(i)) continue;
+
         read_value(i, value, sizeof(value));
+
+        /* A row that applies and must be named: the Custom servers, the
+         * proxy host. See gw_gate_required. */
+        if (gw_gate_required(f->key) && applies(i))
+            valid = value[0] != '\0';
 
         if (gItems[i].overflow) {
             /* An oversized on-disk list can be kept, but not truncated here. */
@@ -505,15 +671,38 @@ static int save_values(void)
                 valid = valid && num <= 65535 &&
                         (num > 0 || strcmp(f->key, "wayback_port") == 0);
             else if (strcmp(f->key, "max_body_mb") != 0 &&
-                     strcmp(f->key, "wayback_tolerance") != 0)
+                     strcmp(f->key, "wayback_tolerance") != 0 &&
+                     strcmp(f->key, "tunnel_settle_ms") != 0)
                 valid = valid && num > 0;
         }
         if (!valid) { reject(i); return 0; }
     }
 
-    /* Write edits across all panes. Preserve untouched provider defaults and
-     * any refresh token rotated by the live core while this window was open. */
+    /* Write edits across all panes. Preserve any refresh token rotated by the
+     * live core while this window was open. A gated row that applies is
+     * written when edited, or when it did not apply as the file was read --
+     * a value shown but never typed over, such as a provider's server on
+     * switching to Custom, still has to reach the file. One that does not
+     * apply is commented out, which keeps it there for the next time it
+     * does. */
     for (i = 0; i < FIELDS; ++i) {
+        if (gw_gate_gated(kFields[i].key)) {
+            int ok = 1;
+            if (applies(i)) {
+                read_value(i, value, sizeof(value));
+                if (!gItems[i].appliedAtLoad ||
+                    strcmp(value, gItems[i].original) != 0)
+                    ok = GWConfig_Set(kFields[i].key, value);
+            } else {
+                ok = GWConfig_Comment(kFields[i].key);
+            }
+            if (!ok) {
+                MessageBeep(MB_ICONEXCLAMATION);
+                SetFocus(gItems[i].ctrl);
+                return 0;
+            }
+            continue;
+        }
         read_value(i, value, sizeof(value));
         if (strcmp(value, gItems[i].original) == 0) continue;
         if (kFields[i].kind == List) gw_prefs_normalize_list(value);
@@ -585,7 +774,10 @@ static LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CTLCOLORSTATIC:
     case WM_CTLCOLORBTN:
         SetBkColor((HDC)wp, GetSysColor(COLOR_BTNFACE));
-        SetTextColor((HDC)wp, GetSysColor(COLOR_BTNTEXT));
+        /* A disabled edit asks here too; setting its text black would
+         * undo the grey that says it is not for typing in. */
+        SetTextColor((HDC)wp, GetSysColor(IsWindowEnabled((HWND)lp)
+                                          ? COLOR_BTNTEXT : COLOR_GRAYTEXT));
         return (LRESULT)gFace;
 
     /* IsDialogMessage asks who the default button is before it acts on
@@ -608,9 +800,15 @@ static LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             DestroyWindow(hwnd);
             return 0;
         case IDC_UNDO:
-            load_values();
+            load();
             return 0;
         default:
+            /* A deciding row changed: the provider or proxy drop-down, or
+             * the far leg's TLS box. */
+            if (LOWORD(wp) >= IDC_FIELD && LOWORD(wp) < IDC_FIELD + FIELDS &&
+                gw_gate_decides(kFields[LOWORD(wp) - IDC_FIELD].key) &&
+                (HIWORD(wp) == CBN_SELCHANGE || HIWORD(wp) == BN_CLICKED))
+                apply_gates();
             break;
         }
         return 0;
@@ -726,7 +924,7 @@ void GWSettings_Show(HINSTANCE inst)
         return;
     }
 
-    load_values();
+    load();
 
     ShowWindow(gComboLabel, SW_SHOW);
     ShowWindow(gCombo, SW_SHOW);

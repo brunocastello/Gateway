@@ -106,8 +106,8 @@ static int store_save(void)
     need = sSk.plen + sSk.qlen + sSk.dplen + sSk.dqlen + sSk.iqlen +
            sCaLen + sPk.nlen + sPk.elen;
     if (need > room) {
-        gw_log("certificate authority: %lu bytes will not fit the store",
-               (unsigned long)need);
+        gw_logc("G10", "the certificate authority is too large to keep "
+                "(%lu bytes)", (unsigned long)need);
         return 0;
     }
 
@@ -237,7 +237,8 @@ static int generate(void)
 
     if (!br_rsa_keygen_get_default()(&drbg.vtable, &sSk, sSkBuf, &sPk, sPkBuf,
                                      GW_CA_BITS, 0)) {
-        gw_log("certificate authority: key generation failed");
+        gw_logc("G11", "the certificate authority's key could not be "
+                "made");
         return 0;
     }
 
@@ -256,14 +257,16 @@ static int generate(void)
 
     tbslen = gw_x509_tbs(&req, tbsbuf, sizeof(tbsbuf), &tbsoff);
     if (tbslen == 0) {
-        gw_log("certificate authority: could not build its own certificate");
+        gw_logc("G12", "the certificate authority's certificate could not "
+                "be built");
         return 0;
     }
 
     sCaLen = sign_cert(tbsbuf + tbsoff, tbslen, sCaCert, sizeof(sCaCert),
                        &certoff);
     if (sCaLen == 0) {
-        gw_log("certificate authority: could not sign its own certificate");
+        gw_logc("G13", "the certificate authority's certificate could not "
+                "be signed");
         return 0;
     }
     /* sign_cert writes to the end of the buffer; move it to the front so
@@ -271,8 +274,8 @@ static int generate(void)
     memmove(sCaCert, sCaCert + certoff, sCaLen);
 
     if (!store_save())
-        gw_log("certificate authority: generated but not saved -- "
-               "it will be generated again next launch");
+        gw_logc("G14", "the certificate authority was made but not saved: "
+                "next launch makes a new one, to be installed again");
 
     return 1;
 }

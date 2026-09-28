@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "portable/gw_prefs.h"
+#include "portable/gw_provider.h"
 #include "portable/gw_util.h"
 #include "portable/gw_log.h"
 
@@ -80,8 +81,8 @@ void GWConfig_Load(void)
      * cost an evening.
      */
     if (sLen >= GW_PREFS_MAX - 1)
-        gw_log("WARNING: prefs file is larger than %d bytes and was TRUNCATED",
-               (int)GW_PREFS_MAX - 1);
+        gw_logc("G20", "the prefs file is larger than %d bytes; the rest of "
+                "it was ignored", (int)GW_PREFS_MAX - 1);
     else
         gw_log("read %ld bytes of prefs", sLen);
 
@@ -92,7 +93,8 @@ void GWConfig_Load(void)
      * password -- so the log has to distinguish the two.
      */
     if (GWConfig_Str("local_password", "")[0] == '\0')
-        gw_log("WARNING: no local_password in prefs; mail logins will fail");
+        gw_logc("G21", "the prefs file has no local_password, so mail "
+                "sign-ins will fail");
     else
         gw_log("local_password is set; mail logins will be checked against it");
 }
@@ -103,64 +105,26 @@ int GWConfig_Loaded(void)
     return sLoaded;
 }
 
-/*
- * Per-provider defaults.
- *
- * Every one of these can still be set explicitly in the prefs file; the table
- * only supplies what was left out. It exists because the difference between
- * one mail provider and another is six hostnames and a scope, and getting one
- * of them wrong produces a failure that looks like a bad password.
- */
-typedef struct {
-    const char *key;
-    const char *outlook;
-    const char *gmail;
-} GWProviderDefault;
-
-static const GWProviderDefault kProviderDefaults[] = {
-    { "oauth_host",  "login.microsoftonline.com",  "oauth2.googleapis.com" },
-    { "oauth_path",  "/common/oauth2/v2.0/token",  "/token" },
-    { "oauth_scope",
-      "offline_access https://outlook.office.com/IMAP.AccessAsUser.All "
-      "https://outlook.office.com/POP.AccessAsUser.All "
-      "https://outlook.office.com/SMTP.Send",
-      "https://mail.google.com/" },
-    { "imap_host",   "outlook.office365.com",      "imap.gmail.com" },
-    { "pop_host",    "outlook.office365.com",      "pop.gmail.com" },
-    { "smtp_host",   "smtp-mail.outlook.com",      "smtp.gmail.com" },
-    { NULL, NULL, NULL }
-};
-
-/* The default for key under the configured provider, or NULL if there is
- * none. Never consults the provider setting itself, which would recurse. */
-static const char *gw_provider_default(const char *key)
+/* The provider the prefs name, or "" when they name none. */
+static const char *gw_config_provider(void)
 {
-    char provider[32];
-    int  gmail, i;
-
-    if (!sLoaded) return NULL;
-    if (gw_stricmp(key, "provider") == 0) return NULL;
+    static char provider[32];
 
     if (!gw_prefs_get(sText, (size_t)sLen, "provider",
                       provider, sizeof(provider)))
         provider[0] = '\0';
+    return provider;
+}
 
-    /*
-     * "custom" supplies nothing, so the explicit imap_host/pop_host/smtp_host
-     * settings stand on their own. Anything else falls back to Outlook, which
-     * is what an unset provider should do.
-     */
-    if (gw_stricmp(provider, "custom") == 0) return NULL;
-
-    gmail = (gw_stricmp(provider, "gmail") == 0 ||
-             gw_stricmp(provider, "google") == 0);
-
-    for (i = 0; kProviderDefaults[i].key != NULL; i++) {
-        if (gw_stricmp(kProviderDefaults[i].key, key) == 0)
-            return gmail ? kProviderDefaults[i].gmail
-                         : kProviderDefaults[i].outlook;
-    }
-    return NULL;
+/*
+ * The provider's own value for a custom-only setting, or NULL when the file
+ * is to be read instead: the key is not custom-only, or provider = custom.
+ * Under Outlook or Gmail the file's copy is ignored even if left uncommented,
+ * so the file means what the settings window shows. See gw_provider.h.
+ */
+static const char *gw_config_supplied(const char *key)
+{
+    return gw_provider_default(gw_config_provider(), key);
 }
 
 /*
@@ -185,36 +149,67 @@ const char *GWConfig_Str(const char *key, const char *def)
     slot = sValue[sSlot];
     sSlot = (sSlot + 1) % GW_CFG_SLOTS;
 
+    {
+        const char *supplied = gw_config_supplied(key);
+        if (supplied != NULL) return supplied;
+    }
     if (gw_prefs_get(sText, (size_t)sLen, key, slot, GW_CFG_VALUE))
         return slot;
-
-    {
-        const char *fallback = gw_provider_default(key);
-        if (fallback != NULL) return fallback;
-    }
     return def;
 }
 
-int GWConfig_Set(const char *key, const char *value)
-{
-    static char updated[GW_PREFS_MAX];
-    size_t n;
+/* The writers' output, shared: one 32 KB buffer is plenty of partition. */
+static char sUpdated[GW_PREFS_MAX];
 
-    n = gw_prefs_set(sText, (size_t)sLen, key, value,
-                     updated, sizeof(updated));
+/* Save text produced by one of the gw_prefs writers, n == 0 meaning it did
+ * not fit, and keep the in-memory copy in step so later reads see it. */
+static int gw_config_commit(const char *key, const char *updated, size_t n)
+{
+    /*
+     * A file the load had to cut short is in memory only up to the cut, so
+     * writing it back would throw away everything after it -- possibly the
+     * end of the refresh token. Refuse, as for a result too large: a text
+     * that fills the read buffer would be cut short on the next load.
+     */
+    if (sLen >= GW_PREFS_MAX - 1 || n >= GW_PREFS_MAX - 1) n = 0;
     if (n == 0) {
-        gw_log("cannot save %s: prefs file would exceed %d bytes",
-               key, (int)GW_PREFS_MAX);
+        gw_logc("G22", "%s could not be saved: the prefs file would be "
+                "larger than %d bytes", key, (int)GW_PREFS_MAX);
         return 0;
     }
 
     if (!GWPlat_WritePrefs(updated, (long)n)) return 0;
 
-    /* Keep the in-memory copy in step so later reads see the new value. */
     memcpy(sText, updated, n);
     sLen = (long)n;
     sText[sLen] = '\0';
     return 1;
+}
+
+int GWConfig_Set(const char *key, const char *value)
+{
+    /* One byte short of the buffer, for the terminator commit adds. */
+    return gw_config_commit(key, sUpdated,
+                            gw_prefs_set(sText, (size_t)sLen, key, value,
+                                         sUpdated, sizeof(sUpdated) - 1));
+}
+
+int GWConfig_Comment(const char *key)
+{
+    size_t n;
+
+    n = gw_prefs_comment(sText, (size_t)sLen, key,
+                         sUpdated, sizeof(sUpdated) - 1);
+    if (n == (size_t)sLen && memcmp(sUpdated, sText, n) == 0)
+        return 1;                       /* already commented or absent */
+    return gw_config_commit(key, sUpdated, n);
+}
+
+int GWConfig_GetCommented(const char *key, char *out, size_t cap)
+{
+    if (cap) out[0] = '\0';
+    if (!sLoaded) return 0;
+    return gw_prefs_get_commented(sText, (size_t)sLen, key, out, cap);
 }
 
 int GWConfig_GetNth(const char *key, int n, char *out, size_t cap)
@@ -239,7 +234,14 @@ int GWConfig_GetNthSplit(const char *key, int n, char *out, size_t cap)
 
 long GWConfig_Num(const char *key, long def)
 {
+    const char *supplied;
+
     if (!sLoaded) return def;
+    supplied = gw_config_supplied(key);
+    if (supplied != NULL) {
+        long v = gw_parse_dec(supplied, strlen(supplied));
+        return v < 0 ? def : v;
+    }
     return gw_prefs_get_num(sText, (size_t)sLen, key, def);
 }
 
