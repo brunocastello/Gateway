@@ -82,10 +82,10 @@ refresh_token       = paste-your-refresh-token-here
 tunnel_local_port  = 2222
 tunnel_remote_host = ssh.example.com
 tunnel_remote_port = 443
-tunnel_tls         = 1
-# tunnel_tls12       = 1
-# tunnel_insecure    = 1
-# tunnel_sni         = none
+tunnel_tls         = 0
+# tunnel_tls12     = 1
+# tunnel_insecure  = 1
+# tunnel_sni       = none
 
 # Tunnel proxy (none, http or socks5)
 # tunnel_proxy       = none
