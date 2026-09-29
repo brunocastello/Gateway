@@ -130,6 +130,12 @@ Gateway, so a redirect to `https://web.archive.org/…` comes back as an
 ordinary shape-2 request and Gateway does the TLS. Leaving it on saves Gateway
 rewriting work.
 
+*Later:* Gateway never implemented the rewriting this option switches, because
+it fetches with the archive's `id_` modifier and gets original bytes with no
+URLs to rewrite. The `wayback_quick_images` setting and its checkbox were
+removed in 0.3.9; the settings page still accepts `quickImages` in a submitted
+URL, so old bookmarks work, and ignores it.
+
 That said, Gateway never had rewriting work to save: it always fetches with
 the archive's `id_` modifier (§1), which returns the original bytes with
 nothing rewritten regardless of `QUICK_IMAGES`. `wayback_quick_images` existed

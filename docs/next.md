@@ -1,6 +1,8 @@
-# After 0.3.8 — what is worth doing next
+# After 0.3.9 — what is worth doing next
 
-## Built for 0.3.9
+## Shipped in 0.3.9
+
+Verified on hardware on 2026-09-29 unless a bullet says otherwise.
 
 - **A request for Gateway's own address, through Gateway**, `#47` from the
   2026-09-20 session: Classilla, on manual settings, asked the proxy for
@@ -56,9 +58,15 @@
   linked against `libInternetConfigLib.a`, a CFM import stub that
   `interfaces-and-libraries.sh`'s `MakeImport` pass already produces for
   every shared library under `third_party/InterfacesAndLibraries` -- nothing
-  new to stage.
+  new to stage (it has to follow the `gw_net` group on the link line; placed
+  in front of it, the first build failed on three undefined references).
 
-0.3.8 shipped on 2026-09-28. The upstream side is TLS 1.3 and finished; the
+  **Still to verify, and only possible after the release:** the Download
+  button and the `G50` log line, which need a published release newer than
+  the running copy. The first 0.3.8 → 0.3.9 check does it: choose "Check
+  for Updates..." on a 0.3.8 machine and click Download, on both platforms.
+
+0.3.9 shipped on 2026-09-29, and 0.3.8 on 2026-09-28. The upstream side is TLS 1.3 and finished; the
 browser side serves everything from Netscape 3 to Classilla over SSL 3.0 or
 TLS 1.0; mail works through `get-email-token.py`; a generic tunnel carries
 SSH or anything else over TLS. What remains is making the machine Gateway
