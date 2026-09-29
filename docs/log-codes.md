@@ -89,7 +89,7 @@ free number.
 | `H20` | a CONNECT was dropped: Gateway had no room to answer it | Gateway's fault. Report it. |
 | `H21` | Gateway answers the browser's secure connection to … itself | `connect_mitm` is on, so the browser now meets Gateway's certificate. If it goes no further, the next line has an `S` code. |
 | `H22` | no certificate could be made for …, so the tunnel stays encrypted | `connect_mitm` could not mint a leaf, so the `CONNECT` is a plain tunnel and the browser does its own TLS. |
-| `H23` | nothing moved for … seconds, so the connection was closed | The idle timeout. |
+| `H23` | nothing moved for … seconds, so the connection was closed | The idle timeout. If the session was still waiting on the request line itself, `log_debug` adds the number of bytes buffered and a hex dump of up to the first 64 of them, to see what a client actually sent when it never sends a recognised line ending. |
 | `H24` | the browser stopped reading, so the connection was dropped | The browser left data unread for the whole grace period. |
 | `H25` | out of memory: a browser's connection was refused | Raise Gateway's partition in Get Info. |
 | `H26` | all … proxy connections are in use; new ones wait for a free one | Written once each time the proxy fills up. Connections wait in the backlog rather than being refused. |

@@ -913,6 +913,28 @@ static void session_finish_body(GWHttpSession *s)
     s->state = kHPFlushAndClose;
 }
 
+/*
+ * Hex-dump the first (up to) 64 bytes of buf into out, space-separated, for
+ * log_debug -- same layout as MacTLS_ServerHelloHex() in Certainly. Used
+ * when a session in kHPRecvRequest is closed by the idle timeout with no
+ * request ever parsed, to see what the client actually sent rather than
+ * guess at line endings.
+ */
+static void hex_dump64(const char *buf, size_t len, char *out, size_t cap)
+{
+    size_t take = len < 64 ? len : 64;
+    size_t k, p = 0;
+
+    if (out == NULL || cap == 0) return;
+    out[0] = '\0';
+    for (k = 0; k < take; k++) {
+        int n = snprintf(out + p, cap - p, "%s%02x", k ? " " : "",
+                         (unsigned char)buf[k]);
+        if (n < 0 || (size_t)n >= cap - p) break;
+        p += (size_t)n;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 
 static void step_recv_request(GWHttpSession *s)
@@ -1727,6 +1749,8 @@ static void step_tunnel_connect(GWHttpSession *s)
         s->cheadSent = 0;
         gw_logc("H27", "#%ld upgrading the connection to %s:80 to https", s->id,
                 s->mitmHost);
+        gw_logd("#%ld %u pipelined bytes carried over", s->id,
+                (unsigned)tail);
         s->state = kHPRecvRequest;
         return;
     }
@@ -2004,6 +2028,13 @@ static void session_step(GWHttpSession *s)
         if (!waiting_on_client) {
             gw_logc("H23", "#%ld nothing moved for %d seconds, so the "
                     "connection was closed", s->id, GW_IDLE_TIMEOUT / 60);
+            if (s->state == kHPRecvRequest) {
+                char hex[64 * 3 + 1];
+
+                hex_dump64(s->chead, s->cheadLen, hex, sizeof hex);
+                gw_logd("#%ld %u bytes buffered, never a full request: %s",
+                        s->id, (unsigned)s->cheadLen, hex);
+            }
             s->state = kHPDone;
         } else {
             unsigned long now = GWNet_Ticks();
