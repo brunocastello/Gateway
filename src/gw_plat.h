@@ -60,4 +60,21 @@ int  GWPlat_OpenLog(const char *want);
 void GWPlat_WriteLog(const char *line);
 void GWPlat_CloseLog(void);
 
+/*
+ * Open url in the system's default browser, for the "Download" button on the
+ * "Check for Updates..." result. Returns 1 if the browser was asked to open
+ * it, 0 if there was no way to ask.
+ *
+ * Windows: ShellExecuteA, looked up in shell32.dll at run time -- the same
+ * reasoning as Shell_NotifyIconA in src/win32/main_win32.c: NT 3.51 has no
+ * shell32.dll at all, and a static import would refuse to load there rather
+ * than simply fail this one call.
+ *
+ * Mac OS 9: Internet Config's ICLaunchURL, implemented in gw_plat_mac.c
+ * because that file already has Apple's Universal Interfaces on its include
+ * path (gw_net's, CLAUDE.md rule 3) -- Multiversal, which src/main.cpp
+ * compiles against, has no Internet Config at all.
+ */
+int  GWPlat_OpenURL(const char *url);
+
 #endif /* GW_PLAT_H */

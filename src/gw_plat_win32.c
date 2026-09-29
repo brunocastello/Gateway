@@ -200,6 +200,42 @@ long GWPlat_ReadFile(const char *leaf, void *buf, size_t cap)
     return (long)n;
 }
 
+/* ------------------------------------------------------------------ */
+/* Opening a URL in the default browser                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * ShellExecuteA, looked up at run time rather than imported -- the same
+ * argument as Shell_NotifyIconA in src/win32/main_win32.c. shell32.dll
+ * itself does not exist on Windows NT 3.51 (Program Manager, no shell), and
+ * Makefile.win32 deliberately carries no -lshell32 so that any shell32 call
+ * added by hand fails to build rather than silently costing NT 3.51 the
+ * ability to load Gateway at all. shell32.dll is never freed once loaded:
+ * the pointer outlives this call and any that follow it.
+ */
+typedef HINSTANCE (WINAPI *ShellExecuteA_fn)(HWND, LPCSTR, LPCSTR, LPCSTR,
+                                             LPCSTR, INT);
+static ShellExecuteA_fn pShellExecuteA;
+
+int GWPlat_OpenURL(const char *url)
+{
+    if (url == NULL || url[0] == '\0') return 0;
+
+    if (pShellExecuteA == NULL) {
+        HMODULE shell = LoadLibraryA("shell32.dll");
+
+        if (shell == NULL) return 0;
+        pShellExecuteA = (ShellExecuteA_fn)(void *)
+            GetProcAddress(shell, "ShellExecuteA");
+        if (pShellExecuteA == NULL) return 0;
+    }
+
+    /* ShellExecute returns a value > 32 on success and an error code
+     * (cast to HINSTANCE) otherwise -- documented since Windows 3.1. */
+    return ((INT_PTR)pShellExecuteA(NULL, "open", url, NULL, NULL,
+                                    SW_SHOWNORMAL)) > 32;
+}
+
 int GWPlat_WriteFile(const char *leaf, const void *buf, long len)
 {
     char   path[MAX_PATH];

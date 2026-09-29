@@ -11,6 +11,8 @@ Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rath
 
 **Gateway can say when it is out of date.** Once per launch, a little after the listeners are up, it asks github.com once whether a newer release exists. When one does, it logs a single line (code `G50`) with an `http://` link to download it for this platform; otherwise it says nothing, whether up to date or the check simply failed. `check_updates = 0` turns the request off entirely.
 
+**"Check for Updates..." is now on the menu** (the tray menu on Windows, the File menu on Mac OS 9), for asking outright rather than waiting for the next launch: it shows what it finds in a dialog, with a Download button on a newer release.
+
 ## Setting it up
 
 Point the browser's HTTP proxy at the machine running Gateway, port `8765`. Classilla also needs `network.http.proxy.use-http-proxy-for-https` set to `true` in about:config.

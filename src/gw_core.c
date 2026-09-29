@@ -664,6 +664,35 @@ int         GW_PopPort(void)         { return sPopPort; }
 int         GW_SmtpPort(void)        { return sSmtpPort; }
 int         GW_TunnelPort(void)      { return sTunnelPort; }
 
+void GW_CheckForUpdates(void)
+{
+    GWUpdater_RequestManual();
+}
+
+int GW_UpdateCheckResult(int *kind,
+                         char *version, size_t versionCap,
+                         char *url, size_t urlCap,
+                         char *reason, size_t reasonCap)
+{
+    GWManualResult r;
+
+    if (!GWUpdater_ManualResult(&r)) return 0;
+
+    if (kind != NULL) *kind = (int)r.kind;
+    if (version != NULL && versionCap > 0)
+        gw_copy_n(version, versionCap, r.version, strlen(r.version));
+    if (url != NULL && urlCap > 0)
+        gw_copy_n(url, urlCap, r.url, strlen(r.url));
+    if (reason != NULL && reasonCap > 0)
+        gw_copy_n(reason, reasonCap, r.reason, strlen(r.reason));
+    return 1;
+}
+
+int GW_OpenURL(const char *url)
+{
+    return GWPlat_OpenURL(url);
+}
+
 void GW_NoteSelfHost(const char *host)
 {
     int i;

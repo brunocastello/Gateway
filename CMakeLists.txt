@@ -249,8 +249,19 @@ target_include_directories(Gateway PRIVATE src)
 # until nothing is left undefined, which is cheaper to maintain than an order
 # that is correct only until the next call crosses a library boundary.
 #
+#
+# libInternetConfigLib.a is another CFM import stub of the same shape as
+# libAppearanceLib.a -- interfaces-and-libraries.sh's MakeImport pass already
+# produces it from third_party/InterfacesAndLibraries/Libraries/SharedLibraries
+# (docs/inventory.md section 2: it wraps every shared library there, not a
+# named few), so nothing new has to be staged for it. gw_plat_mac.c calls
+# ICStart/ICLaunchURL/ICStop from inside gw_net, which is why the symbols
+# have to be here even though src/main.cpp -- Multiversal, no Internet
+# Config at all -- never mentions them.
+#
 target_link_libraries(Gateway
     gw_settings ${GW_UNIV_LIB}/libAppearanceLib.a
+    ${GW_UNIV_LIB}/libInternetConfigLib.a
     -Wl,--start-group gw_net gw_portable certainly bearssl -Wl,--end-group
     ${GW_OT_LIBS})
 

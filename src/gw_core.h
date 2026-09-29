@@ -35,6 +35,38 @@ int         GW_IsRunning(void);
 /* One cooperative slice. Call once per pass of the WaitNextEvent loop. */
 void        GW_Poll(void);
 
+/*
+ * "Check for Updates..." on the menu: the same check GW_Start() makes once
+ * per launch, but asked for by hand. Ignores check_updates and an
+ * already-finished launch check -- the user asked outright -- and does not
+ * start a second request if one is already in flight; that one's result is
+ * reported instead. Never blocks: like everything else, it is driven from
+ * GW_Poll(), and the result is read back through GW_UpdateCheckResult().
+ */
+void        GW_CheckForUpdates(void);
+
+/*
+ * 1 once, with the buffers filled, the first time after GW_CheckForUpdates()
+ * that GW_Poll() notices its check has landed; 0 otherwise, including every
+ * call after the one true answer. *kind is 0 for a newer release, 1 for up
+ * to date, 2 for failed. version is the release tag (newer) or the running
+ * version (current); url is the platform asset link (newer only); reason is
+ * why, in the debug line's own words (failed only). Any buffer the kind does
+ * not use is left an empty string. Each cap includes room for the
+ * terminator.
+ */
+int         GW_UpdateCheckResult(int *kind,
+                                 char *version, size_t versionCap,
+                                 char *url, size_t urlCap,
+                                 char *reason, size_t reasonCap);
+
+/*
+ * Open url in the system's default browser, for the "Download" button on the
+ * "Check for Updates..." result. 1 on success, 0 if there was no way to ask
+ * (see GWPlat_OpenURL, src/gw_plat.h, for what each platform tries).
+ */
+int         GW_OpenURL(const char *url);
+
 /* Log ring, for the window. */
 int         GW_LogCount(void);
 const char *GW_LogLine(int idx);

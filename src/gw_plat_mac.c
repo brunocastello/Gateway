@@ -10,6 +10,7 @@
 
 #include <Files.h>
 #include <Folders.h>
+#include <InternetConfig.h>
 #include <MacTypes.h>
 
 #include <stdio.h>
@@ -241,6 +242,41 @@ long GWPlat_ReadFile(const char *leaf, void *buf, size_t cap)
 
     if (err != noErr && err != eofErr) return -1;
     return count;
+}
+
+/* ------------------------------------------------------------------ */
+/* Opening a URL in the default browser                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Internet Config, not any direct Finder or Apple Event call: it is the one
+ * mechanism a Mac OS 9 application of this vintage has for "ask whatever
+ * browser is registered to open a URL", and it is what carries a hint to the
+ * shared library rather than to a specific browser Gateway would have to
+ * name. ICStart/ICStop bracket the one call; the connection is not kept open
+ * between clicks, since "Download" is pressed once per dialog at most.
+ */
+int GWPlat_OpenURL(const char *url)
+{
+    ICInstance inst;
+    OSStatus   err;
+    long       start, end;
+
+    if (url == NULL || url[0] == '\0') return 0;
+
+    err = ICStart(&inst, 'GT9A');
+    if (err != noErr) return 0;
+
+    /* No hint scheme (an empty Pascal string): url is always given to us as
+     * a full "http://..." link, never a bare "host/path" that would need
+     * one. selStart/selEnd bound the whole string, so ICLaunchURL parses it
+     * all rather than hunting for a URL inside surrounding text. */
+    start = 0;
+    end = (long)strlen(url);
+    err = ICLaunchURL(inst, "\p", url, end, &start, &end);
+
+    ICStop(inst);
+    return err == noErr;
 }
 
 int GWPlat_WriteFile(const char *leaf, const void *buf, long len)

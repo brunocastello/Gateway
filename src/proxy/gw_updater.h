@@ -36,4 +36,43 @@ void GWUpdater_Abort(void);
 
 void GWUpdater_Poll(void);
 
+/*
+ * What a manual check ("Check for Updates..." on the menu) can end with.
+ * Kept separate from the log line GWUpdater_Request() writes: the menu
+ * command wants an answer to put in a dialog, not just a line the launch
+ * check is content to leave quiet.
+ */
+typedef enum {
+    kGWManualNewer = 0,
+    kGWManualCurrent,
+    kGWManualFailed
+} GWManualResultKind;
+
+typedef struct {
+    GWManualResultKind kind;
+    char version[32];    /* Newer: the release tag. Current: the running
+                           * version. Empty for Failed. */
+    char url[256];       /* Newer: the platform asset link. Empty otherwise. */
+    char reason[96];     /* Failed: why, in the debug line's own words.
+                           * Empty otherwise. */
+} GWManualResult;
+
+/*
+ * Run the check the menu command asked for. Starts one unless a check is
+ * already in flight -- the launch check, or an earlier manual one -- in
+ * which case nothing new is started and that check's result is reported
+ * through GWUpdater_ManualResult() when it lands; two requests never run at
+ * once. Unlike GWUpdater_Request(), this ignores check_updates and an
+ * already-finished launch check, because the user asked outright.
+ */
+void GWUpdater_RequestManual(void);
+
+/*
+ * 1 once, with *out filled, the first time GWUpdater_Poll() notices that the
+ * check a manual request asked for has finished. 0 otherwise, including on
+ * every call after the one true answer -- the caller shows its dialog and
+ * does not ask again.
+ */
+int GWUpdater_ManualResult(GWManualResult *out);
+
 #endif /* GW_UPDATER_H */

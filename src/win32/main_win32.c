@@ -48,6 +48,7 @@
 #define IDM_ABOUT      40004
 #define IDM_QUIT       40005
 #define IDM_SETTINGS   40006
+#define IDM_CHECKUPD   40007
 
 static HWND  gMain;
 static HWND  gList;
@@ -372,6 +373,7 @@ static void menubar_build(void)
     AppendMenuA(file, MF_STRING, IDM_SETTINGS, "&Preferences...");
     AppendMenuA(file, MF_SEPARATOR, 0, NULL);
     AppendMenuA(file, MF_STRING, IDM_QUIT,    "E&xit");
+    AppendMenuA(help, MF_STRING, IDM_CHECKUPD, "Chec&k for Updates...");
     AppendMenuA(help, MF_STRING, IDM_ABOUT,   "&About Gateway...");
 
     AppendMenuA(gMenuBar, MF_POPUP, (UINT_PTR)file, "&File");
@@ -413,6 +415,7 @@ static void tray_menu(void)
                 IDM_STARTUP, "Start with &Windows");
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(menu, MF_STRING, IDM_SETTINGS, "&Preferences...");
+    AppendMenuA(menu, MF_STRING, IDM_CHECKUPD, "Chec&k for Updates...");
     AppendMenuA(menu, MF_STRING, IDM_ABOUT, "&About Gateway...");
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(menu, MF_STRING, IDM_QUIT, "&Quit");
@@ -614,6 +617,99 @@ static void about_show(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Check for Updates...                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * MessageBoxA cannot be given button captions of its own -- "Download" and
+ * "Later" on the newer-release box -- through any parameter; the only way to
+ * reach them on a shell this old is to relabel the OK/Cancel buttons after
+ * the box exists. A thread-local WH_CBT hook, installed just before the
+ * call and removed as soon as it has fired once, does that: Windows sends
+ * HCBT_ACTIVATE with the box's own HWND the moment it is created, before it
+ * is shown, which is the one safe place to rewrite its buttons' text.
+ * Needs no DLL -- a hook procedure in the caller's own module is enough for
+ * a thread-specific (non-global) hook, and has been since Windows 95.
+ */
+static const char *sOkText;
+static const char *sCancelText;
+static HHOOK       sBoxHook;
+
+static LRESULT CALLBACK update_box_hook(int code, WPARAM wp, LPARAM lp)
+{
+    if (code == HCBT_ACTIVATE) {
+        HWND box = (HWND)wp;
+        HWND ok  = GetDlgItem(box, IDOK);
+        HWND cancel = GetDlgItem(box, IDCANCEL);
+
+        if (ok != NULL && sOkText != NULL) SetWindowTextA(ok, sOkText);
+        if (cancel != NULL && sCancelText != NULL)
+            SetWindowTextA(cancel, sCancelText);
+
+        UnhookWindowsHookEx(sBoxHook);
+        sBoxHook = NULL;
+    }
+    return CallNextHookEx(sBoxHook, code, wp, lp);
+}
+
+/* okText/cancelText may be NULL to leave "OK"/"Cancel" as they are. */
+static int update_message_box(const char *text, const char *okText,
+                              const char *cancelText, UINT flags)
+{
+    int result;
+
+    sOkText = okText;
+    sCancelText = cancelText;
+    sBoxHook = (okText != NULL || cancelText != NULL)
+        ? SetWindowsHookExA(WH_CBT, update_box_hook, NULL,
+                            GetCurrentThreadId())
+        : NULL;
+
+    result = MessageBoxA(gMain, text, "Gateway", flags | MB_TASKMODAL);
+
+    if (sBoxHook != NULL) { UnhookWindowsHookEx(sBoxHook); sBoxHook = NULL; }
+    return result;
+}
+
+/*
+ * Polled every pass of the cooperative loop, the same way log_refresh() is:
+ * GW_CheckForUpdates() (IDM_CHECKUPD below) only starts or joins a check,
+ * and never blocks; this is what shows the answer once GW_Poll() has one.
+ */
+static void update_check_poll(void)
+{
+    int  kind;
+    char version[32];
+    char url[256];
+    char reason[96];
+    char msg[384];
+
+    if (!GW_UpdateCheckResult(&kind, version, sizeof(version),
+                              url, sizeof(url), reason, sizeof(reason)))
+        return;
+
+    switch (kind) {
+    case 0:      /* newer */
+        wsprintfA(msg, "Gateway %s is available. You have %s.",
+                  version, GW_VERSION_STRING);
+        if (update_message_box(msg, "Download", "Later",
+                               MB_OKCANCEL | MB_ICONINFORMATION) == IDOK)
+            GW_OpenURL(url);
+        break;
+
+    case 1:      /* current */
+        wsprintfA(msg, "Gateway %s is up to date.", version);
+        update_message_box(msg, NULL, NULL, MB_OK | MB_ICONINFORMATION);
+        break;
+
+    default:     /* failed */
+        wsprintfA(msg, "Gateway could not check for updates: %s", reason);
+        update_message_box(msg, NULL, NULL, MB_OK | MB_ICONERROR);
+        break;
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* Window                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -662,6 +758,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case IDM_STARTUP: startup_set(!startup_enabled()); menubar_sync(); break;
         case IDM_STOP:    toggle_running(); break;
         case IDM_SETTINGS: GWSettings_Show(gInst); break;
+        case IDM_CHECKUPD: GW_CheckForUpdates(); break;
         case IDM_ABOUT:   about_show(); break;
         case IDM_QUIT:    PostMessage(hwnd, WM_DESTROY, 0, 0); break;
         default: break;
@@ -784,6 +881,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         }
 
         GW_Poll();
+        update_check_poll();
         if (gShown) log_refresh();
         Sleep(1);
     }

@@ -54,6 +54,17 @@ typedef struct {
 
 static GWUpdaterCtx *sUp;
 
+/*
+ * The manual request's own state, kept apart from GWUpdaterCtx: a manual
+ * check reuses whichever request is running (the launch one, or an earlier
+ * manual one) rather than owning a request of its own, so what it needs to
+ * remember is only "is anyone waiting for an answer" and "the answer, once
+ * there is one".
+ */
+static int            sManualPending;
+static int            sManualReady;
+static GWManualResult sManualResult;
+
 void GWUpdater_Init(void)
 {
     if (sUp != NULL) return;
@@ -87,20 +98,21 @@ static void updater_done(GWUpdaterCtx *u)
 static void updater_fail(GWUpdaterCtx *u, const char *why)
 {
     gw_logd("update check: %s", why);
+    if (sManualPending) {
+        sManualResult.kind = kGWManualFailed;
+        sManualResult.version[0] = '\0';
+        sManualResult.url[0] = '\0';
+        snprintf(sManualResult.reason, sizeof(sManualResult.reason), "%s", why);
+        sManualReady   = 1;
+        sManualPending = 0;
+    }
     updater_done(u);
 }
 
-void GWUpdater_Request(void)
+/* The request itself, with no check_updates gate -- GWUpdater_Request()
+ * applies that; GWUpdater_RequestManual() deliberately does not. */
+static void updater_begin(GWUpdaterCtx *u)
 {
-    GWUpdaterCtx *u = sUp;
-
-    if (u == NULL || u->state != kUpNotStarted) return;
-
-    if (GWConfig_Num("check_updates", 1) == 0) {
-        u->state = kUpDone;              /* disabled: no request at all */
-        return;
-    }
-
     u->resp = NewPtr(GW_UPDATE_BUF);
     if (u->resp == NULL) { updater_fail(u, "out of memory"); return; }
 
@@ -122,6 +134,47 @@ void GWUpdater_Request(void)
 
     u->state = kUpWorking;
     u->step  = kStConnect;
+}
+
+void GWUpdater_Request(void)
+{
+    GWUpdaterCtx *u = sUp;
+
+    if (u == NULL || u->state != kUpNotStarted) return;
+
+    if (GWConfig_Num("check_updates", 1) == 0) {
+        u->state = kUpDone;              /* disabled: no request at all */
+        return;
+    }
+
+    updater_begin(u);
+}
+
+void GWUpdater_RequestManual(void)
+{
+    GWUpdaterCtx *u = sUp;
+
+    if (u == NULL) return;
+
+    if (u->state == kUpWorking) {
+        sManualPending = 1;      /* report what is already running */
+        return;
+    }
+
+    /* Not in flight, whatever its state -- disabled, done from the launch
+     * check, or never started -- run it again for the user, ignoring
+     * check_updates and an earlier "done": they asked outright. */
+    u->state = kUpNotStarted;
+    sManualPending = 1;
+    updater_begin(u);
+}
+
+int GWUpdater_ManualResult(GWManualResult *out)
+{
+    if (!sManualReady) return 0;
+    if (out != NULL) *out = sManualResult;
+    sManualReady = 0;
+    return 1;
 }
 
 /*
@@ -157,6 +210,15 @@ static void updater_finish(GWUpdaterCtx *u)
     if (!gw_update_is_newer(tag, GW_VERSION_STRING)) {
         gw_logd("update check: %s is current (latest is %s)",
                 GW_VERSION_STRING, tag);
+        if (sManualPending) {
+            sManualResult.kind = kGWManualCurrent;
+            snprintf(sManualResult.version, sizeof(sManualResult.version),
+                     "%s", GW_VERSION_STRING);
+            sManualResult.url[0] = '\0';
+            sManualResult.reason[0] = '\0';
+            sManualReady   = 1;
+            sManualPending = 0;
+        }
         updater_done(u);
         return;
     }
@@ -174,6 +236,15 @@ static void updater_finish(GWUpdaterCtx *u)
     }
 
     gw_logc("G50", "Gateway %s is available: %s", tag, url);
+    if (sManualPending) {
+        sManualResult.kind = kGWManualNewer;
+        snprintf(sManualResult.version, sizeof(sManualResult.version),
+                 "%s", tag);
+        snprintf(sManualResult.url, sizeof(sManualResult.url), "%s", url);
+        sManualResult.reason[0] = '\0';
+        sManualReady   = 1;
+        sManualPending = 0;
+    }
     updater_done(u);
 }
 
@@ -182,6 +253,10 @@ void GWUpdater_Abort(void)
     GWUpdaterCtx *u = sUp;
 
     if (u == NULL || u->state != kUpWorking) return;
+    /* Stop is not a failure (see this function's doc comment), so a manual
+     * request waiting on this check is dropped quietly rather than answered
+     * with one. */
+    sManualPending = 0;
     updater_done(u);
 }
 

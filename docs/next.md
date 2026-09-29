@@ -34,6 +34,30 @@
   way `gw_token.c` drives a token refresh -- `src/proxy/gw_updater.c`. New
   log code `G50`.
 
+  Followed by a user-triggered "Check for Updates..." (Windows: the tray
+  menu, above "About Gateway..."; Mac OS 9: the File menu, below
+  "Settings..."), which runs the same check by hand -- ignoring
+  `check_updates` and an already-finished launch check, and joining rather
+  than duplicating one still in flight (`GWUpdater_RequestManual()`,
+  `GWUpdater_ManualResult()`) -- and shows the answer in a dialog: newer with
+  Download/Later, current, or why it failed, in the log's own plain words.
+  Windows shows it with `MessageBoxA`, its OK/Cancel buttons relabelled
+  Download/Later through a thread-local `WH_CBT` hook, since the shell has no
+  other way to change a message box's button text. Mac OS 9 shows it with
+  `NoteAlert`/`StopAlert` over a hand-written `ALRT`/`DITL` pair
+  (`src/ui/gateway.r`) -- both exist in the Multiversal Interfaces, confirmed
+  against `autc04/multiversal`'s own `DialogMgr.yaml`. Download opens the
+  platform asset URL in the default browser: `ShellExecuteA` on Windows,
+  looked up in `shell32.dll` at run time rather than linked, for the same
+  reason `main_win32.c` already looks up `Shell_NotifyIconA` that way (NT
+  3.51 has no `shell32.dll` at all); Internet Config's `ICLaunchURL` on Mac
+  OS 9, reached from `gw_plat_mac.c` because that file already carries
+  Apple's Universal Interfaces for Open Transport (CLAUDE.md rule 3), and
+  linked against `libInternetConfigLib.a`, a CFM import stub that
+  `interfaces-and-libraries.sh`'s `MakeImport` pass already produces for
+  every shared library under `third_party/InterfacesAndLibraries` -- nothing
+  new to stage.
+
 0.3.8 shipped on 2026-09-28. The upstream side is TLS 1.3 and finished; the
 browser side serves everything from Netscape 3 to Classilla over SSL 3.0 or
 TLS 1.0; mail works through `get-email-token.py`; a generic tunnel carries
