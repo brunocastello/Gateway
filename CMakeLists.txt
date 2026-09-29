@@ -249,7 +249,6 @@ target_include_directories(Gateway PRIVATE src)
 # until nothing is left undefined, which is cheaper to maintain than an order
 # that is correct only until the next call crosses a library boundary.
 #
-#
 # libInternetConfigLib.a is another CFM import stub of the same shape as
 # libAppearanceLib.a -- interfaces-and-libraries.sh's MakeImport pass already
 # produces it from third_party/InterfacesAndLibraries/Libraries/SharedLibraries
@@ -257,12 +256,16 @@ target_include_directories(Gateway PRIVATE src)
 # named few), so nothing new has to be staged for it. gw_plat_mac.c calls
 # ICStart/ICLaunchURL/ICStop from inside gw_net, which is why the symbols
 # have to be here even though src/main.cpp -- Multiversal, no Internet
-# Config at all -- never mentions them.
+# Config at all -- never mentions them. It goes after the gw_net group, not
+# beside libAppearanceLib.a: the linker resolves only against libraries that
+# follow the object asking, and in front of the group it was passed over
+# before gw_plat_mac.c's references were seen (the gw039 build of
+# 2026-09-29 failed on exactly that).
 #
 target_link_libraries(Gateway
     gw_settings ${GW_UNIV_LIB}/libAppearanceLib.a
-    ${GW_UNIV_LIB}/libInternetConfigLib.a
     -Wl,--start-group gw_net gw_portable certainly bearssl -Wl,--end-group
+    ${GW_UNIV_LIB}/libInternetConfigLib.a
     ${GW_OT_LIBS})
 
 set_target_properties(Gateway PROPERTIES COMPILE_OPTIONS -ffunction-sections)
