@@ -798,43 +798,43 @@ been missed are the ones below the interface, and they fail silently.
 
 **A — the allow-list, below the interface**
 
-- [ ] `gw_prefs_set` drops later occurrences of the key it sets; setting a key
+- [x] `gw_prefs_set` drops later occurrences of the key it sets; setting a key
       that appears three times leaves exactly one line.
-- [ ] An indexed reader in `gw_prefs.c` returns the nth entry across both
+- [x] An indexed reader in `gw_prefs.c` returns the nth entry across both
       forms: repeated keys, one `;`-separated value, and a file mixing them.
-- [ ] Spaces around entries are trimmed and empty entries are skipped.
-- [ ] `GW_WaybackHostIsLive` (`gw_core.c`) uses it.
-- [ ] `pac_next_live_host` (`gw_httpproxy.c`) uses it. **Both, or neither.**
-- [ ] The PAC file and the proxy agree: a host on the list is fetched live by
+- [x] Spaces around entries are trimmed and empty entries are skipped.
+- [x] `GW_WaybackHostIsLive` (`gw_core.c`) uses it.
+- [x] `pac_next_live_host` (`gw_httpproxy.c`) uses it. **Both, or neither.**
+- [x] The PAC file and the proxy agree: a host on the list is fetched live by
       the proxy *and* routed direct by the generated script.
-- [ ] The host tests in §7 are written and pass on Linux.
+- [x] The host tests in §7 are written and pass on Linux.
 
-**B — wayback_api, below the interface**
+**B — wayback_api, below the interface** (removed after 0.3.7, not done)
 
-- [ ] A flag on the Wayback settings struct, read from `wayback_api`.
-- [ ] Something acts on it — either the Availability API path, or the mapping
+- A flag on the Wayback settings struct, read from `wayback_api`.
+- Something acts on it — either the Availability API path, or the mapping
       onto the existing mechanism that §4.3 offers as a first cut.
-- [ ] Turning it off changes what Gateway fetches, demonstrably.
+- Turning it off changes what Gateway fetches, demonstrably.
 
 **C — the window**
 
-- [ ] Eight panes, every key in §5 present exactly once.
-- [ ] Entry fields are **19 px** tall and the 1 px frame *is* the box.
-- [ ] Label baselines sit on their field's text baseline.
-- [ ] Small system font everywhere except `Settings for:` and its pop-up.
-- [ ] The `Settings for:` caption exists.
-- [ ] **Revert** exists, beside Cancel and Save.
-- [ ] A click into a field both focuses it and places the caret.
-- [ ] Scope, Client ID and Refresh token do not wrap; the allow-list does.
-- [ ] The allow-list scroll bar shares the text area's top and height, and
+- [x] Eight panes, every key in §5 present exactly once.
+- [x] Entry fields are **19 px** tall and the 1 px frame *is* the box.
+- [x] Label baselines sit on their field's text baseline.
+- [x] Small system font everywhere except `Settings for:` and its pop-up.
+- [x] The `Settings for:` caption exists.
+- [x] **Revert** exists, beside Cancel and Save.
+- [x] A click into a field both focuses it and places the caret.
+- [x] Scope, Client ID and Refresh token do not wrap; the allow-list does.
+- [x] The allow-list scroll bar shares the text area's top and height, and
       scrolls.
-- [ ] Save writes every pane, not the visible one.
-- [ ] Revert refills every pane from the file.
+- [x] Save writes every pane, not the visible one.
+- [x] Revert refills every pane from the file.
 
 **End to end**
 
-- [ ] Add a host to the allow-list, Save, quit, relaunch: it is there, and the
+- [x] Add a host to the allow-list, Save, quit, relaunch: it is there, and the
       proxy fetches that host live.
-- [ ] Remove it, Save, quit, relaunch: it is gone, and stays gone.
-- [ ] `make -C tests/host test` passes.
-- [ ] The Mac OS 9 workflow builds green.
+- [x] Remove it, Save, quit, relaunch: it is gone, and stays gone.
+- [x] `make -C tests/host test` passes.
+- [x] The Mac OS 9 workflow builds green.
