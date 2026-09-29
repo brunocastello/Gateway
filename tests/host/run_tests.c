@@ -21,8 +21,10 @@
 #include "gw_prefs.h"
 #include "gw_provider.h"
 #include "gw_gate.h"
+#include "gw_hello.h"
 #include "gw_rewrite.h"
 #include "gw_x509write.h"
+#include "gw_update.h"
 #include "gw_url.h"
 #include "gw_util.h"
 #include "gw_wayback.h"
@@ -880,8 +882,10 @@ static void test_wayback(void)
               "targetUrl asks for a redirect");
         check_str(set.date, "20011231", "date applied");
         check(set.tolerance == 730, "tolerance applied");
-        check(set.geocities && set.quick_images && set.ct_encoding,
+        check(set.geocities && set.ct_encoding,
               "checkboxes that are present read as on");
+        /* quickImages does nothing and is no longer a field; an old bookmark
+         * or saved form still submitting it must not break parsing. */
         check_str(target, "http://frogfind.com",
                   "a bare hostname gets a scheme");
     }
@@ -892,11 +896,11 @@ static void test_wayback(void)
         static const char q[] = "date=1997&dateTolerance=0";
 
         memset(&set, 0, sizeof(set));
-        set.geocities = set.quick_images = set.ct_encoding = 1;
+        set.geocities = set.ct_encoding = 1;
         check(!gw_wayback_apply_query(q, sizeof(q) - 1, &set,
                                       target, sizeof(target)),
               "no targetUrl means no redirect");
-        check(!set.geocities && !set.quick_images && !set.ct_encoding,
+        check(!set.geocities && !set.ct_encoding,
               "an absent checkbox reads as off");
         check_str(set.date, "1997", "a bare year is kept as given");
     }
@@ -937,8 +941,10 @@ static void test_wayback(void)
               "the current date is filled in");
         check(strstr(page, "name=\"gcFix\" checked") != NULL,
               "an enabled checkbox renders checked");
-        check(strstr(page, "name=\"quickImages\"> ") != NULL,
+        check(strstr(page, "name=\"ctEncoding\"> ") != NULL,
               "a disabled checkbox renders unchecked");
+        check(strstr(page, "name=\"quickImages\"") == NULL,
+              "quickImages does nothing, so the checkbox is gone");
         check(strstr(page, "method=\"get\" action=\"/\"") != NULL,
               "the form is a GET to /, so it can be bookmarked");
         check(strstr(page, "<script") == NULL, "no script for period browsers");
@@ -1240,6 +1246,23 @@ static int pac_host(int index, char *out, size_t cap)
     return 1;
 }
 
+/* The small self-host set gw_pac_is_self is handed, standing in for
+ * GW_SelfHostAt (src/gw_core.c). */
+static const char *sSelfHosts[] = { NULL, NULL, NULL, NULL };
+
+static int self_host(int index, char *out, size_t cap)
+{
+    if (index < 0 || index >= 4 || sSelfHosts[index] == NULL) return 0;
+    gw_copy_n(out, cap, sSelfHosts[index], strlen(sSelfHosts[index]));
+    return 1;
+}
+
+static int no_self_host(int index, char *out, size_t cap)
+{
+    (void)index; (void)out; (void)cap;
+    return 0;
+}
+
 /*
  * gw_json over an Availability API body, and the target built from it.
  *
@@ -1336,6 +1359,200 @@ static void test_wayback_api(void)
     }
 }
 
+static void test_update(void)
+{
+    char   tag[32];
+    char   asset[64];
+    char   url[256];
+
+    printf("update\n");
+
+    /* gw_update_parse_tag */
+    check(gw_update_parse_tag(
+              "https://github.com/brunocastello/Gateway/releases/tag/v0.3.9",
+              tag, sizeof(tag)) == 1 && strcmp(tag, "0.3.9") == 0,
+          "a Location value gives up its tag, 'v' dropped");
+    check(gw_update_parse_tag(
+              "https://github.com/brunocastello/Gateway/releases/tag/0.3.9",
+              tag, sizeof(tag)) == 1 && strcmp(tag, "0.3.9") == 0,
+          "a tag with no 'v' still parses");
+    check(gw_update_parse_tag("https://github.com/whatever/no-tag-here",
+                              tag, sizeof(tag)) == 0,
+          "a Location value with no /tag/ is refused");
+    check(gw_update_parse_tag("https://github.com/x/releases/tag/vnonsense",
+                              tag, sizeof(tag)) == 0,
+          "a tag that is not digits and dots is refused");
+    check(gw_update_parse_tag("https://github.com/x/releases/tag/v1..0",
+                              tag, sizeof(tag)) == 0,
+          "a doubled dot is refused");
+    check(gw_update_parse_tag("https://github.com/x/releases/tag/v.1.0",
+                              tag, sizeof(tag)) == 0,
+          "a leading dot is refused");
+    check(gw_update_parse_tag("https://github.com/x/releases/tag/v1.0.",
+                              tag, sizeof(tag)) == 0,
+          "a trailing dot is refused");
+    check(gw_update_parse_tag(NULL, tag, sizeof(tag)) == 0,
+          "a NULL Location is refused");
+    {
+        /* A query string or fragment after the tag stops at the first
+         * character that is not a digit or a dot. */
+        check(gw_update_parse_tag(
+                  "https://github.com/x/releases/tag/v0.3.9?foo=bar",
+                  tag, sizeof(tag)) == 1 && strcmp(tag, "0.3.9") == 0,
+              "a query string after the tag is dropped");
+    }
+    check(gw_update_parse_tag(
+              "https://github.com/x/releases/tag/v0.4.0-beta1",
+              tag, sizeof(tag)) == 0,
+          "a pre-release suffix is refused, not parsed as its base version");
+    check(gw_update_parse_tag(
+              "https://github.com/x/releases/tag/v0.4.0-rc1",
+              tag, sizeof(tag)) == 0,
+          "same for -rc1");
+
+    /* gw_update_is_newer */
+    check(gw_update_is_newer("0.3.10", "0.3.9") == 1,
+          "0.3.10 is newer than 0.3.9 (numeric, not lexical)");
+    check(gw_update_is_newer("0.3.9", "0.3.9") == 0,
+          "an equal tag is not newer");
+    check(gw_update_is_newer("0.3.8", "0.3.9") == 0,
+          "an older tag is not newer");
+    check(gw_update_is_newer("1.0", "0.3.9") == 1,
+          "a newer major version wins even with fewer components");
+    check(gw_update_is_newer("0.3.9.1", "0.3.9") == 1,
+          "an extra trailing component counts as newer");
+    check(gw_update_is_newer("", "0.3.9") == 0, "an empty tag is not newer");
+    check(gw_update_is_newer("0.3.9", "") == 0,
+          "an empty current version is not newer");
+
+    /* gw_update_asset_name / gw_update_asset_url */
+    check(gw_update_asset_name("0.3.10", kGWUpdateMac, asset,
+                               sizeof(asset)) > 0 &&
+          strcmp(asset, "Gateway-v0.3.10.sit") == 0,
+          "the Mac asset name");
+    check(gw_update_asset_name("0.3.10", kGWUpdateWin32, asset,
+                               sizeof(asset)) > 0 &&
+          strcmp(asset, "Gateway-v0.3.10-windows.zip") == 0,
+          "the Windows asset name");
+    check(gw_update_asset_name("0.3.10", kGWUpdateMac, asset, 4) == 0,
+          "an asset name that does not fit fails rather than truncates");
+
+    gw_update_asset_name("0.3.10", kGWUpdateMac, asset, sizeof(asset));
+    check(gw_update_asset_url("0.3.10", asset, url, sizeof(url)) > 0 &&
+          strcmp(url,
+              "http://github.com/brunocastello/Gateway/releases/download/"
+              "v0.3.10/Gateway-v0.3.10.sit") == 0,
+          "the asset link, http:// so it reaches through :8765");
+    check(gw_update_asset_url("0.3.10", asset, url, 4) == 0,
+          "an asset link that does not fit fails rather than truncates");
+
+
+    /*
+     * A real capture (curl --http1.0 -D -, 2026-09-29) of GitHub's 302
+     * for /releases/latest: ~5 KB of headers, almost all of it one
+     * Content-Security-Policy line, because a real CDN sends what a real
+     * CDN sends. On hardware this tripped "the response headers were too
+     * large" against the old 4096-byte GW_UPDATE_BUF (gw_updater.c) well
+     * before the blank line ever arrived. Trimmed of nothing but the
+     * response body (there isn't one -- Content-Length: 0); Location is
+     * intact. Proves gw_http_parse_response() itself has no header-count
+     * or line-length limit of its own -- the fix is the buffer, not the
+     * parser.
+     */
+    {
+        static const char r[] =
+        "HTTP/1.1 302 Found\r\n"
+        "Date: Tue, 29 Sep 2026 17:55:16 GMT\r\n"
+        "Content-Type: text/html; charset=utf-8\r\n"
+        "Location: https://github.com/brunocastello/Gateway/releases/tag/v0.3.8\r\n"
+        "Vary: X-PJAX, X-PJAX-Container, Turbo-Visit, Turbo-Frame, X-Requested-With, "
+        "X-GitHub-Client-Version, Sec-Fetch-Site,Accept-Encoding, Accept, X-Requested"
+        "-With\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Strict-Transport-Security: max-age=31536000; includeSubdomains; preload\r\n"
+        "X-Frame-Options: deny\r\n"
+        "X-Content-Type-Options: nosniff\r\n"
+        "X-XSS-Protection: 0\r\n"
+        "Referrer-Policy: no-referrer-when-downgrade\r\n"
+        "Content-Security-Policy: default-src 'none'; base-uri 'self'; child-src gith"
+        "ub.githubassets.com github.com/assets-cdn/worker/ github.com/assets/ gist.gi"
+        "thub.com/assets-cdn/worker/; connect-src 'self' uploads.github.com www.githu"
+        "bstatus.com collector.github.com raw.githubusercontent.com api.github.com gi"
+        "thub-cloud.s3.amazonaws.com github-production-repository-file-5c1aeb.s3.amaz"
+        "onaws.com github-production-upload-manifest-file-7fdce7.s3.amazonaws.com git"
+        "hub-production-user-asset-6210df.s3.amazonaws.com *.rel.tunnels.api.visualst"
+        "udio.com wss://*.rel.tunnels.api.visualstudio.com github.githubassets.com ob"
+        "jects-origin.githubusercontent.com copilot-proxy.githubusercontent.com proxy"
+        ".individual.githubcopilot.com proxy.business.githubcopilot.com proxy.enterpr"
+        "ise.githubcopilot.com *.actions.githubusercontent.com wss://*.actions.github"
+        "usercontent.com productionresultssa0.blob.core.windows.net productionresults"
+        "sa1.blob.core.windows.net productionresultssa2.blob.core.windows.net product"
+        "ionresultssa3.blob.core.windows.net productionresultssa4.blob.core.windows.n"
+        "et productionresultssa5.blob.core.windows.net productionresultssa6.blob.core"
+        ".windows.net productionresultssa7.blob.core.windows.net productionresultssa8"
+        ".blob.core.windows.net productionresultssa9.blob.core.windows.net production"
+        "resultssa10.blob.core.windows.net productionresultssa11.blob.core.windows.ne"
+        "t productionresultssa12.blob.core.windows.net productionresultssa13.blob.cor"
+        "e.windows.net productionresultssa14.blob.core.windows.net productionresultss"
+        "a15.blob.core.windows.net productionresultssa16.blob.core.windows.net produc"
+        "tionresultssa17.blob.core.windows.net productionresultssa18.blob.core.window"
+        "s.net productionresultssa19.blob.core.windows.net github-production-reposito"
+        "ry-image-32fea6.s3.amazonaws.com github-production-release-asset-2e65be.s3.a"
+        "mazonaws.com insights.github.com wss://alive.github.com wss://alive-staging."
+        "github.com api.githubcopilot.com api.individual.githubcopilot.com api.busine"
+        "ss.githubcopilot.com api.enterprise.githubcopilot.com wss://production-copil"
+        "ot-host.webpubsub.azure.com api.github.com/cmc_internal/api/; font-src githu"
+        "b.githubassets.com; form-action 'self' github.com gist.github.com copilot-wo"
+        "rkspace.githubnext.com objects-origin.githubusercontent.com; frame-ancestors"
+        " 'none'; frame-src viewscreen.githubusercontent.com notebooks.githubusercont"
+        "ent.com; img-src 'self' data: blob: github.githubassets.com media.githubuser"
+        "content.com camo.githubusercontent.com identicons.github.com avatars.githubu"
+        "sercontent.com private-avatars.githubusercontent.com github-cloud.s3.amazona"
+        "ws.com objects.githubusercontent.com release-assets.githubusercontent.com se"
+        "cured-user-images.githubusercontent.com user-images.githubusercontent.com pr"
+        "ivate-user-images.githubusercontent.com opengraph.githubassets.com repositor"
+        "y-images.githubusercontent.com marketplace-screenshots.githubusercontent.com"
+        " copilotprodattachments.blob.core.windows.net/github-production-copilot-atta"
+        "chments/ github-production-user-asset-6210df.s3.amazonaws.com customer-stori"
+        "es-feed.github.com spotlights-feed.github.com explore-feed.github.com *.goog"
+        "leusercontent.com objects-origin.githubusercontent.com *.githubusercontent.c"
+        "om; manifest-src 'self'; media-src github.com user-images.githubusercontent."
+        "com secured-user-images.githubusercontent.com private-user-images.githubuser"
+        "content.com github-production-user-asset-6210df.s3.amazonaws.com gist.github"
+        ".com github.githubassets.com; script-src github.githubassets.com; style-src "
+        "'unsafe-inline' github.githubassets.com; upgrade-insecure-requests; worker-s"
+        "rc github.githubassets.com github.com/assets-cdn/worker/ github.com/assets/ "
+        "gist.github.com/assets-cdn/worker/\r\n"
+        "Server: github.com\r\n"
+        "Set-Cookie: _gh_sess=mVQRE65cKy5lGo0Gs8R3%2BPJib4kjztsRoaGfN%2BU4Hl0LcYuJL4N"
+        "c4IRrnXRMMrnHq9cHmImpPEMkDx0bGRaXiGv6hBODP7AZestg1zrKfqmXoCgc7uJVmqmTS3TYuk9"
+        "%2F9Uh8%2Bik1uxZvT2ndcl05UVJtcdoW1%2B05TUOf5odtvNZabHjfpFM5f1yMsfw%2FC7daYA1"
+        "SgcGIJEFt3%2Bm9ZzDVTywEyFnbroDRPYfyqPKG8wuU%2BHlGcMv%2ByJSxodvy3yDnHtrSa0%2F"
+        "RZXQmW8kqG0K0rg%3D%3D--yY8HZc8pwsH1Bf15--%2BJNUKluowh10akFfNzQJtg%3D%3D; pat"
+        "h=/; HttpOnly; secure; SameSite=Lax\r\n"
+        "Set-Cookie: _octo=GH1.1.1884472418.1790704521; expires=Wed, 29 Sep 2027 17:5"
+        "5:21 GMT; domain=.github.com; path=/; secure; SameSite=Lax\r\n"
+        "Set-Cookie: logged_in=no; expires=Wed, 29 Sep 2027 17:55:21 GMT; domain=.git"
+        "hub.com; path=/; HttpOnly; secure; SameSite=Lax\r\n"
+        "Content-Length: 0\r\n"
+        "X-GitHub-Request-Id: FC9B:251659:2DA08E5:2B6CFD7:6ABBFB89\r\n"
+        "x-github-edge-region: fra\r\n"
+        "connection: close\r\n"
+        "\r\n";
+        GWResponse gh;
+
+        check(sizeof(r) - 1 > 4096,
+              "the real capture is bigger than the old GW_UPDATE_BUF");
+        check(gw_http_parse_response(r, sizeof(r) - 1, &gh) == 1,
+              "a real ~5 KB GitHub header block parses");
+        check(gh.status == 302, "status 302");
+        check(gh.has_location, "Location captured");
+        check_str(gh.location,
+                  "https://github.com/brunocastello/Gateway/releases/tag/v0.3.8",
+                  "Location value, past the huge CSP line");
+    }
+}
+
 static void test_pac(void)
 {
     char   buf[4096];
@@ -1397,6 +1614,37 @@ static void test_pac(void)
           "no live port is refused");
     check(gw_pac_build("192.168.1.5", 8765, 8888, pac_host, buf, 40) == 0,
           "a buffer too small yields nothing rather than a truncated script");
+
+    /* gw_pac_is_self: an absolute-form request addressed to Gateway itself,
+     * answered locally instead of Gateway dialling back out to its own
+     * listener (docs/next.md, "A request for Gateway's own address"). The
+     * self-host set is a small fixed array now (finding 3, gw039 review) so
+     * one LAN client fetching /proxy.pac with its own Host header cannot
+     * evict the address the real browser is using. */
+    check(gw_pac_is_self("127.0.0.1", 8765, 8765, no_self_host),
+          "loopback is always us");
+    check(gw_pac_is_self("LOCALHOST", 8765, 8765, NULL),
+          "localhost is always us, case-insensitively, with no self_host yet");
+    sSelfHosts[0] = "proxyweb.com";
+    check(gw_pac_is_self("proxyweb.com", 8765, 8765, self_host),
+          "a host the script was fetched with is us too");
+    check(gw_pac_is_self("PROXYWEB.COM", 8765, 8765, self_host),
+          "and that match is case-insensitive");
+    check(!gw_pac_is_self("proxyweb.com", 8765, 8765, no_self_host),
+          "an unknown host is not us with no self_host learned yet");
+    sSelfHosts[0] = "other.example";
+    check(!gw_pac_is_self("proxyweb.com", 8765, 8765, self_host),
+          "nor when self_host names something else");
+    sSelfHosts[1] = "proxyweb.com";
+    check(gw_pac_is_self("proxyweb.com", 8765, 8765, self_host),
+          "a second known host is still checked, not just the first slot");
+    check(!gw_pac_is_self("127.0.0.1", 8888, 8765, self_host),
+          "the port must match the listener asked about too");
+    check(!gw_pac_is_self("", 8765, 8765, self_host),
+          "an empty host is never us");
+    check(!gw_pac_is_self(NULL, 8765, 8765, self_host),
+          "nor a missing one");
+    sSelfHosts[0] = sSelfHosts[1] = NULL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2340,6 +2588,121 @@ static void test_fwd(void)
     }
 }
 
+/*
+ * gw_hello_ciphers() -- the offered cipher list decoded from a captured
+ * ClientHello, for the log_debug line PATCHES.md §37 adds. Two samples: the
+ * SSLv2-framed hello Windows 95's IE 3.0 (4.70.1215) sent on 2026-09-29,
+ * exactly as `helloHead` captured it at the time (24 bytes, before that
+ * buffer grew) -- a real truncated case -- and a hand-built native TLS
+ * ClientHello offering three suites in full.
+ */
+static void test_hello_ciphers(void)
+{
+    char out[256];
+    int  truncated;
+
+    printf("gw_hello ciphers\n");
+
+    /* The SSLv2 hello from the bug report, as it was actually captured: 24
+     * bytes, cipher_spec_length says 24 (8 specs) but only 13 spec bytes --
+     * four whole ones -- made it into that short a buffer. */
+    {
+        static const unsigned char hello[] = {
+            0x80, 0x31, 0x01, 0x03, 0x00, 0x00, 0x18, 0x00,
+            0x00, 0x00, 0x10, 0x8f, 0x80, 0x01, 0x80, 0x00,
+            0x01, 0x81, 0x00, 0x01, 0x82, 0x00, 0x01, 0x83
+        };
+        size_t n;
+
+        truncated = 0;
+        n = gw_hello_ciphers(hello, sizeof(hello), out, sizeof(out),
+                             &truncated);
+        check(n == 4, "4 whole specs fit in the captured 24 bytes");
+        check_str(out, "8f8001 800001 810001 820001",
+                  "the specs decode in order, hex, space-separated");
+        check(truncated, "cipher_spec_length (24) says more follow");
+    }
+
+    /* The same hello, captured whole (helloHead is 192 bytes now): all 8
+     * specs, plus a session ID and challenge that must not be mistaken for
+     * more specs. */
+    {
+        static const unsigned char hello[] = {
+            0x80, 0x49, 0x01, 0x03, 0x00, 0x00, 0x18, 0x00,
+            0x00, 0x00, 0x10,
+            /* 8 specs, 24 bytes */
+            0x8f, 0x80, 0x01, 0x80, 0x00, 0x01, 0x81, 0x00,
+            0x01, 0x82, 0x00, 0x01, 0x83, 0x00, 0x01, 0x00,
+            0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x03,
+            /* 16-byte challenge (session ID length was 0) */
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+            0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10
+        };
+        size_t n;
+
+        truncated = 0;
+        n = gw_hello_ciphers(hello, sizeof(hello), out, sizeof(out),
+                             &truncated);
+        check(n == 8, "all 8 specs decode once the hello is captured whole");
+        check_str(out,
+                  "8f8001 800001 810001 820001 830001 000001 000002 000003",
+                  "the challenge bytes are not read as a ninth spec");
+        check(!truncated, "the whole list was captured");
+    }
+
+    /* A native TLS ClientHello, hand-built: no extensions, three suites. */
+    {
+        static const unsigned char hello[] = {
+            /* record header: handshake, TLS 1.2 wire version, length 0x31 */
+            0x16, 0x03, 0x03, 0x00, 0x31,
+            /* handshake header: client_hello, length 0x2d */
+            0x01, 0x00, 0x00, 0x2d,
+            /* client_version */
+            0x03, 0x03,
+            /* random, 32 bytes */
+            0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            /* session_id_length */
+            0x00,
+            /* cipher_suites_length, then 3 suites */
+            0x00, 0x06, 0x00, 0x2f, 0x00, 0x35, 0x00, 0x0a,
+            /* compression_methods_length, then null */
+            0x01, 0x00
+        };
+        size_t n;
+
+        truncated = 0;
+        n = gw_hello_ciphers(hello, sizeof(hello), out, sizeof(out),
+                             &truncated);
+        check(n == 3, "3 suites decode from a native hello");
+        check_str(out, "002f 0035 000a",
+                  "native suites are 2 bytes each, unlike an SSLv2 spec");
+        check(!truncated, "the whole hello was captured");
+
+        /* Cut it off two bytes into the suite list: one suite decodes,
+         * and the missing second one is reported rather than guessed. */
+        truncated = 0;
+        n = gw_hello_ciphers(hello, 48, out, sizeof(out), &truncated);
+        check(n == 1, "a suite list cut short still decodes what fits");
+        check_str(out, "002f", "only the whole suite that fit is shown");
+        check(truncated, "the cut announces itself");
+    }
+
+    /* Neither framing: no specs, and *truncated is left alone. */
+    {
+        static const unsigned char junk[] = { 0x00, 0x01, 0x02, 0x03 };
+        size_t n;
+
+        truncated = 0;
+        n = gw_hello_ciphers(junk, sizeof(junk), out, sizeof(out),
+                             &truncated);
+        check(n == 0, "an unrecognised first byte decodes nothing");
+        check(!truncated, "and does not claim a truncation it cannot see");
+    }
+}
+
 int main(void)
 {
     test_util();
@@ -2367,8 +2730,10 @@ int main(void)
     test_pac_splitter_agree();
     test_wayback_api();
     test_pac();
+    test_update();
     test_fwd();
     test_log_codes();
+    test_hello_ciphers();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;

@@ -72,6 +72,23 @@ int gw_pac_is_request(const char *path)
     return 0;
 }
 
+int gw_pac_is_self(const char *host, int port, int my_port,
+                   GWPacNextHost self_host)
+{
+    char known[GW_MAX_HOST];
+    int  i;
+
+    if (host == NULL || host[0] == '\0') return 0;
+    if (port != my_port) return 0;
+    if (gw_stricmp(host, "127.0.0.1") == 0) return 1;
+    if (gw_stricmp(host, "localhost") == 0) return 1;
+    if (self_host == NULL) return 0;
+    for (i = 0; self_host(i, known, sizeof(known)); i++) {
+        if (gw_stricmp(host, known) == 0) return 1;
+    }
+    return 0;
+}
+
 size_t gw_pac_build(const char *authority, int live_port, int archive_port,
                     GWPacNextHost next_host, char *out, size_t cap)
 {

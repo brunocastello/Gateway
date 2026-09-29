@@ -298,10 +298,15 @@ MacTLS_ServerStage MacTLS_ServerGetStage(const MacTLS_Server *s);
 /* One line of engineer's detail: hello framing, version and suite chosen,
  * byte counts, the engine's record state. */
 void           MacTLS_ServerDescribe(const MacTLS_Server *s, char *out, size_t cap);
-/* The first bytes the client sent (up to 24), in hex. They name the protocol
+/* The first bytes the client sent (up to 192), in hex. They name the protocol
  * it is really speaking, which is the whole diagnosis when a handshake goes
  * nowhere. Empty when nothing arrived. */
 void           MacTLS_ServerHelloHex(const MacTLS_Server *s, char *out, size_t cap);
+/* The same opening bytes as MacTLS_ServerHelloHex(), as raw bytes rather than
+ * hex text -- up to 192, whatever was captured -- for a caller that wants to
+ * parse them (PATCHES.md §37, gw_hello_ciphers() in src/portable). Returns
+ * the number of bytes written to out. */
+size_t         MacTLS_ServerHelloRaw(const MacTLS_Server *s, unsigned char *out, size_t cap);
 /* The version the handshake settled on (0x0300 = SSL 3.0 ...), or 0 before it
  * completed. */
 unsigned int   MacTLS_ServerSessionVersion(const MacTLS_Server *s);

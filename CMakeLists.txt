@@ -167,11 +167,13 @@ add_library(gw_portable STATIC
     src/portable/gw_prefs.c
     src/portable/gw_provider.c
     src/portable/gw_gate.c
+    src/portable/gw_hello.c
     src/portable/gw_log.c
     src/portable/gw_rewrite.c
     src/portable/gw_x509write.c
     src/portable/gw_wayback.c
     src/portable/gw_pac.c
+    src/portable/gw_update.c
 )
 target_include_directories(gw_portable PUBLIC src/portable)
 target_compile_options(gw_portable PRIVATE -Wall -Wextra -Wno-unused-parameter)
@@ -192,6 +194,7 @@ add_library(gw_net STATIC
     src/proxy/gw_tunnel.c
     src/proxy/gw_mail.c
     src/proxy/gw_token.c
+    src/proxy/gw_updater.c
     src/ssl3/ssl3_prf.c
     src/ssl3/ssl3_mac.c
     src/ssl3/ssl3_rc4.c
@@ -246,9 +249,23 @@ target_include_directories(Gateway PRIVATE src)
 # until nothing is left undefined, which is cheaper to maintain than an order
 # that is correct only until the next call crosses a library boundary.
 #
+# libInternetConfigLib.a is another CFM import stub of the same shape as
+# libAppearanceLib.a -- interfaces-and-libraries.sh's MakeImport pass already
+# produces it from third_party/InterfacesAndLibraries/Libraries/SharedLibraries
+# (docs/inventory.md section 2: it wraps every shared library there, not a
+# named few), so nothing new has to be staged for it. gw_plat_mac.c calls
+# ICStart/ICLaunchURL/ICStop from inside gw_net, which is why the symbols
+# have to be here even though src/main.cpp -- Multiversal, no Internet
+# Config at all -- never mentions them. It goes after the gw_net group, not
+# beside libAppearanceLib.a: the linker resolves only against libraries that
+# follow the object asking, and in front of the group it was passed over
+# before gw_plat_mac.c's references were seen (the gw039 build of
+# 2026-09-29 failed on exactly that).
+#
 target_link_libraries(Gateway
     gw_settings ${GW_UNIV_LIB}/libAppearanceLib.a
     -Wl,--start-group gw_net gw_portable certainly bearssl -Wl,--end-group
+    ${GW_UNIV_LIB}/libInternetConfigLib.a
     ${GW_OT_LIBS})
 
 set_target_properties(Gateway PROPERTIES COMPILE_OPTIONS -ffunction-sections)

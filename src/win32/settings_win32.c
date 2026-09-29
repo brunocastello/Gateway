@@ -88,7 +88,7 @@ static const Field kFields[] = {
     { 1, Check, "connect_mitm", "&Terminate TLS for typed https:// URLs", "0",
       "Requires the Gateway CA in the browser. Choose one mode." },
     { 1, Check, "allow_sslv3", "&Offer SSL 3.0 to browsers without TLS", "1",
-      "Netscape 3, IE 3 and IE 4. Anything newer still gets TLS." },
+      "Netscape 3 and IE 4. Anything newer still gets TLS." },
     { 1, Redirect, "follow_redirects", "Follow redirects:", "auto", "Automatic follows HTTPS redirects." },
     { 1, Number, "max_body_mb", "Largest response (MB):", "0", "0 for no limit." },
     { 1, Number, "max_connects", "Connections opening at once:", "8", "" },
@@ -101,8 +101,6 @@ static const Field kFields[] = {
     { 3, Check, "wayback_cache", "Let the browser &keep snapshots", "1", "" },
     { 3, Check, "wayback_settings", "Serve the browser se&ttings page", "1", "" },
     { 3, Check, "wayback_ct_encoding", "Keep the &charset in Content-Type", "1", "" },
-    { 3, Check, "wayback_quick_images", "&Quick images (compatibility setting)", "1",
-      "Accepted for compatibility; it has no effect." },
     { 3, List, "wayback_live", "&Whitelist:", "",
       "Use semicolons (;) to separate entries. Maximum 2000 characters." },
     { 4, Provider, "provider", "Provider:", "outlook", "" },
@@ -161,6 +159,8 @@ static const Field kFields[] = {
     { 9, Check, "log_debug", "Show engineering &detail in the log", "0",
       "Byte counts, hello bytes and library error numbers,\n"
       "under each line. For reporting a problem." },
+    { 9, Check, "check_updates", "Chec&k for a newer release at launch", "1",
+      "Looks for a new version of Gateway once at startup." },
 };
 #define FIELDS ((int)(sizeof(kFields) / sizeof(kFields[0])))
 

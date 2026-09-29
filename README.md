@@ -50,9 +50,11 @@ each site, so the browser warns until that authority is trusted — fetch
 `http://<gateway-address>:8765/gateway-ca.crt` in the browser to install it,
 or click through the warning.
 
-Since 0.3.5 this reaches every browser in range, including ones with no TLS at
-all: Netscape 3, Internet Explorer 3 and 4, and IE 5 for Mac OS 9 are served
-over SSL 3.0. `allow_sslv3 = 0` refuses it if you would rather not.
+Since 0.3.5 this reaches every browser in range with no TLS of its own:
+Netscape 3, IE 4 and IE 5 for Mac OS 9 are served over SSL 3.0.
+`allow_sslv3 = 0` refuses it if you would rather not. Both the 16-bit
+(Windows 3.1) and 32-bit builds of IE 3 cannot complete SSL through Gateway
+and fall back to `rewrite_https` (the default), which works.
 
 ## Mail
 

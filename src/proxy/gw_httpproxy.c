@@ -23,6 +23,7 @@
 #include "../gw_config.h"
 #include "../gw_core.h"
 #include "../portable/gw_chunked.h"
+#include "../portable/gw_hello.h"
 #include "../portable/gw_http.h"
 #include "../portable/gw_log.h"
 #include "../portable/gw_pac.h"
@@ -621,6 +622,11 @@ static void session_serve_pac(GWHttpSession *s)
     }
     gw_log("#%ld proxy.pac for %s: %s", s->id, s->req.url.host,
            s->wayback ? "the archive" : "the live web");
+    /* Whatever host reached the script is one this machine can be reached
+     * on, so remember it: gw_pac_is_self() answers a later absolute-form
+     * request for it locally instead of Gateway dialling back out to
+     * itself. */
+    GW_NoteSelfHost(s->req.url.host);
     session_serve(s, GW_PAC_CONTENT_TYPE, page, n);
 }
 
@@ -902,6 +908,28 @@ static void session_finish_body(GWHttpSession *s)
     s->state = kHPFlushAndClose;
 }
 
+/*
+ * Hex-dump the first (up to) 64 bytes of buf into out, space-separated, for
+ * log_debug -- same layout as MacTLS_ServerHelloHex() in Certainly. Used
+ * when a session in kHPRecvRequest is closed by the idle timeout with no
+ * request ever parsed, to see what the client actually sent rather than
+ * guess at line endings.
+ */
+static void hex_dump64(const char *buf, size_t len, char *out, size_t cap)
+{
+    size_t take = len < 64 ? len : 64;
+    size_t k, p = 0;
+
+    if (out == NULL || cap == 0) return;
+    out[0] = '\0';
+    for (k = 0; k < take; k++) {
+        int n = snprintf(out + p, cap - p, "%s%02x", k ? " " : "",
+                         (unsigned char)buf[k]);
+        if (n < 0 || (size_t)n >= cap - p) break;
+        p += (size_t)n;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 
 static void step_recv_request(GWHttpSession *s)
@@ -979,9 +1007,20 @@ static void step_recv_request(GWHttpSession *s)
      * real origin and must not be answered here. So this fires exactly when
      * someone has pointed something straight at Gateway's own address, which
      * is what fetching the script is.
+     *
+     * A proxy-configured browser sends the absolute form for everything,
+     * including a re-fetch of the script it is already using -- Classilla
+     * does this on a timer -- and until here that request went out through
+     * the ordinary proxied path, which for the script's own host:port meant
+     * Gateway dialling itself and spending a splice slot on the loop. Answer
+     * it here instead, whenever gw_pac_is_self says the host is one Gateway
+     * already knows is its own.
      */
-    if (s->req.shape == kGWShapeOrigin && !s->mitm &&
-        gw_pac_is_request(s->req.url.path)) {
+    if (!s->mitm && gw_pac_is_request(s->req.url.path) &&
+        (s->req.shape == kGWShapeOrigin ||
+         gw_pac_is_self(s->req.url.host, (int)s->req.url.port,
+                        s->wayback ? GW_WaybackPort() : GW_HttpPort(),
+                        GW_SelfHostAt))) {
         session_serve_pac(s);
         return;
     }
@@ -1667,12 +1706,19 @@ static void step_tunnel_connect(GWHttpSession *s)
 
 /*
  * The engineer's lines under a MITM outcome: BearSSL's number, what the hello
- * and the engine said, and the first bytes the browser sent. Only with
- * log_debug on; the sentence above them carries the diagnosis without.
+ * and the engine said, the first bytes the browser sent, and every cipher
+ * spec/suite it offered (PATCHES.md §37 -- the hex dump above is one line and
+ * cuts off long lists, so a browser's actual choice of ciphers was otherwise
+ * invisible). Only with log_debug on; the sentence above them carries the
+ * diagnosis without.
  */
 static void log_mitm_detail(GWHttpSession *s, int err)
 {
-    char line[160];
+    char          line[160];
+    unsigned char hello[192];
+    char          ciphers[512];
+    size_t        helloLen, n;
+    int           truncated = 0;
 
     if (!gw_log_debug())
         return;
@@ -1688,6 +1734,12 @@ static void log_mitm_detail(GWHttpSession *s, int err)
     GWStream_ServerHelloHex(&s->cli, line, sizeof line);
     if (line[0] != '\0')
         gw_logd("first bytes: %s", line);
+
+    helloLen = GWStream_ServerHelloRaw(&s->cli, hello, sizeof hello);
+    n = gw_hello_ciphers(hello, helloLen, ciphers, sizeof ciphers, &truncated);
+    if (n > 0 || truncated)
+        gw_logd("offered suites: %s%s", ciphers,
+                truncated ? " (truncated)" : "");
 }
 
 /*
@@ -1920,6 +1972,13 @@ static void session_step(GWHttpSession *s)
         if (!waiting_on_client) {
             gw_logc("H23", "#%ld nothing moved for %d seconds, so the "
                     "connection was closed", s->id, GW_IDLE_TIMEOUT / 60);
+            if (s->state == kHPRecvRequest) {
+                char hex[64 * 3 + 1];
+
+                hex_dump64(s->chead, s->cheadLen, hex, sizeof hex);
+                gw_logd("#%ld %u bytes buffered, never a full request: %s",
+                        s->id, (unsigned)s->cheadLen, hex);
+            }
             s->state = kHPDone;
         } else {
             unsigned long now = GWNet_Ticks();

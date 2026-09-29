@@ -76,6 +76,13 @@ jobs:
           test -f "$TOOLCHAIN/universal/libppc/libOpenTransportLib.a"
           test -f "$TOOLCHAIN/universal/libppc/libOpenTptInternetLib.a"
           test -f "$TOOLCHAIN/universal/CIncludes/OpenTransport.h"
+          # Internet Config, for "Check for Updates..." Download button
+          # (gw_plat_mac.c). MakeImport wraps every shared library under
+          # third_party/InterfacesAndLibraries/Libraries/SharedLibraries, so
+          # this should already exist from the staging call above; asserted
+          # here rather than left to fail obscurely at the final link.
+          test -f "$TOOLCHAIN/universal/libppc/libInternetConfigLib.a"
+          test -f "$TOOLCHAIN/universal/CIncludes/InternetConfig.h"
 
           # The Multiversal Interfaces use the classic header names, but not
           # every Universal Interfaces header has an equivalent. Listing them

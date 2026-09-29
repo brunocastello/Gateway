@@ -61,6 +61,7 @@ free number.
 | `G41` | … could not be saved | A file beside the prefs, such as `Gateway CA`. The step and error are under `log_debug`. |
 | `G42` | Start with Windows could not be set: Gateway could not find its own path | |
 | `G43` | Start with Windows could not be set: the registry refused the entry | |
+| `G50` | Gateway … is available: … | `check_updates` found a newer release than this build at launch, or "Check for Updates..." on the menu found one by hand. The link is the direct download for this platform, given as `http://` so it reaches through Gateway's own proxy. Up to date, or the check fails for any reason, is silent here at launch -- see `log_debug` -- but the menu command always shows its own answer in a dialog, whichever it is. |
 
 ## H — the HTTP proxy
 
@@ -88,10 +89,11 @@ free number.
 | `H20` | a CONNECT was dropped: Gateway had no room to answer it | Gateway's fault. Report it. |
 | `H21` | Gateway answers the browser's secure connection to … itself | `connect_mitm` is on, so the browser now meets Gateway's certificate. If it goes no further, the next line has an `S` code. |
 | `H22` | no certificate could be made for …, so the tunnel stays encrypted | `connect_mitm` could not mint a leaf, so the `CONNECT` is a plain tunnel and the browser does its own TLS. |
-| `H23` | nothing moved for … seconds, so the connection was closed | The idle timeout. |
+| `H23` | nothing moved for … seconds, so the connection was closed | The idle timeout. If the session was still waiting on the request line itself, `log_debug` adds the number of bytes buffered and a hex dump of up to the first 64 of them, to see what a client actually sent when it never sends a recognised line ending. |
 | `H24` | the browser stopped reading, so the connection was dropped | The browser left data unread for the whole grace period. |
 | `H25` | out of memory: a browser's connection was refused | Raise Gateway's partition in Get Info. |
 | `H26` | all … proxy connections are in use; new ones wait for a free one | Written once each time the proxy fills up. Connections wait in the backlog rather than being refused. |
+| `H27` | *retired* | Was `connect_upgrade`'s upgrade line; the feature was reverted 2026-09-29 with no client verified end to end (see `docs/next.md`, "Deferred, not rejected"). Not reused. |
 
 ## M — the mail splice and the token refresh
 
@@ -173,8 +175,10 @@ carries a `T` code when the connection itself names the fault.
 Written when `connect_mitm` answers a browser's handshake and the handshake
 does not complete. The line before it names the host (`Gateway answers the
 browser's secure connection to … itself`, H21). With `log_debug` on, the lines under it give BearSSL's error
-number, the hello's framing, version and suite, byte counts, and the first
-bytes the browser sent.
+number, the hello's framing, version and suite, byte counts, the first
+bytes the browser sent, and -- decoded from those same bytes -- every cipher
+spec or suite it offered (`offered suites: …`, `(truncated)` if the capture
+ran out first; PATCHES.md §37).
 
 | Code | Sentence | What it means |
 |---|---|---|

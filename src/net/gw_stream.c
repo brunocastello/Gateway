@@ -362,6 +362,13 @@ void GWStream_ServerHelloHex(const GWStream *s, char *out, size_t cap)
         MacTLS_ServerHelloHex(s->srv, out, cap);
 }
 
+size_t GWStream_ServerHelloRaw(const GWStream *s, unsigned char *out, size_t cap)
+{
+    if (out == NULL || cap == 0) return 0;
+    if (s == NULL || !s->tls || s->srv == NULL) return 0;
+    return MacTLS_ServerHelloRaw(s->srv, out, cap);
+}
+
 int GWStream_ServerResumeTried(const GWStream *s)
 {
     if (s == NULL || !s->tls || s->srv == NULL) return 0;

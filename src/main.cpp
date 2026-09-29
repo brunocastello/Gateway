@@ -15,6 +15,7 @@
 
 #include <AppleEvents.h>
 #include <Devices.h>
+#include <Dialogs.h>    /* Alert/NoteAlert/StopAlert, for "Check for Updates..." */
 #include <Events.h>
 #include <Files.h>
 #include <Fonts.h>
@@ -49,7 +50,18 @@ const short kAboutItem = 1;
 const short kHideItem  = 1;
 const short kStopItem  = 2;
 const short kSettingsItem = 4;  /* 3 is the separator */
-const short kQuitItem  = 6;  /* 5 is the separator */
+const short kCheckUpdatesItem = 5;
+const short kQuitItem  = 7;  /* 6 is the separator */
+
+/*
+ * The "Check for Updates..." result alerts, src/ui/gateway.r. Item 1 is
+ * always the row's primary action: Download on kAlrtUpdateNewer, the only
+ * OK on the other two.
+ */
+const short kAlrtUpdateNewer   = 300;
+const short kAlrtUpdateCurrent = 301;
+const short kAlrtUpdateFailed  = 302;
+const short kAlrtDownloadItem  = 1;
 
 /*
  * Finder flags, from Finder.h. Written as literals so this file does not take
@@ -289,6 +301,7 @@ public:
             /* One cooperative slice per pass; every OT and TLS step inside
              * yields rather than spinning (CLAUDE.md rule 6). */
             GW_Poll();
+            ShowUpdateResult();
 
             if (mWindow != nullptr && GW_LogGeneration() != mSeenGeneration)
                 Redraw();
@@ -330,6 +343,8 @@ private:
             ToPascal("(-", title);
             AppendMenu(mFileMenu, title);
             ToPascal("Settings...", title);
+            AppendMenu(mFileMenu, title);
+            ToPascal("Check for Updates...", title);
             AppendMenu(mFileMenu, title);
             ToPascal("(-", title);
             AppendMenu(mFileMenu, title);
@@ -579,6 +594,79 @@ private:
     }
 
     /*
+     * "Check for Updates..." landing: GW_CheckForUpdates() only starts the
+     * check (or joins one already running); this is what shows the answer,
+     * once GW_Poll() has one. Called from Run() every pass, the same way
+     * Redraw() there answers GW_LogGeneration() changing -- never blocks,
+     * because it only ever looks at a result that has already arrived.
+     */
+    void ShowUpdateResult()
+    {
+        int  kind;
+        char version[32];
+        char url[256];
+        char reason[96];
+
+        if (!GW_UpdateCheckResult(&kind, version, sizeof(version),
+                                  url, sizeof(url),
+                                  reason, sizeof(reason)))
+            return;
+
+        switch (kind) {
+        case 0: ShowUpdateNewer(version, url);     break;  /* newer */
+        case 1: ShowUpdateCurrent(version);        break;  /* current */
+        default: ShowUpdateFailed(reason);         break;  /* failed */
+        }
+    }
+
+    /* ParamText's one placeholder ("^0" in every DITL in gateway.r) takes
+     * the whole sentence, assembled here rather than split across several
+     * parameters. */
+    static void SetAlertText(const char *text)
+    {
+        Str255 msg;
+
+        ToPascal(text, msg);
+        ParamText(msg, "\p", "\p", "\p");
+    }
+
+    void ShowUpdateNewer(const char *version, const char *url)
+    {
+        char  text[128];
+        short hit;
+
+        std::snprintf(text, sizeof(text),
+                     "Gateway %s is available. You have %s.",
+                     version, GW_VERSION_STRING);
+        SetAlertText(text);
+
+        hit = NoteAlert(kAlrtUpdateNewer, nullptr);
+        if (hit == kAlrtDownloadItem) GW_OpenURL(url);
+    }
+
+    void ShowUpdateCurrent(const char *version)
+    {
+        char text[64];
+
+        std::snprintf(text, sizeof(text), "Gateway %s is up to date.",
+                     version);
+        SetAlertText(text);
+
+        NoteAlert(kAlrtUpdateCurrent, nullptr);
+    }
+
+    void ShowUpdateFailed(const char *reason)
+    {
+        char text[160];
+
+        std::snprintf(text, sizeof(text),
+                     "Gateway could not check for updates: %s", reason);
+        SetAlertText(text);
+
+        StopAlert(kAlrtUpdateFailed, nullptr);
+    }
+
+    /*
      * The item names what the next click will do, so it has to follow the
      * window rather than be set once at startup: "Hide Window" while one is
      * showing, "Show Window" while none is.
@@ -812,6 +900,7 @@ private:
             if (item == kHideItem) ToggleWindow();
             else if (item == kStopItem) ToggleRunning();
             else if (item == kSettingsItem) HandleSettings();
+            else if (item == kCheckUpdatesItem) GW_CheckForUpdates();
             else if (item == kQuitItem) mDone = true;
             break;
 

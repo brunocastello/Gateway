@@ -230,6 +230,10 @@ int           GWStream_ServerStage(const GWStream *s);
  * server-side stream. */
 void          GWStream_ServerDescribe(const GWStream *s, char *out, size_t cap);
 void          GWStream_ServerHelloHex(const GWStream *s, char *out, size_t cap);
+/* The same opening bytes as GWStream_ServerHelloHex(), raw rather than hex,
+ * for gw_hello_ciphers() (src/portable/gw_hello.h) to decode the offered
+ * cipher list from. Returns the number of bytes written to out. */
+size_t        GWStream_ServerHelloRaw(const GWStream *s, unsigned char *out, size_t cap);
 /* The version the browser's handshake settled on, 0x0300 = SSL 3.0 and so
  * on, or 0 before it completed. */
 unsigned int  GWStream_ServerVersion(const GWStream *s);

@@ -35,6 +35,38 @@ int         GW_IsRunning(void);
 /* One cooperative slice. Call once per pass of the WaitNextEvent loop. */
 void        GW_Poll(void);
 
+/*
+ * "Check for Updates..." on the menu: the same check GW_Start() makes once
+ * per launch, but asked for by hand. Ignores check_updates and an
+ * already-finished launch check -- the user asked outright -- and does not
+ * start a second request if one is already in flight; that one's result is
+ * reported instead. Never blocks: like everything else, it is driven from
+ * GW_Poll(), and the result is read back through GW_UpdateCheckResult().
+ */
+void        GW_CheckForUpdates(void);
+
+/*
+ * 1 once, with the buffers filled, the first time after GW_CheckForUpdates()
+ * that GW_Poll() notices its check has landed; 0 otherwise, including every
+ * call after the one true answer. *kind is 0 for a newer release, 1 for up
+ * to date, 2 for failed. version is the release tag (newer) or the running
+ * version (current); url is the platform asset link (newer only); reason is
+ * why, in the debug line's own words (failed only). Any buffer the kind does
+ * not use is left an empty string. Each cap includes room for the
+ * terminator.
+ */
+int         GW_UpdateCheckResult(int *kind,
+                                 char *version, size_t versionCap,
+                                 char *url, size_t urlCap,
+                                 char *reason, size_t reasonCap);
+
+/*
+ * Open url in the system's default browser, for the "Download" button on the
+ * "Check for Updates..." result. 1 on success, 0 if there was no way to ask
+ * (see GWPlat_OpenURL, src/gw_plat.h, for what each platform tries).
+ */
+int         GW_OpenURL(const char *url);
+
 /* Log ring, for the window. */
 int         GW_LogCount(void);
 const char *GW_LogLine(int idx);
@@ -123,6 +155,30 @@ int         GW_ImapPort(void);
 int         GW_PopPort(void);
 int         GW_SmtpPort(void);
 int         GW_TunnelPort(void);
+
+/*
+ * The hosts an auto-configuration script was last served for. gw_pac_build's
+ * own comment explains why each is trustworthy: whatever the browser typed
+ * to reach that file is, by construction, an address this browser -- and so
+ * this machine -- can reach. Used to answer an absolute-form request
+ * addressed to Gateway itself locally instead of dialling back out to it
+ * (gw_pac_is_self in gw_pac.c).
+ *
+ * A small fixed set rather than one slot: one slot is last-write-wins, and
+ * any other client on the LAN fetching /proxy.pac with its own Host header
+ * would evict the address the real browser is using, bringing back the
+ * self-loop the single slot was added to avoid. GW_MAX_SELF_HOSTS is plenty
+ * for the handful of names and addresses one machine is actually reached by
+ * (its LAN IP, localhost, maybe a hostname); oldest is dropped first once
+ * full.
+ */
+#define GW_MAX_SELF_HOSTS 4
+
+void        GW_NoteSelfHost(const char *host);
+
+/* GWPacNextHost-shaped: fetches known self-host number `index` into `out`,
+ * returning 0 past the end. Passed straight to gw_pac_is_self. */
+int         GW_SelfHostAt(int index, char *out, size_t cap);
 
 #ifdef __cplusplus
 }

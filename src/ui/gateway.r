@@ -50,3 +50,65 @@ data 'vers' (2, purgeable) {
     $"05" "0.3.8"
     $"07" "Gateway"
 };
+
+/*
+ * "Check for Updates..." result dialogs (main.cpp's kAlrtNewer/kAlrtCurrent/
+ * kAlrtFailed). Written as raw 'ALRT'/'DITL' data for the same reason as
+ * SIZE and vers above -- Rez's own built-in knowledge of these two types
+ * needs no #include, so it is immune to which RIncludes set is linked in at
+ * the moment Rez runs.
+ *
+ * 'ALRT': Rect boundsRect(8) + INTEGER itemsID(2) + StageList stages(2).
+ * stages 0x7777 draws the box, bolds item 1, and beeps once, on every one of
+ * the four stages the Alert Manager tracks -- this box is shown once and
+ * dismissed, so the four stages never differ from each other.
+ *
+ * 'DITL': INTEGER (item count - 1), then per item: a 4-byte placeholder Rez
+ * leaves zero, Rect(8), a type byte, a length byte, and that many bytes of
+ * data -- Pascal-style but without the usual second length prefix -- padded
+ * to an even offset. Confirmed against the empty DITL 209 in
+ * gateway_settings.r, whose $"FFFF" is exactly this count field for zero
+ * items. Item 1 is always the button Return/a click without moving the
+ * mouse activates, so it is the row's primary action (Download, or the
+ * dialog's only OK). Every DITL below also carries an iconItem: the Alert
+ * Manager does not draw the system icon on its own, the DITL's own iconItem
+ * does, referencing the System file's stop (0) or note (1) 'ICON' by id.
+ *
+ * Each statText item holds the single placeholder "^0" -- main.cpp calls
+ * ParamText() with the one assembled sentence before Alert()/StopAlert(),
+ * rather than splitting the message across several parameters.
+ */
+
+/* 300: a newer release is available. Download / Later. */
+data 'ALRT' (300, "Update available", purgeable) {
+    $"0046 005A 00D2 01D6 012C 7777"
+};
+data 'DITL' (300, "Update available", purgeable) {
+    $"0003 0000 0000 006C 0126 0082 016C 0408"
+    $"446F 776E 6C6F 6164 0000 0000 006C 00CE"
+    $"0082 011E 0405 4C61 7465 7200 0000 0000"
+    $"0010 0040 0064 016C 0802 5E30 0000 0000"
+    $"0010 0010 0030 0030 2002 0001"
+};
+
+/* 301: the running version is current. OK only. */
+data 'ALRT' (301, "Up to date", purgeable) {
+    $"005A 0064 00C8 01A4 012D 7777"
+};
+data 'DITL' (301, "Up to date", purgeable) {
+    $"0002 0000 0000 004E 00F0 0064 012C 0402"
+    $"4F4B 0000 0000 0010 0040 0046 012C 0802"
+    $"5E30 0000 0000 0010 0010 0030 0030 2002"
+    $"0001"
+};
+
+/* 302: the check failed. OK only, the stop icon. */
+data 'ALRT' (302, "Update check failed", purgeable) {
+    $"0050 0050 00D2 01B8 012E 7777"
+};
+data 'DITL' (302, "Update check failed", purgeable) {
+    $"0002 0000 0000 0060 0118 0076 0154 0402"
+    $"4F4B 0000 0000 0010 0040 005A 0154 0802"
+    $"5E30 0000 0000 0010 0010 0030 0030 2002"
+    $"0000"
+};

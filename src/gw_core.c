@@ -18,11 +18,13 @@
 
 #include <certainly.h>
 #include "portable/gw_log.h"
+#include "portable/gw_url.h"
 #include "portable/gw_util.h"
 #include "proxy/gw_httpproxy.h"
 #include "proxy/gw_mail.h"
 #include "proxy/gw_token.h"
 #include "proxy/gw_tunnel.h"
+#include "proxy/gw_updater.h"
 
 static GWListener *sHttp;
 static GWListener *sWayback;
@@ -34,6 +36,12 @@ static GWListener *sSmtp;
 static GWListener *sTunnel;
 static char        sStatus[128];
 static int         sHttpPort, sImapPort, sPopPort, sSmtpPort, sTunnelPort;
+/* Filled in the order slots first fill, then wrapped in the same order, so
+ * every entry in [0, sSelfHostCount) is always valid -- see GW_NoteSelfHost
+ * and GW_SelfHostAt below. */
+static char         sSelfHosts[GW_MAX_SELF_HOSTS][GW_MAX_HOST];
+static int          sSelfHostCount;
+static int          sSelfHostNext;
 
 /* Which modules the prefs asked for: http_enabled, mail_enabled,
  * wayback_enabled, tunnel_enabled. A module that is off is never
@@ -277,6 +285,8 @@ int GW_IsRunning(void)
  */
 int GW_Start(void)
 {
+    int ok;
+
     if (sRunning) return 1;
 
     if (sProxyOn || sWaybackOn) GWProxy_Init();
@@ -285,7 +295,13 @@ int GW_Start(void)
         GWToken_Init();
     }
     if (sTunnelOn) GWTunnel_Init();
-    return listeners_open();
+    ok = listeners_open();
+    /* A little after the listeners are up, not before: nothing about this
+     * check should delay the modules a person is actually here for.
+     * GWUpdater_Request() is a no-op after its first call, so a later
+     * Stop/Start from the Preferences window does not repeat it. */
+    if (ok) GWUpdater_Request();
+    return ok;
 }
 
 /* One-time setup: the network stack, the TLS library, the settings. */
@@ -384,6 +400,8 @@ int GW_Init(void)
         GWToken_Init();
     }
     if (sTunnelOn) GWTunnel_Init();
+    GWUpdater_Init();          /* unconditional: check_updates gates the
+                                 * request, not whether it exists */
 
     sHttpPort = (int)GWConfig_Num("http_port", 8765);
     sImapPort = (int)GWConfig_Num("imap_port", 1993);
@@ -398,7 +416,6 @@ int GW_Init(void)
               strlen(GWConfig_Str("wayback_date", "20011231")));
     sWaybackSet.tolerance    = GWConfig_Num("wayback_tolerance", 730);
     sWaybackSet.geocities    = GWConfig_Num("wayback_geocities", 1) != 0;
-    sWaybackSet.quick_images = GWConfig_Num("wayback_quick_images", 1) != 0;
     sWaybackSet.ct_encoding  = GWConfig_Num("wayback_ct_encoding", 1) != 0;
     sWaybackPort = (int)GWConfig_Num("wayback_port", 8888);
 
@@ -523,6 +540,11 @@ void GW_Stop(void)
     GWProxy_Shutdown();
     GWMail_Shutdown();
     GWTunnel_Shutdown();
+    /* A check still in flight would otherwise be left holding its GWStream
+     * to github.com open with nothing polling it, since GW_Poll() returns
+     * early while stopped. GWUpdater_Request() will not repeat it on a
+     * later Start -- once per launch means once, even an aborted one. */
+    GWUpdater_Abort();
 
     sRunning = 0;
     gw_log("gateway stopped");
@@ -544,6 +566,7 @@ void GW_Shutdown(void)
     GWMail_Shutdown();
     GWTunnel_Shutdown();
     GWToken_Shutdown();
+    GWUpdater_Shutdown();
     MacTLS_Shutdown();
     GWNet_Shutdown();
 }
@@ -551,6 +574,14 @@ void GW_Shutdown(void)
 void GW_Poll(void)
 {
     GWConn *c;
+
+    /*
+     * The update check is polled first because the menu item may ask for one
+     * while Gateway is stopped, and the person who chose it is waiting for an
+     * answer. Stop aborts a check already in flight (GWUpdater_Abort), so
+     * this runs only one someone asked for after stopping.
+     */
+    GWUpdater_Poll();
 
     /* Stopped means stopped: no listeners, no sessions, no token refresh. */
     if (!sRunning) return;
@@ -639,6 +670,60 @@ int         GW_ImapPort(void)        { return sImapPort; }
 int         GW_PopPort(void)         { return sPopPort; }
 int         GW_SmtpPort(void)        { return sSmtpPort; }
 int         GW_TunnelPort(void)      { return sTunnelPort; }
+
+void GW_CheckForUpdates(void)
+{
+    GWUpdater_RequestManual();
+}
+
+int GW_UpdateCheckResult(int *kind,
+                         char *version, size_t versionCap,
+                         char *url, size_t urlCap,
+                         char *reason, size_t reasonCap)
+{
+    GWManualResult r;
+
+    if (!GWUpdater_ManualResult(&r)) return 0;
+
+    if (kind != NULL) *kind = (int)r.kind;
+    if (version != NULL && versionCap > 0)
+        gw_copy_n(version, versionCap, r.version, strlen(r.version));
+    if (url != NULL && urlCap > 0)
+        gw_copy_n(url, urlCap, r.url, strlen(r.url));
+    if (reason != NULL && reasonCap > 0)
+        gw_copy_n(reason, reasonCap, r.reason, strlen(r.reason));
+    return 1;
+}
+
+int GW_OpenURL(const char *url)
+{
+    return GWPlat_OpenURL(url);
+}
+
+void GW_NoteSelfHost(const char *host)
+{
+    int i;
+
+    if (host == NULL || host[0] == '\0') return;
+
+    /* Already known: leave the set as it is rather than moving it to the
+     * front, so a client re-fetching the script every so often does not
+     * churn the ring. */
+    for (i = 0; i < sSelfHostCount; i++)
+        if (gw_stricmp(sSelfHosts[i], host) == 0) return;
+
+    gw_copy_n(sSelfHosts[sSelfHostNext], sizeof(sSelfHosts[sSelfHostNext]),
+              host, strlen(host));
+    sSelfHostNext = (sSelfHostNext + 1) % GW_MAX_SELF_HOSTS;
+    if (sSelfHostCount < GW_MAX_SELF_HOSTS) sSelfHostCount++;
+}
+
+int GW_SelfHostAt(int index, char *out, size_t cap)
+{
+    if (index < 0 || index >= sSelfHostCount) return 0;
+    gw_copy_n(out, cap, sSelfHosts[index], strlen(sSelfHosts[index]));
+    return 1;
+}
 
 int GW_ActiveSessions(void)
 {
