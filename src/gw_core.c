@@ -575,6 +575,14 @@ void GW_Poll(void)
 {
     GWConn *c;
 
+    /*
+     * The update check is polled first because the menu item may ask for one
+     * while Gateway is stopped, and the person who chose it is waiting for an
+     * answer. Stop aborts a check already in flight (GWUpdater_Abort), so
+     * this runs only one someone asked for after stopping.
+     */
+    GWUpdater_Poll();
+
     /* Stopped means stopped: no listeners, no sessions, no token refresh. */
     if (!sRunning) return;
 
@@ -649,7 +657,6 @@ void GW_Poll(void)
     }
 
     GWToken_Poll();
-    GWUpdater_Poll();
     GWProxy_Poll();
     GWMail_Poll();
     GWTunnel_Poll();
