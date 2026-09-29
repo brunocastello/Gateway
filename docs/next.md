@@ -61,10 +61,10 @@ Verified on hardware on 2026-09-29 unless a bullet says otherwise.
   new to stage (it has to follow the `gw_net` group on the link line; placed
   in front of it, the first build failed on three undefined references).
 
-  **Still to verify, and only possible after the release:** the Download
-  button and the `G50` log line, which need a published release newer than
-  the running copy. The first 0.3.8 → 0.3.9 check does it: choose "Check
-  for Updates..." on a 0.3.8 machine and click Download, on both platforms.
+  The Download button was verified after the release, from a 0.3.8 install
+  checking against the published 0.3.9 (2026-09-29). The Mac dialogs were
+  then centred on the main screen (`999cb93`) and the 0.3.9 Mac downloads
+  rebuilt from it.
 
 0.3.9 shipped on 2026-09-29, and 0.3.8 on 2026-09-28. The upstream side is TLS 1.3 and finished; the
 browser side serves everything from Netscape 3 to Classilla over SSL 3.0 or
