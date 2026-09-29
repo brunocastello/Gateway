@@ -141,7 +141,7 @@ const Field kFields[] = {
       "Byte counts, hello bytes and library error numbers,\n"
       "under each line. For reporting a problem." },
     { 9, Check, "check_updates", "Check for a newer release at launch", "1",
-      "Asks GitHub once at startup and notes a new version in the log." },
+      "Looks for a new version of Gateway once at startup." },
 };
 const int kFieldCount = sizeof(kFields) / sizeof(kFields[0]);
 const char *const kRedirects[] = { "auto", "always", "never" };
