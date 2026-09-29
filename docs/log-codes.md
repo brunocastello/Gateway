@@ -93,7 +93,7 @@ free number.
 | `H24` | the browser stopped reading, so the connection was dropped | The browser left data unread for the whole grace period. |
 | `H25` | out of memory: a browser's connection was refused | Raise Gateway's partition in Get Info. |
 | `H26` | all … proxy connections are in use; new ones wait for a free one | Written once each time the proxy fills up. Connections wait in the backlog rather than being refused. |
-| `H27` | upgrading the connection to …:80 to https | `connect_upgrade` is on and the `CONNECT` named port 80: the inner request is terminated as HTTP and re-originated over TLS to port 443, single-shot, then the tunnel closes. |
+| `H27` | *retired* | Was `connect_upgrade`'s upgrade line; the feature was reverted 2026-09-29 with no client verified end to end (see `docs/next.md`, "Deferred, not rejected"). Not reused. |
 
 ## M — the mail splice and the token refresh
 

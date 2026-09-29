@@ -25,7 +25,6 @@ max_body_mb      = 0
 rewrite_https    = 1
 connect_mitm     = 0
 allow_sslv3      = 1
-connect_upgrade  = 0
 
 
 # --------------------------------------------------------- Wayback proxy

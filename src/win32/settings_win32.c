@@ -89,8 +89,6 @@ static const Field kFields[] = {
       "Requires the Gateway CA in the browser. Choose one mode." },
     { 1, Check, "allow_sslv3", "&Offer SSL 3.0 to browsers without TLS", "1",
       "Netscape 3, IE 3 and IE 4. Anything newer still gets TLS." },
-    { 1, Check, "connect_upgrade", "&Upgrade a plaintext CONNECT on port 80 to https", "0",
-      "For a client with no TLS of its own that still sends CONNECT." },
     { 1, Redirect, "follow_redirects", "Follow redirects:", "auto", "Automatic follows HTTPS redirects." },
     { 1, Number, "max_body_mb", "Largest response (MB):", "0", "0 for no limit." },
     { 1, Number, "max_connects", "Connections opening at once:", "8", "" },

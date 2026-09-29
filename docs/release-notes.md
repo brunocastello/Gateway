@@ -7,8 +7,6 @@ Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rath
 
 ## What's new in 0.3.9
 
-**A `CONNECT` to port 80 can now speak https instead.** Some clients open a plain `CONNECT host:80` rather than a `443` one, and Gateway used to just bounce those bytes. With `connect_upgrade` on (off by default), Gateway reads the plaintext request inside the tunnel and re-sends it over TLS to port 443, single-shot, then closes the tunnel — no certificate is shown to anyone, so this is protocol translation rather than MITM. Every other port is still a raw tunnel.
-
 **Gateway no longer dials itself.** A proxy-configured browser re-fetching its own auto-configuration script sends the absolute form of the URL, and when that named Gateway's own address, Gateway used to answer it by opening a connection back to itself — it worked, but spent a splice slot on the loop. Gateway now remembers up to four addresses it has been asked for this way and answers them locally; the very first request for a given address still makes the one round trip that teaches Gateway the address.
 
 **Gateway can say when it is out of date.** Once per launch, a little after the listeners are up, it asks github.com once whether a newer release exists. When one does, it logs a single line (code `G50`) with an `http://` link to download it for this platform; otherwise it says nothing, whether up to date or the check simply failed. `check_updates = 0` turns the request off entirely.

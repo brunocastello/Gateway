@@ -2,13 +2,6 @@
 
 ## Built for 0.3.9
 
-- **`connect_upgrade`**, re-applied by hand from roytam1's `gw034` fork:
-  answer a `CONNECT` to port 80 by terminating the inner plaintext request
-  and re-originating it over TLS to port 443, single-shot. Off by default.
-  Still wants one hardware/curl check before it can be called verified: a
-  client that really sends `CONNECT host:80` and reads the answer back --
-  `curl -p -x http://<gateway>:8765 http://example.com/` sends exactly that.
-  (Was item 3 of *Ideas for 0.3.9*.)
 - **A request for Gateway's own address, through Gateway**, `#47` from the
   2026-09-20 session: Classilla, on manual settings, asked the proxy for
   `http://proxyweb.com:8765/proxy.pac`, so Gateway opened a connection to
@@ -55,7 +48,7 @@ trying again.
 ## Ideas for 0.3.9
 
 Picked on 2026-09-28 for later sessions; each is written up further down.
-Item 3 is done (see *Built for 0.3.9* at the top); items 1 and 2 are closed.
+Items 1 and 2 are closed; item 3 was built, then reverted.
 
 1. **Keep-alive inside the terminated tunnel** — closed 2026-09-29 as not
    worth building. (Item 1 below.)
@@ -63,8 +56,9 @@ Item 3 is done (see *Built for 0.3.9* at the top); items 1 and 2 are closed.
    on 0.3.8; the 32-bit build sends an SSLv2-framed SSL 3.0 hello and hangs
    up after our first flight regardless of the ServerKeyExchange or CA
    trust. Both are served by `rewrite_https`. (Item 2 below.)
-3. **roytam1's `connect_upgrade`** — built. See *Built for 0.3.9* at the top;
-   the hardware/curl check is still outstanding.
+3. **roytam1's `connect_upgrade`** — built, then reverted 2026-09-29: no
+   client on hand could deliver a well-formed inner request end to end. See
+   *Deferred, not rejected* below.
 
 Settled the same night, after 0.3.8 shipped:
 
@@ -198,6 +192,33 @@ shipped trusting in 1996 were MD5-signed; Gateway's leaf is always SHA-1
 Both builds are served today by `rewrite_https` (verified: FrogFind loads
 over the 16-bit build's plain-proxy path). Closed with that outcome; reopen
 only with a specific new idea to test, such as an MD5-signed leaf.
+
+---
+
+## Deferred, not rejected
+
+**`connect_upgrade`**, built and reverted on `gw039` (0fbad79, follow-up
+c63522f). Answers a plaintext `CONNECT host:80` by terminating the inner
+request as HTTP and re-originating it over TLS to port 443, single-shot --
+the opposite case from `connect_mitm`. Off by default, wired into both
+Preferences windows, documented in `docs/prefs.md` and
+`docs/prefs-example.txt`; log code `H27`.
+
+Reverted 2026-09-29: hardware evidence found no client on hand that could
+drive it end to end. PuTTY 0.53b (Raw, HTTP proxy pointed at Gateway) sent
+`CONNECT 140.82.121.4:80`, and Gateway logged `H27` correctly, but the inner
+request never arrived whole -- with local line editing on, the final blank
+line was never sent (35 bytes buffered: `HEAD / HTTP/1.0\r\nHost:
+github.com\r\n`, then the `H23` idle timeout); with it off, Gateway answered
+`H05` (unparseable). Win95's `telnet.exe` cannot speak HTTP to Gateway at
+all -- even a plain `GET` gets nothing back. Nothing verified the upgrade
+end to end, so it is deferred rather than confirmed working.
+
+A future test needs a client that sends `CONNECT host:80` and then a
+complete HTTP request in one go -- `curl -p -x http://<gateway>:8765
+http://example.com/` from a machine that can reach Gateway does exactly
+that. Revive it by reverting the revert (the commits above, plus the `H27`
+part of dfe5aef, which is otherwise general and stays).
 
 ---
 
