@@ -52,9 +52,9 @@ or click through the warning.
 
 Since 0.3.5 this reaches every browser in range with no TLS of its own:
 Netscape 3, IE 4 and IE 5 for Mac OS 9 are served over SSL 3.0.
-`allow_sslv3 = 0` refuses it if you would rather not. The 16-bit (Windows
-3.1) build of IE 3 cannot do SSL at all and falls back to `rewrite_https`
-(the default), which works; the 32-bit build is untested.
+`allow_sslv3 = 0` refuses it if you would rather not. Both the 16-bit
+(Windows 3.1) and 32-bit builds of IE 3 cannot complete SSL through Gateway
+and fall back to `rewrite_https` (the default), which works.
 
 ## Mail
 

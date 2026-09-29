@@ -40,25 +40,6 @@
   a small state machine on a `GWStream`, driven from the cooperative loop the
   way `gw_token.c` drives a token refresh -- `src/proxy/gw_updater.c`. New
   log code `G50`.
-- **An RSA_EXPORT ServerKeyExchange**, for the SSL 3.0 / TLS 1.0 40-bit
-  suites (0x0003, 0x0006): 2026-09-29 hardware evidence (item 2 below) found
-  32-bit IE 3.0 offering suite 0003 and nothing else, then hanging up on our
-  Certificate with no key it was allowed to encrypt a pre-master secret to.
-  RFC 6101 §5.6.3/§5.6.7 and RFC 2246 §7.4.3 both call for a temporary
-  512-bit key, signed with the certificate's key, whenever the certificate
-  key is longer -- Gateway's 1024-bit leaf always is. Built in full: a
-  lazily generated, process-lifetime temporary key
-  (`third_party/certainly/src/gw_export_key.c`), portable and host-tested
-  wire framing (`src/portable/gw_skexport.c`), and the matching
-  ClientKeyExchange decrypt against the temporary key rather than the
-  certificate's. See PATCHES.md §38 for the full account, including why the
-  same message was tried once and removed (5e13663 -- a missing 2-byte
-  signature length prefix, not a client that rejected the idea). **Pending:**
-  a re-run against the IE 3.0 hardware that reported this, and a Netscape
-  3.04 regression check -- it negotiates export suites today and completes
-  *without* this message, and PATCHES.md §36 records that the same browser
-  rejects the message outright when it is sent, from the previous attempt.
-  Neither has been re-tested since this was built.
 
 0.3.8 shipped on 2026-09-28. The upstream side is TLS 1.3 and finished; the
 browser side serves everything from Netscape 3 to Classilla over SSL 3.0 or
@@ -78,11 +59,10 @@ Item 3 is done (see *Built for 0.3.9* at the top); items 1 and 2 are closed.
 
 1. **Keep-alive inside the terminated tunnel** — closed 2026-09-29 as not
    worth building. (Item 1 below.)
-2. **IE 3.0's hello bytes** — the 16-bit build logs S01 on 0.3.8. The 32-bit
-   build was reopened 2026-09-29 with a usable image and answered: it
-   offers only a 40-bit suite and hangs up on our Certificate with nothing
-   it can encrypt to. See *An RSA_EXPORT ServerKeyExchange* above, now
-   built and pending a hardware re-run. (Item 2 below.)
+2. **IE 3.0's hello bytes** — closed 2026-09-29: the 16-bit build logs S01
+   on 0.3.8; the 32-bit build sends an SSLv2-framed SSL 3.0 hello and hangs
+   up after our first flight regardless of the ServerKeyExchange or CA
+   trust. Both are served by `rewrite_https`. (Item 2 below.)
 3. **roytam1's `connect_upgrade`** — built. See *Built for 0.3.9* at the top;
    the hardware/curl check is still outstanding.
 
@@ -179,7 +159,7 @@ this is still worth its cost.
 
 ## 2. IE 3.0's hello bytes — closed 2026-09-29
 
-**Result.** Re-run on 2026-09-29 with 0.3.8 on Windows 95 OSR2 (86Box), the
+**16-bit result.** Re-run on 2026-09-29 with 0.3.8 on Windows 95 OSR2 (86Box), the
 16-bit Windows 3.1 build of IE 3.02, `connect_mitm 1`, a typed
 `https://example.com/`: `#1 Gateway answers the browser's secure connection
 to example.com:443 itself`, then `the browser closed the secure connection
@@ -190,56 +170,34 @@ inferred from silence. The same browser loads plain `http://` pages through
 Gateway (FrogFind, in the same session), so it is served by `rewrite_https`,
 the default, and that is its supported path.
 
-The 32-bit question below stays unanswered, and is closed as untestable
-rather than open: it needs a Windows 95 image that never had IE 4, since the
-32-bit 3.02 setup will not install over IE 4 (see *Tried and not worth
-repeating*). Reopen it only with such an image; the two runs below take ten
-minutes.
+**32-bit result.** Reopened 2026-09-29 with a Windows 95 image that never had
+IE 4 (see *Tried and not worth repeating*). 32-bit IE 3.01 (4.70.1215),
+`connect_mitm 1`, `allow_sslv3 1`, a typed `https://`: it sends an
+SSLv2-framed SSL 3.0 hello offering only suite `0003`
+(RSA_EXPORT_RC4_40_MD5) -- plus PCT markers when "PCT 1.0" is ticked -- and
+hangs up after our first flight (Certificate + ServerHelloDone) with no
+alert: `S03`, `SSLv2 hello, version 0300, suite 0003, rx 51, rx after our
+flight 0`, `offered suites: 8f8001 800001 810001 820001 830004 842840
+020080 000003`. This held with or without Gateway's CA installed in the
+browser's trust store, and with or without a correctly framed RSA_EXPORT
+ServerKeyExchange supplying the temporary key the suite calls for (built and
+tested on this hardware 2026-09-29, then reverted -- see PATCHES.md §38's
+history and *An RSA_EXPORT ServerKeyExchange* below). Neither the
+certificate chain nor the missing key was the cause.
 
-What was planned, kept for that case:
+No SSLv2-framed hello has ever completed a handshake with any browser
+tested: IE 5.1.7 Mac abandons its own SSLv2-framed attempt at the same point
+(`rx after our flight 0`) and then succeeds on a second tunnel carrying a
+native SSL 3.0 hello (see *IE 5.1.7's double connect* below). The
+SSLv2-framed reply path is therefore the leading suspect for what stops
+IE 3 -- unproven, and nothing here isolates it further. One untried idea:
+IE 3.0 may not accept a sha1WithRSA-signed leaf, since certificates it
+shipped trusting in 1996 were MD5-signed; Gateway's leaf is always SHA-1
+(CLAUDE.md, TLS Library rule).
 
-32-bit IE 3.0x on Windows 95 has only ever produced "CONNECT, terminating
-TLS, then silence" — three attempts alike, all on builds from before the
-hello logger existed (fc4bb6f). No hello bytes from any IE 3 have been seen.
-The working hypothesis is that it sends a PCT hello by default (`80 .. 80 01`
-in the hello log), which is not SSL and is not served; that is what IE 3.0
-was documented to do, not something the log has shown.
-
-The test is therefore two steps on the 32-bit build, with 0.3.6 or later:
-read the hello bytes as shipped, and then again with "PCT 1.0" unticked in
-Options ▸ Advanced. If the second attempt shows an SSLv2-framed hello with
-version `03 00`, PATCHES.md §22 already converts it and IE 3 needs a line in
-the README, not code. If both attempts show nothing at all, IE 3's secure
-path is failing before it writes — the same signature as the 16-bit build
-below — and the abandon and timeout lines will say whether it closed or hung.
-
-Already known: the 16-bit Windows 3.1 build of 3.0 fails identically with
-PCT unticked and SSL 2/3 ticked (tried 2026-09-20). Its failure is before
-protocol selection, so it says nothing about the 32-bit build.
-
-**Reopened and answered, 2026-09-29.** A Windows 95 image without IE 4
-turned up, so the 32-bit question above was no longer untestable. 32-bit IE
-3.0 (4.70.1215), `connect_mitm 1`, `allow_sslv3 1`, a typed `https://`:
-
-```
-#2 the browser gave up after seeing our certificate (S03)
-  SSLv2 hello, version 0300, suite 0003, rx 33, rx after our flight 0, in-rectype 22, incrypt 0, session new
-  first bytes: 80 1f 01 03 00 00 06 00 00 00 10 02 00 80 00 00 03 ...
-  offered suites: 020080 000003
-```
-
-Hello bytes at last: an SSLv2-framed hello, version `03 00` (already
-converted by PATCHES.md §22, as hoped), offering only suite `0003` --
-RSA_EXPORT_RC4_40_MD5, a 40-bit-only suite. Not a PCT default, not a dead
-secure path: it asked for the one thing Gateway could not give it. RFC 6101
-§5.6.3/§5.6.7 and RFC 2246 §7.4.3 both require a ServerKeyExchange carrying a
-temporary key of at most 512 bits whenever the certificate key is longer,
-which Gateway's 1024-bit leaf always is; Gateway sent none, so the browser
-received our Certificate and ServerHelloDone with nothing it was allowed to
-encrypt a pre-master secret to, and hung up. Built in PATCHES.md §38 (see
-*Built for 0.3.9* at the top and the *RSA_EXPORT ServerKeyExchange* entry
-below) -- host-tested for its wire framing, not yet re-run against this
-hardware. Reopen this item only if that re-run still fails.
+Both builds are served today by `rewrite_https` (verified: FrogFind loads
+over the 16-bit build's plain-proxy path). Closed with that outcome; reopen
+only with a specific new idea to test, such as an MD5-signed leaf.
 
 ---
 
@@ -276,16 +234,19 @@ completes. It is the browser's own probing, costs one abandoned handshake per
 host, and is harmless. Resumption (item 1) would make the second tunnel
 cheap; nothing makes the first go away.
 
-**An RSA_EXPORT ServerKeyExchange — no longer in this section.** The
-precondition this entry asked for (a client's hello offering nothing but
-0003/0006, abandoning at `rx-after-flight 0`) was met on 2026-09-29 by
-32-bit IE 3.0, and the message was built complete, with a real temporary
-key and the matching ClientKeyExchange decrypt -- see *An RSA_EXPORT
-ServerKeyExchange* under *Built for 0.3.9* and item 2 above, and PATCHES.md
-§38. roytam1's earlier attempt (removed in 5e13663) is kept as reference in
-that section: it was never sent, and separately from Netscape 3.04
-rejecting the idea outright, its signature had no length prefix, so no
-client that read that far would have accepted it either.
+**An RSA_EXPORT ServerKeyExchange.** SSL 3.0's export suites call for a
+temporary 512-bit key when the certificate key is longer. roytam1 built one
+first (never sent, public half only, and its signature had no length
+prefix) and it was removed in 5e13663. Built again complete on 2026-09-29
+(54f01fe, PATCHES.md §38: a real temporary key, host-tested wire framing,
+and the matching ClientKeyExchange decrypt against it) once 32-bit IE 3.0's
+hello finally showed the precondition -- an offer of nothing but 0003, then
+`rx-after-flight 0`. Tested on the hardware that motivated it and made no
+difference: IE 3 still hangs up after our first flight with no alert,
+message present or not. Reverted the same day. See item 2 above for what
+the hardware showed instead. Bring it back only alongside a specific reason
+to think the missing key -- rather than the SSLv2-framed reply path or the
+certificate's signature algorithm -- is what stops a client.
 
 **The auto-configuration script on Classilla.** Not working as of
 2026-09-20: Classilla fetches `/proxy.pac` (the log shows it served, 556

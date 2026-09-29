@@ -13,8 +13,6 @@ Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rath
 
 **Gateway can say when it is out of date.** Once per launch, a little after the listeners are up, it asks github.com once whether a newer release exists. When one does, it logs a single line (code `G50`) with an `http://` link to download it for this platform; otherwise it says nothing, whether up to date or the check simply failed. `check_updates = 0` turns the request off entirely.
 
-**40-bit export browsers, such as Internet Explorer 3.0, should now be able to complete a secure connection through `connect_mitm`** — expected pending a hardware re-test, since the previous handshake stopped one message short of it.
-
 ## Setting it up
 
 Point the browser's HTTP proxy at the machine running Gateway, port `8765`. Classilla also needs `network.http.proxy.use-http-proxy-for-https` set to `true` in about:config.

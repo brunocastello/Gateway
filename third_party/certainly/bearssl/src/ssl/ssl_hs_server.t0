@@ -34,19 +34,6 @@
 preamble {
 
 /*
- * Gateway (PATCHES.md §38): the temporary key for the SSL 3.0 / TLS 1.0
- * RSA_EXPORT suites lives in Certainly (gw_export_key.c), which is where
- * Gateway's seeded entropy pool already is; the message's wire framing
- * is portable and host-tested (gw_skexport.c, src/portable); the log
- * line at the point of use goes through gw_log.h, the same one
- * server.c uses. All three resolve at final link, same as server.c
- * already reaching into src/ssl3.
- */
-#include "gw_export_key.h"
-#include "gw_skexport.h"
-#include "gw_log.h"
-
-/*
  * This macro evaluates to a pointer to the server context, under that
  * specific name. It must be noted that since the engine context is the
  * first field of the br_ssl_server_context structure ('eng'), then
@@ -55,25 +42,6 @@ preamble {
  * within the structure work for both kinds of context.
  */
 #define CTX  ((br_ssl_server_context *)ENG)
-
-/*
- * Whether this handshake needs the RSA_EXPORT ServerKeyExchange: the
- * negotiated suite is 40-bit-only (0x0003, 0x0006 -- 0x0008 has no
- * record layer here, see ssl3_engine.c, so it never reaches this point)
- * and the certificate key is bigger than the temporary key export
- * clients are allowed to use. Read at both write-ServerKeyExchange time
- * and ClientKeyExchange time; the suite and the certificate are both
- * fixed for the life of one handshake, so recomputing it is exactly as
- * correct as caching it and needs no new field on the context.
- */
-static int
-use_rsa_export_ske(const br_ssl_server_context *ctx)
-{
-	unsigned suite = ctx->eng.session.cipher_suite;
-
-	return (suite == 0x0003 || suite == 0x0006)
-		&& ctx->chain_handler.single_rsa.sk->n_bitlen > 512;
-}
 
 /*
  * Decrypt the pre-master secret (RSA key exchange).
@@ -86,22 +54,9 @@ do_rsa_decrypt(br_ssl_server_context *ctx, int prf_id,
 	unsigned char rpms[48];
 
 	/*
-	 * Decrypt the PMS -- with the temporary key when the
-	 * ServerKeyExchange sent one (write-ServerKeyExchange below), since
-	 * that is what the client encrypted to; with the certificate's own
-	 * key otherwise, as before.
+	 * Decrypt the PMS.
 	 */
-	if (use_rsa_export_ske(ctx)) {
-		const unsigned char *mod, *exp;
-		size_t mod_len, exp_len;
-		const br_rsa_private_key *tsk =
-			gw_export_key_get(&mod, &mod_len, &exp, &exp_len);
-
-		x = (tsk != NULL) && br_rsa_ssl_decrypt(
-			br_rsa_private_get_default(), tsk, epms, len);
-	} else {
-		x = (*ctx->policy_vtable)->do_keyx(ctx->policy_vtable, epms, &len);
-	}
+	x = (*ctx->policy_vtable)->do_keyx(ctx->policy_vtable, epms, &len);
 
 	/*
 	 * Set the first two bytes to the maximum supported client
@@ -248,91 +203,6 @@ hash_data(br_ssl_server_context *ctx,
 		hf->out(&hc.vtable, dst);
 		return (hf->desc >> BR_HASHDESC_OUT_OFF) & BR_HASHDESC_OUT_MASK;
 	}
-}
-
-/*
- * Gateway (PATCHES.md §38): write a ServerKeyExchange carrying a
- * temporary RSA key for the SSL 3.0 / TLS 1.0 RSA_EXPORT suites --
- * RFC 6101 s5.6.3/s5.6.7 and RFC 2246 s7.4.3. The wire framing (the
- * ServerRSAParams structure, the 2-byte signature length the last
- * attempt at this message left out -- 5e13663, which is why no client
- * that got as far as reading it would have accepted it -- and the
- * handshake header) lives in gw_skexport.c/.h, a portable file with a
- * host test (tests/host); this function does only what needs BearSSL:
- * fetch the temporary key, compute the old-style RSA signature hash
- * (RFC 2246 s4.7: MD5(client_random + server_random + params)
- * concatenated with SHA1 of the same, 36 bytes, no ASN.1 DigestInfo --
- * do_sign's algo_id 0 means exactly that, ssl_scert_single_rsa.c's
- * sr_do_sign), sign it with the certificate's key, and place the
- * result in the handshake output buffer alongside write-Certificate
- * and the rest.
- *
- * Returns the number of bytes written (header included), or a negative
- * BR_ERR_* code when there was no key, no room, or signing failed --
- * any of which fails the handshake exactly as an unservable suite
- * already would.
- */
-static int
-do_rsa_export_ske(br_ssl_server_context *ctx)
-{
-	const unsigned char *mod, *exp;
-	const br_rsa_private_key *tsk;
-	size_t mod_len, exp_len, params_len, hv_len, sig_len, body_len, avail;
-	unsigned char *p;
-
-	tsk = gw_export_key_get(&mod, &mod_len, &exp, &exp_len);
-	if (tsk == NULL) {
-		return -BR_ERR_INVALID_ALGORITHM;
-	}
-
-	p = ctx->eng.hbuf_out;
-	if (ctx->eng.hlen_out < 4) {
-		return -BR_ERR_LIMIT_EXCEEDED;
-	}
-	params_len = gw_ske_write_params(mod, mod_len, exp, exp_len,
-		p + 4, ctx->eng.hlen_out - 4);
-	if (params_len == 0) {
-		return -BR_ERR_LIMIT_EXCEEDED;
-	}
-
-	/* Signed params, staged in eng.pad the way do_ecdhe_part1 stages
-	 * its own signature input, then hashed in place. */
-	hv_len = gw_ske_write_signed_input(ctx->eng.client_random,
-		ctx->eng.server_random, p + 4, params_len,
-		ctx->eng.pad, sizeof ctx->eng.pad);
-	if (hv_len == 0) {
-		return -BR_ERR_LIMIT_EXCEEDED;
-	}
-	hv_len = hash_data(ctx, ctx->eng.pad, 0, ctx->eng.pad, hv_len);
-	if (hv_len != 36) {
-		return -BR_ERR_INVALID_ALGORITHM;
-	}
-
-	avail = ctx->eng.hlen_out - 4 - params_len - 2;
-	if (avail > sizeof ctx->eng.pad) {
-		avail = sizeof ctx->eng.pad;
-	}
-	sig_len = (*ctx->policy_vtable)->do_sign(ctx->policy_vtable, 0,
-		ctx->eng.pad, hv_len, avail);
-	if (sig_len == 0) {
-		return -BR_ERR_INVALID_ALGORITHM;
-	}
-
-	body_len = gw_ske_write_message(p + 4, params_len,
-		ctx->eng.pad, sig_len, p, ctx->eng.hlen_out);
-	if (body_len == 0) {
-		return -BR_ERR_LIMIT_EXCEEDED;
-	}
-
-	br_multihash_update(&ctx->eng.mhash, p, body_len);
-	gw_hs_append(&ctx->eng, p, body_len);
-	ctx->eng.hbuf_out += body_len;
-	ctx->eng.hlen_out -= body_len;
-
-	gw_logd("export suite: sent a %u-bit temporary key",
-		(unsigned)(mod_len * 8));
-
-	return (int)body_len;
 }
 
 /*
@@ -1137,90 +1007,69 @@ cc: do-ecdhe-part1 ( curve -- len ) {
 	0 begin dup2 >> 1 and 0= while 1+ repeat
 	swap drop ;
 
-\ Gateway (PATCHES.md §38): whether this handshake needs the RSA_EXPORT
-\ ServerKeyExchange -- see use_rsa_export_ske in the preamble.
-cc: use-rsa-export-ske? ( -- bool ) {
-	T0_PUSHi(use_rsa_export_ske(CTX) ? -1 : 0);
-}
-
-\ Gateway (PATCHES.md §38): write it -- see do_rsa_export_ske in the
-\ preamble, which does the whole job (the message's field widths do not
-\ fit the write8/write16/write-blob words the rest of this file uses).
-\ Returned value is the number of bytes written, or a negative error
-\ code on error.
-cc: do-rsa-export-ske ( -- len ) {
-	T0_PUSHi(do_rsa_export_ske(CTX));
-}
-
 \ Write the Server Key Exchange message (if applicable).
+\ Gateway: no ServerKeyExchange is sent for the SSL 3.0 RSA_EXPORT
+\ suites (0x0003, 0x0006), so the client encrypts the pre-master secret
+\ to the leaf key. RFC 6101 s7.3 calls for a temporary 512-bit key when
+\ the leaf is longer, but Netscape 3.04 rejects message 12 outright and
+\ Netscape 4 completes the export suites without it, so the message
+\ would serve no client that exists.
 : write-ServerKeyExchange ( -- )
-	addr-cipher_suite get16 use-ecdhe? if
-		\ We must select an appropriate curve among the curves that
-		\ are supported both by us and the peer. Right now, we apply
-		\ a fixed preference order: Curve25519, P-256, P-384, P-521,
-		\ then the common curve with the lowest ID.
-		\ (TODO: add some option to make that behaviour configurable.)
-		\
-		\ This loop always terminates because previous processing made
-		\ sure that ECDHE suites are not selectable if there is no common
-		\ curve.
-		addr-curves get32
-		dup 0x20000000 and if
-			drop 29
+	addr-cipher_suite get16 use-ecdhe? ifnot ret then
+
+	\ We must select an appropriate curve among the curves that
+	\ are supported both by us and the peer. Right now, we apply
+	\ a fixed preference order: Curve25519, P-256, P-384, P-521,
+	\ then the common curve with the lowest ID.
+	\ (TODO: add some option to make that behaviour configurable.)
+	\
+	\ This loop always terminates because previous processing made
+	\ sure that ECDHE suites are not selectable if there is no common
+	\ curve.
+	addr-curves get32
+	dup 0x20000000 and if
+		drop 29
+	else
+		dup 0x38000000 and dup if swap then
+		drop lowest-1
+	then
+	{ curve-id }
+
+	\ Compute the signed curve point to send.
+	curve-id do-ecdhe-part1 dup 0< if neg fail then { sig-len }
+
+	\ If using TLS-1.2+, then the hash function and signature
+	\ algorithm are explicitly encoded in the message.
+	addr-version get16 0x0303 >= { tls1.2+ }
+
+	12 write8
+	sig-len addr-ecdhe_point_len get8 + tls1.2+ 2 and + 6 + write24
+
+	\ Curve parameters: named curve with 16-bit ID.
+	3 write8 curve-id write16
+
+	\ Public point.
+	addr-ecdhe_point addr-ecdhe_point_len get8 write-blob-head8
+
+	\ If TLS-1.2+, write hash and signature identifiers.
+	tls1.2+ if
+		\ sign_hash_id contains either a hash identifier,
+		\ or the complete 16-bit value to write.
+		addr-sign_hash_id get16
+		dup 0xFF00 < if
+			write16
 		else
-			dup 0x38000000 and dup if swap then
-			drop lowest-1
+			0xFF and write8
+			\ 'use-rsa-ecdhe?' returns -1 for RSA, 0 for
+			\ ECDSA. The byte on the wire shall be 1 for RSA,
+			\ 3 for ECDSA.
+			addr-cipher_suite get16 use-rsa-ecdhe? 1 << 3 + write8
 		then
-		{ curve-id }
-
-		\ Compute the signed curve point to send.
-		curve-id do-ecdhe-part1 dup 0< if neg fail then { sig-len }
-
-		\ If using TLS-1.2+, then the hash function and signature
-		\ algorithm are explicitly encoded in the message.
-		addr-version get16 0x0303 >= { tls1.2+ }
-
-		12 write8
-		sig-len addr-ecdhe_point_len get8 + tls1.2+ 2 and + 6 + write24
-
-		\ Curve parameters: named curve with 16-bit ID.
-		3 write8 curve-id write16
-
-		\ Public point.
-		addr-ecdhe_point addr-ecdhe_point_len get8 write-blob-head8
-
-		\ If TLS-1.2+, write hash and signature identifiers.
-		tls1.2+ if
-			\ sign_hash_id contains either a hash identifier,
-			\ or the complete 16-bit value to write.
-			addr-sign_hash_id get16
-			dup 0xFF00 < if
-				write16
-			else
-				0xFF and write8
-				\ 'use-rsa-ecdhe?' returns -1 for RSA, 0 for
-				\ ECDSA. The byte on the wire shall be 1 for RSA,
-				\ 3 for ECDSA.
-				addr-cipher_suite get16 use-rsa-ecdhe? 1 << 3 + write8
-			then
-		then
-
-		\ Signature.
-		sig-len write16
-		addr-pad sig-len write-blob
-		ret
 	then
 
-	\ Gateway (PATCHES.md §38): the SSL 3.0 / TLS 1.0 RSA_EXPORT suites
-	\ (0x0003, 0x0006) need a temporary 512-bit key when the certificate
-	\ key is bigger -- RFC 6101 s5.6.3/s5.6.7, RFC 2246 s7.4.3 -- so a
-	\ 40-bit-only client (no suite but those two; IE 3.0 is one, see
-	\ docs/next.md) is not left staring at our Certificate with nothing
-	\ it is allowed to encrypt a pre-master secret to. Every other
-	\ suite's flow, including every TLS 1.0+ non-export suite, is
-	\ unchanged above.
-	use-rsa-export-ske? ifnot ret then
-	do-rsa-export-ske dup 0< if neg fail then drop ;
+	\ Signature.
+	sig-len write16
+	addr-pad sig-len write-blob ;
 
 \ Get length of the list of anchor names to send to the client. The length
 \ includes the per-name 2-byte header, but _not_ the 2-byte header for
