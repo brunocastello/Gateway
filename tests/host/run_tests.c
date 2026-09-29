@@ -21,6 +21,7 @@
 #include "gw_prefs.h"
 #include "gw_provider.h"
 #include "gw_gate.h"
+#include "gw_hello.h"
 #include "gw_rewrite.h"
 #include "gw_x509write.h"
 #include "gw_update.h"
@@ -2481,6 +2482,121 @@ static void test_fwd(void)
     }
 }
 
+/*
+ * gw_hello_ciphers() -- the offered cipher list decoded from a captured
+ * ClientHello, for the log_debug line PATCHES.md §37 adds. Two samples: the
+ * SSLv2-framed hello Windows 95's IE 3.0 (4.70.1215) sent on 2026-09-29,
+ * exactly as `helloHead` captured it at the time (24 bytes, before that
+ * buffer grew) -- a real truncated case -- and a hand-built native TLS
+ * ClientHello offering three suites in full.
+ */
+static void test_hello_ciphers(void)
+{
+    char out[256];
+    int  truncated;
+
+    printf("gw_hello ciphers\n");
+
+    /* The SSLv2 hello from the bug report, as it was actually captured: 24
+     * bytes, cipher_spec_length says 24 (8 specs) but only 13 spec bytes --
+     * four whole ones -- made it into that short a buffer. */
+    {
+        static const unsigned char hello[] = {
+            0x80, 0x31, 0x01, 0x03, 0x00, 0x00, 0x18, 0x00,
+            0x00, 0x00, 0x10, 0x8f, 0x80, 0x01, 0x80, 0x00,
+            0x01, 0x81, 0x00, 0x01, 0x82, 0x00, 0x01, 0x83
+        };
+        size_t n;
+
+        truncated = 0;
+        n = gw_hello_ciphers(hello, sizeof(hello), out, sizeof(out),
+                             &truncated);
+        check(n == 4, "4 whole specs fit in the captured 24 bytes");
+        check_str(out, "8f8001 800001 810001 820001",
+                  "the specs decode in order, hex, space-separated");
+        check(truncated, "cipher_spec_length (24) says more follow");
+    }
+
+    /* The same hello, captured whole (helloHead is 192 bytes now): all 8
+     * specs, plus a session ID and challenge that must not be mistaken for
+     * more specs. */
+    {
+        static const unsigned char hello[] = {
+            0x80, 0x49, 0x01, 0x03, 0x00, 0x00, 0x18, 0x00,
+            0x00, 0x00, 0x10,
+            /* 8 specs, 24 bytes */
+            0x8f, 0x80, 0x01, 0x80, 0x00, 0x01, 0x81, 0x00,
+            0x01, 0x82, 0x00, 0x01, 0x83, 0x00, 0x01, 0x00,
+            0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x03,
+            /* 16-byte challenge (session ID length was 0) */
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+            0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10
+        };
+        size_t n;
+
+        truncated = 0;
+        n = gw_hello_ciphers(hello, sizeof(hello), out, sizeof(out),
+                             &truncated);
+        check(n == 8, "all 8 specs decode once the hello is captured whole");
+        check_str(out,
+                  "8f8001 800001 810001 820001 830001 000001 000002 000003",
+                  "the challenge bytes are not read as a ninth spec");
+        check(!truncated, "the whole list was captured");
+    }
+
+    /* A native TLS ClientHello, hand-built: no extensions, three suites. */
+    {
+        static const unsigned char hello[] = {
+            /* record header: handshake, TLS 1.2 wire version, length 0x31 */
+            0x16, 0x03, 0x03, 0x00, 0x31,
+            /* handshake header: client_hello, length 0x2d */
+            0x01, 0x00, 0x00, 0x2d,
+            /* client_version */
+            0x03, 0x03,
+            /* random, 32 bytes */
+            0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            /* session_id_length */
+            0x00,
+            /* cipher_suites_length, then 3 suites */
+            0x00, 0x06, 0x00, 0x2f, 0x00, 0x35, 0x00, 0x0a,
+            /* compression_methods_length, then null */
+            0x01, 0x00
+        };
+        size_t n;
+
+        truncated = 0;
+        n = gw_hello_ciphers(hello, sizeof(hello), out, sizeof(out),
+                             &truncated);
+        check(n == 3, "3 suites decode from a native hello");
+        check_str(out, "002f 0035 000a",
+                  "native suites are 2 bytes each, unlike an SSLv2 spec");
+        check(!truncated, "the whole hello was captured");
+
+        /* Cut it off two bytes into the suite list: one suite decodes,
+         * and the missing second one is reported rather than guessed. */
+        truncated = 0;
+        n = gw_hello_ciphers(hello, 48, out, sizeof(out), &truncated);
+        check(n == 1, "a suite list cut short still decodes what fits");
+        check_str(out, "002f", "only the whole suite that fit is shown");
+        check(truncated, "the cut announces itself");
+    }
+
+    /* Neither framing: no specs, and *truncated is left alone. */
+    {
+        static const unsigned char junk[] = { 0x00, 0x01, 0x02, 0x03 };
+        size_t n;
+
+        truncated = 0;
+        n = gw_hello_ciphers(junk, sizeof(junk), out, sizeof(out),
+                             &truncated);
+        check(n == 0, "an unrecognised first byte decodes nothing");
+        check(!truncated, "and does not claim a truncation it cannot see");
+    }
+}
+
 int main(void)
 {
     test_util();
@@ -2511,6 +2627,7 @@ int main(void)
     test_update();
     test_fwd();
     test_log_codes();
+    test_hello_ciphers();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;

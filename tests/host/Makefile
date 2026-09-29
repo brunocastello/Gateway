@@ -20,6 +20,7 @@ SOURCES = \
 	$(PORTABLE)/gw_prefs.c \
 	$(PORTABLE)/gw_provider.c \
 	$(PORTABLE)/gw_gate.c \
+	$(PORTABLE)/gw_hello.c \
 	$(PORTABLE)/gw_log.c \
 	$(PORTABLE)/gw_rewrite.c \
 	$(PORTABLE)/gw_x509write.c \

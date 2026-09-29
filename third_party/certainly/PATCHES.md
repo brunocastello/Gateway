@@ -1523,3 +1523,42 @@ completed by the user the same night. Should a browser reject a resumed
 handshake, the log says S22, the session is forgotten and its next
 connection is a full handshake; if that repeats for a browser, the fallback
 is to resume TLS 1.0 sessions only.
+
+## §37 — the debug log names every cipher spec/suite a browser offered
+
+`log_debug`'s S03 ("the browser gave up after seeing our certificate") comes
+with `MacTLS_ServerDescribe()`'s one-line summary and `MacTLS_ServerHelloHex()`'s
+hex dump of the hello's opening bytes (§35), but that dump is capped at what
+fits on one line and what the struct kept -- 24 bytes, which for an SSLv2-
+framed hello is the header and at most a handful of the cipher specs it
+offered. On 2026-09-29 a 32-bit IE 3.0 (4.70.1215) on Windows 95 produced
+exactly that under `connect_mitm`: the suite BearSSL settled on was visible,
+but not the list it chose from, because the capture ran out four specs in.
+
+Two changes, both in `server.c`:
+
+- `helloHead` grows from 24 to 192 bytes. A ClientHello is typically under
+  200 bytes even with a full cipher list; 192 more bytes on a struct that
+  already carries `CERTAINLY_IOBUF_SIZE` is nothing measured.
+- `MacTLS_ServerHelloRaw()` hands the captured bytes over raw (not hex text
+  like `MacTLS_ServerHelloHex()`), so a caller can parse them rather than
+  just print them.
+
+The parsing itself is not Certainly's concern -- it never needs the offered
+list, only the suite it picked -- so it lives on the Gateway side, portable
+and host-tested: `src/portable/gw_hello.c`, `gw_hello_ciphers()`. It decodes
+either framing straight from the captured bytes: an SSLv2-compatible hello's
+3-byte cipher specs, or a native SSL 3.0/TLS hello's 2-byte suites, walking
+past the session ID by its own length field first. `GWHttpSession`'s
+`log_mitm_detail()` (`src/proxy/gw_httpproxy.c`) calls it after the existing
+"first bytes" line and adds one more, `log_debug`-only:
+
+```
+offered suites: 8f8001 800001 810001 820001 830001 000001 000002 000003
+```
+
+with `(truncated)` appended when the hello's own length field says the list
+continues past what was captured -- still possible for a hello unusually
+rich in extensions ahead of a short cipher list, though not for the case
+above once `helloHead` grew. Nothing changes in the plain log: this is one
+more line under the same `log_debug` gate as the hex dump beside it.

@@ -175,8 +175,10 @@ carries a `T` code when the connection itself names the fault.
 Written when `connect_mitm` answers a browser's handshake and the handshake
 does not complete. The line before it names the host (`Gateway answers the
 browser's secure connection to … itself`, H21). With `log_debug` on, the lines under it give BearSSL's error
-number, the hello's framing, version and suite, byte counts, and the first
-bytes the browser sent.
+number, the hello's framing, version and suite, byte counts, the first
+bytes the browser sent, and -- decoded from those same bytes -- every cipher
+spec or suite it offered (`offered suites: …`, `(truncated)` if the capture
+ran out first; PATCHES.md §37).
 
 | Code | Sentence | What it means |
 |---|---|---|

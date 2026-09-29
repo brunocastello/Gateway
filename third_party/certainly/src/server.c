@@ -78,8 +78,14 @@ struct MacTLS_Server {
      * trace of what the client sent. The first bytes name the protocol: 16 03
      * is a TLS/SSL 3 record, 80.. an SSLv2-framed hello (version at byte 3-4),
      * and an 80.. hello whose version is 80 01 is Microsoft PCT, which is not
-     * SSL and is not served. See MacTLS_ServerHelloHex(). */
-    unsigned char          helloHead[24];
+     * SSL and is not served. See MacTLS_ServerHelloHex().
+     *
+     * 192 bytes (PATCHES.md §37) rather than the original 24: the cipher list
+     * a period browser offers does not fit in 24, and the host's log_debug
+     * line naming every offered suite (gw_hello_ciphers(), a portable file)
+     * needs the whole thing. A hello is typically under 200 bytes; 192 more
+     * bytes on a struct already carrying a 16 KB BearSSL iobuf is nothing. */
+    unsigned char          helloHead[192];
     size_t                 helloHeadLen;
     /* The session ID the browser offered to resume, as the cache was asked
      * for it (PATCHES.md §36). A handshake resumed when the ID it settled on
@@ -300,6 +306,17 @@ void MacTLS_ServerHelloHex(const MacTLS_Server *s, char *out, size_t cap)
         if (n < 0 || (size_t)n >= cap - p) break;
         p += (size_t)n;
     }
+}
+
+size_t MacTLS_ServerHelloRaw(const MacTLS_Server *s, unsigned char *out, size_t cap)
+{
+    size_t n;
+
+    if (out == NULL || cap == 0) return 0;
+    if (s == NULL) return 0;
+    n = s->helloHeadLen < cap ? s->helloHeadLen : cap;
+    memcpy(out, s->helloHead, n);
+    return n;
 }
 
 int MacTLS_ServerResumed(const MacTLS_Server *s)

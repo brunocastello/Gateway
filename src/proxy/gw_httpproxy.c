@@ -23,6 +23,7 @@
 #include "../gw_config.h"
 #include "../gw_core.h"
 #include "../portable/gw_chunked.h"
+#include "../portable/gw_hello.h"
 #include "../portable/gw_http.h"
 #include "../portable/gw_log.h"
 #include "../portable/gw_pac.h"
@@ -1737,12 +1738,19 @@ static void step_tunnel_connect(GWHttpSession *s)
 
 /*
  * The engineer's lines under a MITM outcome: BearSSL's number, what the hello
- * and the engine said, and the first bytes the browser sent. Only with
- * log_debug on; the sentence above them carries the diagnosis without.
+ * and the engine said, the first bytes the browser sent, and every cipher
+ * spec/suite it offered (PATCHES.md §37 -- the hex dump above is one line and
+ * cuts off long lists, so a browser's actual choice of ciphers was otherwise
+ * invisible). Only with log_debug on; the sentence above them carries the
+ * diagnosis without.
  */
 static void log_mitm_detail(GWHttpSession *s, int err)
 {
-    char line[160];
+    char          line[160];
+    unsigned char hello[192];
+    char          ciphers[512];
+    size_t        helloLen, n;
+    int           truncated = 0;
 
     if (!gw_log_debug())
         return;
@@ -1758,6 +1766,12 @@ static void log_mitm_detail(GWHttpSession *s, int err)
     GWStream_ServerHelloHex(&s->cli, line, sizeof line);
     if (line[0] != '\0')
         gw_logd("first bytes: %s", line);
+
+    helloLen = GWStream_ServerHelloRaw(&s->cli, hello, sizeof hello);
+    n = gw_hello_ciphers(hello, helloLen, ciphers, sizeof ciphers, &truncated);
+    if (n > 0 || truncated)
+        gw_logd("offered suites: %s%s", ciphers,
+                truncated ? " (truncated)" : "");
 }
 
 /*
