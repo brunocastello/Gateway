@@ -881,8 +881,10 @@ static void test_wayback(void)
               "targetUrl asks for a redirect");
         check_str(set.date, "20011231", "date applied");
         check(set.tolerance == 730, "tolerance applied");
-        check(set.geocities && set.quick_images && set.ct_encoding,
+        check(set.geocities && set.ct_encoding,
               "checkboxes that are present read as on");
+        /* quickImages does nothing and is no longer a field; an old bookmark
+         * or saved form still submitting it must not break parsing. */
         check_str(target, "http://frogfind.com",
                   "a bare hostname gets a scheme");
     }
@@ -893,11 +895,11 @@ static void test_wayback(void)
         static const char q[] = "date=1997&dateTolerance=0";
 
         memset(&set, 0, sizeof(set));
-        set.geocities = set.quick_images = set.ct_encoding = 1;
+        set.geocities = set.ct_encoding = 1;
         check(!gw_wayback_apply_query(q, sizeof(q) - 1, &set,
                                       target, sizeof(target)),
               "no targetUrl means no redirect");
-        check(!set.geocities && !set.quick_images && !set.ct_encoding,
+        check(!set.geocities && !set.ct_encoding,
               "an absent checkbox reads as off");
         check_str(set.date, "1997", "a bare year is kept as given");
     }
@@ -938,8 +940,10 @@ static void test_wayback(void)
               "the current date is filled in");
         check(strstr(page, "name=\"gcFix\" checked") != NULL,
               "an enabled checkbox renders checked");
-        check(strstr(page, "name=\"quickImages\"> ") != NULL,
+        check(strstr(page, "name=\"ctEncoding\"> ") != NULL,
               "a disabled checkbox renders unchecked");
+        check(strstr(page, "name=\"quickImages\"") == NULL,
+              "quickImages does nothing, so the checkbox is gone");
         check(strstr(page, "method=\"get\" action=\"/\"") != NULL,
               "the form is a GET to /, so it can be bookmarked");
         check(strstr(page, "<script") == NULL, "no script for period browsers");

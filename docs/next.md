@@ -124,6 +124,19 @@ have cost an extra TLS request per page for much the same answer. Removed on
 old prefs file is ignored, like any unknown key. If the Availability API is
 ever wanted, `docs/settings-window.md` §4.3 has the design and its two traps.
 
+## Resolved: `wayback_quick_images` removed
+
+Both Preferences windows showed "Quick images", `gw_core.c` read it into
+`GWWaybackSettings.quick_images`, and nothing ever looked at the flag: Gateway
+always fetches with the archive's `id_` modifier, which returns the origin's
+original bytes with no HTML to rewrite, so there was never anything for the
+setting to turn on or off (`docs/module3-wayback.md` §3). Removed on `gw039`:
+the rows, the read, the struct field, and the checkbox on the Wayback
+settings page. The settings page still *accepts* `quickImages` in a submitted
+query string -- an old bookmark or saved form keeps working -- it is simply
+never read, like any other unknown key. A `wayback_quick_images` line left in
+an old prefs file is likewise ignored.
+
 ## 1. Keep-alive inside the terminated tunnel — not worth building
 
 Closed 2026-09-29 by the user's decision, without building it. Resumption

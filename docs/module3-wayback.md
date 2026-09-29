@@ -130,6 +130,12 @@ Gateway, so a redirect to `https://web.archive.org/…` comes back as an
 ordinary shape-2 request and Gateway does the TLS. Leaving it on saves Gateway
 rewriting work.
 
+That said, Gateway never had rewriting work to save: it always fetches with
+the archive's `id_` modifier (§1), which returns the original bytes with
+nothing rewritten regardless of `QUICK_IMAGES`. `wayback_quick_images` existed
+only to keep the settings-page URL compatible and was removed on `gw039` —
+see `docs/next.md`.
+
 ## 4. Configuration
 
 Everything goes in Gateway Prefs; no second file.
@@ -139,7 +145,6 @@ wayback_port         = 8888         # 0 disables the archive listener entirely
 wayback_date         = 20011231     # YYYYMMDD, YYYYMM or YYYY
 wayback_tolerance    = 730          # days after wayback_date to accept, 0 = no limit
 wayback_geocities    = 1            # send geocities.com to oocities.org
-wayback_quick_images = 1            # let the browser fetch images from the archive directly
 wayback_ct_encoding  = 1            # allow a charset in Content-Type
 wayback_settings     = 1            # serve the settings page on web.archive.org
 
@@ -207,8 +212,12 @@ field names exactly:
 | `dateTolerance` | text | days after `date` to accept |
 | `targetUrl` | text | optional; when set, save and `302` straight there |
 | `gcFix` | checkbox | GeoCities to OoCities |
-| `quickImages` | checkbox | let the browser fetch assets from the archive |
 | `ctEncoding` | checkbox | allow a charset in `Content-Type` |
+
+`quickImages` is still accepted in the query string, for a bookmark or saved
+form built before `gw039` -- it is simply never read, since the setting it
+named never did anything (§3). The checkbox for it is gone from the rendered
+page.
 
 Checkboxes arrive as `name=on` and are simply absent when unchecked — so an
 absent checkbox means false, which is the one piece of form handling that is

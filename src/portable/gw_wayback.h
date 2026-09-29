@@ -33,7 +33,6 @@ typedef struct {
     char date[GW_WB_STAMP];     /* YYYY, YYYYMM or YYYYMMDD */
     long tolerance;             /* days after date to accept; 0 = no limit */
     int  geocities;
-    int  quick_images;
     int  ct_encoding;
 } GWWaybackSettings;
 

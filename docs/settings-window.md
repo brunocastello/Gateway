@@ -429,8 +429,10 @@ see §2.6.
 | Let the browser keep snapshots | `wayback_cache` | checkbox | 1 | |
 | Serve the settings page | `wayback_settings` | checkbox | 1 | |
 | Charset in Content-Type | `wayback_ct_encoding` | checkbox | 1 | Off strips it; some period browsers choke. |
-| Quick images | `wayback_quick_images` | checkbox | 1 | Accepted for settings-page compatibility; does nothing. |
 | **Fetched live, not archived** | `wayback_live` | **text area**, see below | see below | Separate with `;`. A plain name covers its subdomains. |
+
+(`Quick images` / `wayback_quick_images`, which did nothing, was removed on
+`gw039`; see `docs/next.md`.)
 
 #### The allow-list
 

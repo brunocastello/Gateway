@@ -25,6 +25,8 @@ Mail, the Wayback proxy and the Tunnel are off until configured. Every setting i
 
 Nothing to do. Your preferences file and certificate authority are both kept as they are. Gateway now checks github.com once at launch for a newer release; `check_updates = 0` turns that off.
 
+The Wayback pane's "Quick images" checkbox is gone because it never did anything; an old `wayback_quick_images` line left in your prefs file is simply ignored.
+
 ## Downloads
 
 **Mac OS 9:** the `.sit` archive for real hardware, or the `.dsk` disk image to mount in an emulator.

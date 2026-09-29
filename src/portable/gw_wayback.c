@@ -248,11 +248,6 @@ size_t gw_wayback_settings_page(const GWWaybackSettings *s,
     if (!append_str(out, cap, &used, line)) return 0;
 
     snprintf(line, sizeof(line),
-             "<input type=\"checkbox\" name=\"quickImages\"%s> Quick images<br>\r\n",
-             s->quick_images ? " checked" : "");
-    if (!append_str(out, cap, &used, line)) return 0;
-
-    snprintf(line, sizeof(line),
              "<input type=\"checkbox\" name=\"ctEncoding\"%s>"
              " Encoding in Content-Type</p>\r\n",
              s->ct_encoding ? " checked" : "");
@@ -290,8 +285,13 @@ int gw_wayback_apply_query(const char *query, size_t len,
      * only works because the form always posts every other field, which a GET
      * form does.
      */
+    /*
+     * "quickImages" is no longer a field this struct has -- it never did
+     * anything (see docs/prefs.md) -- but an old bookmark or saved form can
+     * still submit it. It is simply not read, the same as any other unknown
+     * query key, so that submission still succeeds.
+     */
     s->geocities    = gw_url_query_has(query, len, "gcFix");
-    s->quick_images = gw_url_query_has(query, len, "quickImages");
     s->ct_encoding  = gw_url_query_has(query, len, "ctEncoding");
 
     if (gw_url_query_get(query, len, "targetUrl", value, sizeof(value)) &&

@@ -432,7 +432,6 @@ int GW_Init(void)
               strlen(GWConfig_Str("wayback_date", "20011231")));
     sWaybackSet.tolerance    = GWConfig_Num("wayback_tolerance", 730);
     sWaybackSet.geocities    = GWConfig_Num("wayback_geocities", 1) != 0;
-    sWaybackSet.quick_images = GWConfig_Num("wayback_quick_images", 1) != 0;
     sWaybackSet.ct_encoding  = GWConfig_Num("wayback_ct_encoding", 1) != 0;
     sWaybackPort = (int)GWConfig_Num("wayback_port", 8888);
 

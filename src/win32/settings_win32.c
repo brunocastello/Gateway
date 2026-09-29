@@ -103,8 +103,6 @@ static const Field kFields[] = {
     { 3, Check, "wayback_cache", "Let the browser &keep snapshots", "1", "" },
     { 3, Check, "wayback_settings", "Serve the browser se&ttings page", "1", "" },
     { 3, Check, "wayback_ct_encoding", "Keep the &charset in Content-Type", "1", "" },
-    { 3, Check, "wayback_quick_images", "&Quick images (compatibility setting)", "1",
-      "Accepted for compatibility; it has no effect." },
     { 3, List, "wayback_live", "&Whitelist:", "",
       "Use semicolons (;) to separate entries. Maximum 2000 characters." },
     { 4, Provider, "provider", "Provider:", "outlook", "" },
