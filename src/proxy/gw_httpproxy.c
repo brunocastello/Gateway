@@ -189,6 +189,11 @@ typedef struct {
      * normal path cannot know is that the browser believes it is speaking
      * https, so `mitm` forces TLS on the upstream leg and `mitmHost` supplies
      * the authority for a request whose Host header is missing.
+     *
+     * connect_upgrade reuses the same three fields with a plaintext client
+     * leg: no handshake runs, so there is no kHPMitmWait -- the session goes
+     * straight to kHPRecvRequest and the first inner request rejoins the
+     * normal path, with `mitmPort` at 443 although the CONNECT named 80.
      */
     int           mitm;
     char          mitmHost[GW_MAX_HOST];
@@ -1658,6 +1663,45 @@ static void step_tunnel_connect(GWHttpSession *s)
 
         gw_logc("H22", "#%ld no certificate could be made for %s, so the "
                 "tunnel stays encrypted", s->id, s->req.url.host);
+    }
+
+    /*
+     * Upgrade a plaintext CONNECT to https upstream.
+     *
+     * connect_upgrade answers the opposite question from connect_mitm: the
+     * client asked for port 80 and will speak plaintext, so there is no
+     * handshake to terminate -- instead the plaintext request inside the
+     * tunnel is terminated as HTTP and re-originated over TLS to port 443.
+     * No certificate is presented to anyone: the client leg stays plain
+     * HTTP, which is why this is protocol translation rather than MITM.
+     *
+     * Single-shot by design. The response goes back with Connection: close
+     * and the tunnel with it, which is exactly what HTTP/1.0 looks like to
+     * a client that opens one CONNECT per download. Anything already
+     * pipelined past the CONNECT head waits in the socket buffers and is
+     * read fresh below.
+     *
+     * Port 80 only, and opt-in. A CONNECT is allowed to carry anything --
+     * git, ssh, a custom protocol -- and parsing those bytes as HTTP would
+     * break them, so with the pref off everything here stays a raw tunnel
+     * however the client speaks.
+     */
+    if (GW_ConnectUpgrade() && s->req.url.port == 80) {
+        gw_copy_n(s->mitmHost, sizeof(s->mitmHost),
+                  s->req.url.host, strlen(s->req.url.host));
+        s->mitmPort = 443;
+        s->mitm = 1;
+        /* As above: the plain upstream opened for the tunnel is not wanted;
+         * the request inside decides what to fetch, over TLS. */
+        GWStream_Destroy(&s->up);
+        /* The CONNECT head is spent; what follows is a fresh plaintext
+         * request, read as if the client had just connected. */
+        s->cheadLen = 0;
+        s->cheadSent = 0;
+        gw_logc("H27", "#%ld upgrading the connection to %s:80 to https", s->id,
+                s->mitmHost);
+        s->state = kHPRecvRequest;
+        return;
     }
 
     gw_log("#%ld tunnel open to %s:%u", s->id, s->req.url.host,

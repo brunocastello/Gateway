@@ -87,6 +87,22 @@ int GW_ConnectMitm(void)
 }
 
 /*
+ * Answer a CONNECT to port 80 with https upstream.
+ *
+ * Off by default. connect_mitm terminates TLS the client started; this is
+ * for a client that starts none -- it speaks plaintext inside the tunnel, so
+ * Gateway terminates the HTTP there and re-originates it over TLS to port
+ * 443. Single-shot: one inner request per CONNECT, then the tunnel closes,
+ * which is what a downloader opening one connection per file already does.
+ * A CONNECT carrying anything but HTTP breaks under it, which is why it is
+ * opt-in; with it off every such CONNECT stays a raw tunnel.
+ */
+int GW_ConnectUpgrade(void)
+{
+    return GWConfig_Num("connect_upgrade", 0) != 0;
+}
+
+/*
  * SSL 3.0 on the browser's side of a CONNECT.
  *
  * Only reachable through connect_mitm, which is off by default, and only ever

@@ -53,6 +53,7 @@ int         GW_ActiveSessions(void);
 int         GW_RedirectPolicy(void);
 int         GW_RewriteHttps(void);
 int         GW_ConnectMitm(void);
+int         GW_ConnectUpgrade(void);
 
 /* SSL 3.0 for a client with no TLS at all, inside connect_mitm. */
 int         GW_AllowSSLv3(void);
