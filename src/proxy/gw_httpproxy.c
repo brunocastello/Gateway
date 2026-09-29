@@ -1694,8 +1694,10 @@ static void step_tunnel_connect(GWHttpSession *s)
      * Single-shot by design. The response goes back with Connection: close
      * and the tunnel with it, which is exactly what HTTP/1.0 looks like to
      * a client that opens one CONNECT per download. Anything already
-     * pipelined past the CONNECT head waits in the socket buffers and is
-     * read fresh below.
+     * pipelined past the CONNECT head is still sitting in s->chead -- it
+     * came in on the same read as the CONNECT line whenever the client sent
+     * both at once -- and is kept below rather than read fresh, or it would
+     * be lost.
      *
      * Port 80 only, and opt-in. A CONNECT is allowed to carry anything --
      * git, ssh, a custom protocol -- and parsing those bytes as HTTP would
@@ -1703,6 +1705,9 @@ static void step_tunnel_connect(GWHttpSession *s)
      * however the client speaks.
      */
     if (GW_ConnectUpgrade() && s->req.url.port == 80) {
+        size_t tail = s->cheadLen > s->req.head_len
+                    ? s->cheadLen - s->req.head_len : 0;
+
         gw_copy_n(s->mitmHost, sizeof(s->mitmHost),
                   s->req.url.host, strlen(s->req.url.host));
         s->mitmPort = 443;
@@ -1711,8 +1716,13 @@ static void step_tunnel_connect(GWHttpSession *s)
          * the request inside decides what to fetch, over TLS. */
         GWStream_Destroy(&s->up);
         /* The CONNECT head is spent; what follows is a fresh plaintext
-         * request, read as if the client had just connected. */
-        s->cheadLen = 0;
+         * request, read as if the client had just connected -- except for
+         * whatever the client already pipelined behind the CONNECT line,
+         * which is moved to the front of the buffer so step_recv_request
+         * parses it before it tries to read anything more. */
+        if (tail > 0)
+            memmove(s->chead, s->chead + s->req.head_len, tail);
+        s->cheadLen  = tail;
         s->cheadSent = 0;
         gw_logc("H27", "#%ld upgrading the connection to %s:80 to https", s->id,
                 s->mitmHost);
