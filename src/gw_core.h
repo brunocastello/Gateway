@@ -126,15 +126,28 @@ int         GW_SmtpPort(void);
 int         GW_TunnelPort(void);
 
 /*
- * The host an auto-configuration script was last served for, or "" if none
- * has been yet. gw_pac_build's own comment explains why this is trustworthy:
- * whatever the browser typed to reach that file is, by construction, an
- * address this browser -- and so this machine -- can reach. Used to answer an
- * absolute-form request addressed to Gateway itself locally instead of
- * dialling back out to it (gw_pac_is_self in gw_pac.c).
+ * The hosts an auto-configuration script was last served for. gw_pac_build's
+ * own comment explains why each is trustworthy: whatever the browser typed
+ * to reach that file is, by construction, an address this browser -- and so
+ * this machine -- can reach. Used to answer an absolute-form request
+ * addressed to Gateway itself locally instead of dialling back out to it
+ * (gw_pac_is_self in gw_pac.c).
+ *
+ * A small fixed set rather than one slot: one slot is last-write-wins, and
+ * any other client on the LAN fetching /proxy.pac with its own Host header
+ * would evict the address the real browser is using, bringing back the
+ * self-loop the single slot was added to avoid. GW_MAX_SELF_HOSTS is plenty
+ * for the handful of names and addresses one machine is actually reached by
+ * (its LAN IP, localhost, maybe a hostname); oldest is dropped first once
+ * full.
  */
-const char *GW_SelfHost(void);
+#define GW_MAX_SELF_HOSTS 4
+
 void        GW_NoteSelfHost(const char *host);
+
+/* GWPacNextHost-shaped: fetches known self-host number `index` into `out`,
+ * returning 0 past the end. Passed straight to gw_pac_is_self. */
+int         GW_SelfHostAt(int index, char *out, size_t cap);
 
 #ifdef __cplusplus
 }

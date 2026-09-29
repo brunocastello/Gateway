@@ -1241,6 +1241,23 @@ static int pac_host(int index, char *out, size_t cap)
     return 1;
 }
 
+/* The small self-host set gw_pac_is_self is handed, standing in for
+ * GW_SelfHostAt (src/gw_core.c). */
+static const char *sSelfHosts[] = { NULL, NULL, NULL, NULL };
+
+static int self_host(int index, char *out, size_t cap)
+{
+    if (index < 0 || index >= 4 || sSelfHosts[index] == NULL) return 0;
+    gw_copy_n(out, cap, sSelfHosts[index], strlen(sSelfHosts[index]));
+    return 1;
+}
+
+static int no_self_host(int index, char *out, size_t cap)
+{
+    (void)index; (void)out; (void)cap;
+    return 0;
+}
+
 /*
  * gw_json over an Availability API body, and the target built from it.
  *
@@ -1481,25 +1498,34 @@ static void test_pac(void)
 
     /* gw_pac_is_self: an absolute-form request addressed to Gateway itself,
      * answered locally instead of Gateway dialling back out to its own
-     * listener (docs/next.md, "A request for Gateway's own address"). */
-    check(gw_pac_is_self("127.0.0.1", 8765, 8765, ""),
+     * listener (docs/next.md, "A request for Gateway's own address"). The
+     * self-host set is a small fixed array now (finding 3, gw039 review) so
+     * one LAN client fetching /proxy.pac with its own Host header cannot
+     * evict the address the real browser is using. */
+    check(gw_pac_is_self("127.0.0.1", 8765, 8765, no_self_host),
           "loopback is always us");
     check(gw_pac_is_self("LOCALHOST", 8765, 8765, NULL),
           "localhost is always us, case-insensitively, with no self_host yet");
-    check(gw_pac_is_self("proxyweb.com", 8765, 8765, "proxyweb.com"),
+    sSelfHosts[0] = "proxyweb.com";
+    check(gw_pac_is_self("proxyweb.com", 8765, 8765, self_host),
           "a host the script was fetched with is us too");
-    check(gw_pac_is_self("PROXYWEB.COM", 8765, 8765, "proxyweb.com"),
+    check(gw_pac_is_self("PROXYWEB.COM", 8765, 8765, self_host),
           "and that match is case-insensitive");
-    check(!gw_pac_is_self("proxyweb.com", 8765, 8765, ""),
+    check(!gw_pac_is_self("proxyweb.com", 8765, 8765, no_self_host),
           "an unknown host is not us with no self_host learned yet");
-    check(!gw_pac_is_self("proxyweb.com", 8765, 8765, "other.example"),
+    sSelfHosts[0] = "other.example";
+    check(!gw_pac_is_self("proxyweb.com", 8765, 8765, self_host),
           "nor when self_host names something else");
-    check(!gw_pac_is_self("127.0.0.1", 8888, 8765, "127.0.0.1"),
+    sSelfHosts[1] = "proxyweb.com";
+    check(gw_pac_is_self("proxyweb.com", 8765, 8765, self_host),
+          "a second known host is still checked, not just the first slot");
+    check(!gw_pac_is_self("127.0.0.1", 8888, 8765, self_host),
           "the port must match the listener asked about too");
-    check(!gw_pac_is_self("", 8765, 8765, "proxyweb.com"),
+    check(!gw_pac_is_self("", 8765, 8765, self_host),
           "an empty host is never us");
-    check(!gw_pac_is_self(NULL, 8765, 8765, "proxyweb.com"),
+    check(!gw_pac_is_self(NULL, 8765, 8765, self_host),
           "nor a missing one");
+    sSelfHosts[0] = sSelfHosts[1] = NULL;
 }
 
 /* ------------------------------------------------------------------ */

@@ -66,18 +66,23 @@ int gw_pac_is_request(const char *path);
  * proxy-configured browser fetches everything, `GET http://host:port/path` --
  * can be answered locally instead of Gateway dialling back out to itself.
  *
- * Conservative by construction: only three things count as "us" -- 127.0.0.1,
- * localhost, and self_host. Gateway binds INADDR_ANY (CLAUDE.md) rather than
- * one interface, so it has no address of its own to compare against; what it
- * does have is self_host, the authority a script fetch was last served for --
- * by the same reasoning gw_pac_build documents ("whatever the browser typed
- * to reach this file is, by construction, an address that browser can
- * reach"), that name is as good as an interface address for this purpose.
- * self_host may be NULL or empty, meaning none is known yet. Anything else
- * falls through to the ordinary proxied path.
+ * Conservative by construction: only three things count as "us" --
+ * 127.0.0.1, localhost, and whatever self_host enumerates. Gateway binds
+ * INADDR_ANY (CLAUDE.md) rather than one interface, so it has no address of
+ * its own to compare against; what it does have is the small set of
+ * authorities a script fetch was last served for -- by the same reasoning
+ * gw_pac_build documents ("whatever the browser typed to reach this file is,
+ * by construction, an address that browser can reach"), each of those names
+ * is as good as an interface address for this purpose. A set rather than one
+ * name because one slot is last-write-wins: any LAN client that fetches
+ * /proxy.pac with its own Host header overwrites it, and the next request
+ * from the real browser -- on a different address -- would fall through to
+ * the ordinary proxied path and loop back to Gateway. self_host may be NULL,
+ * or enumerate nothing, meaning none is known yet. Anything else falls
+ * through to the ordinary proxied path.
  */
 int gw_pac_is_self(const char *host, int port, int my_port,
-                   const char *self_host);
+                   GWPacNextHost self_host);
 
 /* What the script has to be served as. Internet Explorer and Netscape both
  * want this exact type and neither accepts text/plain. */

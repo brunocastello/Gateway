@@ -16,10 +16,13 @@
   on the loop. An absolute-form request whose host:port names one of
   Gateway's own listeners is now answered locally
   (`gw_pac_is_self()`, `src/portable/gw_pac.c`) instead. Conservative:
-  nothing counts as "us" beyond 127.0.0.1, localhost and a remembered
-  `self_host` -- the authority a script fetch was last served for -- so the
-  first such request still loops once, which is also what teaches Gateway
-  the host for next time.
+  nothing counts as "us" beyond 127.0.0.1, localhost and a small remembered
+  set of up to `GW_MAX_SELF_HOSTS` authorities a script fetch was last
+  served for (`GW_SelfHostAt()`, `src/gw_core.c`) -- a set rather than one
+  slot, so another client on the LAN fetching `/proxy.pac` with its own
+  `Host` header cannot evict the address the real browser is using and
+  bring the self-loop back for it. The first request for a given address
+  still loops once, which is also what teaches Gateway that host.
 - **Check for updates**, from the premise probed below: a little after the
   listeners are up, Gateway makes one HTTP/1.0 request of
   `https://github.com/brunocastello/Gateway/releases/latest` with its own

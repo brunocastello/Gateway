@@ -36,7 +36,12 @@ static GWListener *sSmtp;
 static GWListener *sTunnel;
 static char        sStatus[128];
 static int         sHttpPort, sImapPort, sPopPort, sSmtpPort, sTunnelPort;
-static char        sSelfHost[GW_MAX_HOST];
+/* Filled in the order slots first fill, then wrapped in the same order, so
+ * every entry in [0, sSelfHostCount) is always valid -- see GW_NoteSelfHost
+ * and GW_SelfHostAt below. */
+static char         sSelfHosts[GW_MAX_SELF_HOSTS][GW_MAX_HOST];
+static int          sSelfHostCount;
+static int          sSelfHostNext;
 
 /* Which modules the prefs asked for: http_enabled, mail_enabled,
  * wayback_enabled, tunnel_enabled. A module that is off is never
@@ -676,12 +681,29 @@ int         GW_PopPort(void)         { return sPopPort; }
 int         GW_SmtpPort(void)        { return sSmtpPort; }
 int         GW_TunnelPort(void)      { return sTunnelPort; }
 
-const char *GW_SelfHost(void) { return sSelfHost; }
-
 void GW_NoteSelfHost(const char *host)
 {
-    if (host == NULL) return;
-    gw_copy_n(sSelfHost, sizeof(sSelfHost), host, strlen(host));
+    int i;
+
+    if (host == NULL || host[0] == '\0') return;
+
+    /* Already known: leave the set as it is rather than moving it to the
+     * front, so a client re-fetching the script every so often does not
+     * churn the ring. */
+    for (i = 0; i < sSelfHostCount; i++)
+        if (gw_stricmp(sSelfHosts[i], host) == 0) return;
+
+    gw_copy_n(sSelfHosts[sSelfHostNext], sizeof(sSelfHosts[sSelfHostNext]),
+              host, strlen(host));
+    sSelfHostNext = (sSelfHostNext + 1) % GW_MAX_SELF_HOSTS;
+    if (sSelfHostCount < GW_MAX_SELF_HOSTS) sSelfHostCount++;
+}
+
+int GW_SelfHostAt(int index, char *out, size_t cap)
+{
+    if (index < 0 || index >= sSelfHostCount) return 0;
+    gw_copy_n(out, cap, sSelfHosts[index], strlen(sSelfHosts[index]));
+    return 1;
 }
 
 int GW_ActiveSessions(void)

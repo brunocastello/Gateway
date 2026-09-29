@@ -1002,7 +1002,7 @@ static void step_recv_request(GWHttpSession *s)
         (s->req.shape == kGWShapeOrigin ||
          gw_pac_is_self(s->req.url.host, (int)s->req.url.port,
                         s->wayback ? GW_WaybackPort() : GW_HttpPort(),
-                        GW_SelfHost()))) {
+                        GW_SelfHostAt))) {
         session_serve_pac(s);
         return;
     }
