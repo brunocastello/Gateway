@@ -60,6 +60,25 @@ size_t gw_pac_build(const char *authority, int live_port, int archive_port,
  */
 int gw_pac_is_request(const char *path);
 
+/*
+ * Whether host:port names Gateway's own listener, so an absolute-form
+ * request addressed to it -- the auto-configuration script fetched the way a
+ * proxy-configured browser fetches everything, `GET http://host:port/path` --
+ * can be answered locally instead of Gateway dialling back out to itself.
+ *
+ * Conservative by construction: only three things count as "us" -- 127.0.0.1,
+ * localhost, and self_host. Gateway binds INADDR_ANY (CLAUDE.md) rather than
+ * one interface, so it has no address of its own to compare against; what it
+ * does have is self_host, the authority a script fetch was last served for --
+ * by the same reasoning gw_pac_build documents ("whatever the browser typed
+ * to reach this file is, by construction, an address that browser can
+ * reach"), that name is as good as an interface address for this purpose.
+ * self_host may be NULL or empty, meaning none is known yet. Anything else
+ * falls through to the ordinary proxied path.
+ */
+int gw_pac_is_self(const char *host, int port, int my_port,
+                   const char *self_host);
+
 /* What the script has to be served as. Internet Explorer and Netscape both
  * want this exact type and neither accepts text/plain. */
 #define GW_PAC_CONTENT_TYPE "application/x-ns-proxy-autoconfig"

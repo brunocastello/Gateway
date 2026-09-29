@@ -18,6 +18,7 @@
 
 #include <certainly.h>
 #include "portable/gw_log.h"
+#include "portable/gw_url.h"
 #include "portable/gw_util.h"
 #include "proxy/gw_httpproxy.h"
 #include "proxy/gw_mail.h"
@@ -34,6 +35,7 @@ static GWListener *sSmtp;
 static GWListener *sTunnel;
 static char        sStatus[128];
 static int         sHttpPort, sImapPort, sPopPort, sSmtpPort, sTunnelPort;
+static char        sSelfHost[GW_MAX_HOST];
 
 /* Which modules the prefs asked for: http_enabled, mail_enabled,
  * wayback_enabled, tunnel_enabled. A module that is off is never
@@ -655,6 +657,14 @@ int         GW_ImapPort(void)        { return sImapPort; }
 int         GW_PopPort(void)         { return sPopPort; }
 int         GW_SmtpPort(void)        { return sSmtpPort; }
 int         GW_TunnelPort(void)      { return sTunnelPort; }
+
+const char *GW_SelfHost(void) { return sSelfHost; }
+
+void GW_NoteSelfHost(const char *host)
+{
+    if (host == NULL) return;
+    gw_copy_n(sSelfHost, sizeof(sSelfHost), host, strlen(host));
+}
 
 int GW_ActiveSessions(void)
 {

@@ -1397,6 +1397,28 @@ static void test_pac(void)
           "no live port is refused");
     check(gw_pac_build("192.168.1.5", 8765, 8888, pac_host, buf, 40) == 0,
           "a buffer too small yields nothing rather than a truncated script");
+
+    /* gw_pac_is_self: an absolute-form request addressed to Gateway itself,
+     * answered locally instead of Gateway dialling back out to its own
+     * listener (docs/next.md, "A request for Gateway's own address"). */
+    check(gw_pac_is_self("127.0.0.1", 8765, 8765, ""),
+          "loopback is always us");
+    check(gw_pac_is_self("LOCALHOST", 8765, 8765, NULL),
+          "localhost is always us, case-insensitively, with no self_host yet");
+    check(gw_pac_is_self("proxyweb.com", 8765, 8765, "proxyweb.com"),
+          "a host the script was fetched with is us too");
+    check(gw_pac_is_self("PROXYWEB.COM", 8765, 8765, "proxyweb.com"),
+          "and that match is case-insensitive");
+    check(!gw_pac_is_self("proxyweb.com", 8765, 8765, ""),
+          "an unknown host is not us with no self_host learned yet");
+    check(!gw_pac_is_self("proxyweb.com", 8765, 8765, "other.example"),
+          "nor when self_host names something else");
+    check(!gw_pac_is_self("127.0.0.1", 8888, 8765, "127.0.0.1"),
+          "the port must match the listener asked about too");
+    check(!gw_pac_is_self("", 8765, 8765, "proxyweb.com"),
+          "an empty host is never us");
+    check(!gw_pac_is_self(NULL, 8765, 8765, "proxyweb.com"),
+          "nor a missing one");
 }
 
 /* ------------------------------------------------------------------ */

@@ -626,6 +626,11 @@ static void session_serve_pac(GWHttpSession *s)
     }
     gw_log("#%ld proxy.pac for %s: %s", s->id, s->req.url.host,
            s->wayback ? "the archive" : "the live web");
+    /* Whatever host reached the script is one this machine can be reached
+     * on, so remember it: gw_pac_is_self() answers a later absolute-form
+     * request for it locally instead of Gateway dialling back out to
+     * itself. */
+    GW_NoteSelfHost(s->req.url.host);
     session_serve(s, GW_PAC_CONTENT_TYPE, page, n);
 }
 
@@ -984,9 +989,20 @@ static void step_recv_request(GWHttpSession *s)
      * real origin and must not be answered here. So this fires exactly when
      * someone has pointed something straight at Gateway's own address, which
      * is what fetching the script is.
+     *
+     * A proxy-configured browser sends the absolute form for everything,
+     * including a re-fetch of the script it is already using -- Classilla
+     * does this on a timer -- and until here that request went out through
+     * the ordinary proxied path, which for the script's own host:port meant
+     * Gateway dialling itself and spending a splice slot on the loop. Answer
+     * it here instead, whenever gw_pac_is_self says the host is one Gateway
+     * already knows is its own.
      */
-    if (s->req.shape == kGWShapeOrigin && !s->mitm &&
-        gw_pac_is_request(s->req.url.path)) {
+    if (!s->mitm && gw_pac_is_request(s->req.url.path) &&
+        (s->req.shape == kGWShapeOrigin ||
+         gw_pac_is_self(s->req.url.host, (int)s->req.url.port,
+                        s->wayback ? GW_WaybackPort() : GW_HttpPort(),
+                        GW_SelfHost()))) {
         session_serve_pac(s);
         return;
     }

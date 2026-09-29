@@ -125,6 +125,17 @@ int         GW_PopPort(void);
 int         GW_SmtpPort(void);
 int         GW_TunnelPort(void);
 
+/*
+ * The host an auto-configuration script was last served for, or "" if none
+ * has been yet. gw_pac_build's own comment explains why this is trustworthy:
+ * whatever the browser typed to reach that file is, by construction, an
+ * address this browser -- and so this machine -- can reach. Used to answer an
+ * absolute-form request addressed to Gateway itself locally instead of
+ * dialling back out to it (gw_pac_is_self in gw_pac.c).
+ */
+const char *GW_SelfHost(void);
+void        GW_NoteSelfHost(const char *host);
+
 #ifdef __cplusplus
 }
 #endif
