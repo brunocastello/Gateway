@@ -1396,6 +1396,14 @@ static void test_update(void)
                   tag, sizeof(tag)) == 1 && strcmp(tag, "0.3.9") == 0,
               "a query string after the tag is dropped");
     }
+    check(gw_update_parse_tag(
+              "https://github.com/x/releases/tag/v0.4.0-beta1",
+              tag, sizeof(tag)) == 0,
+          "a pre-release suffix is refused, not parsed as its base version");
+    check(gw_update_parse_tag(
+              "https://github.com/x/releases/tag/v0.4.0-rc1",
+              tag, sizeof(tag)) == 0,
+          "same for -rc1");
 
     /* gw_update_is_newer */
     check(gw_update_is_newer("0.3.10", "0.3.9") == 1,

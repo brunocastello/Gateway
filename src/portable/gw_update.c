@@ -40,6 +40,14 @@ int gw_update_parse_tag(const char *location, char *out, size_t cap)
         n++;
     }
     if (n == 0 || dots == 0 || out[n - 1] == '.') { out[0] = '\0'; return 0; }
+    /* Whatever follows the version has to be the end of the tag, not more
+     * of it: a pre-release suffix like "-beta1" or "-rc1" would otherwise
+     * parse as its base version, log a link to an asset that build never
+     * publishes. */
+    if (tag[n] != '\0' && tag[n] != '?' && tag[n] != '#' && tag[n] != '/') {
+        out[0] = '\0';
+        return 0;
+    }
     out[n] = '\0';
     return 1;
 }
