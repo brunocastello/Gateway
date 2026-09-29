@@ -23,6 +23,7 @@
 #include "gw_gate.h"
 #include "gw_rewrite.h"
 #include "gw_x509write.h"
+#include "gw_update.h"
 #include "gw_url.h"
 #include "gw_util.h"
 #include "gw_wayback.h"
@@ -1336,6 +1337,86 @@ static void test_wayback_api(void)
     }
 }
 
+static void test_update(void)
+{
+    char   tag[32];
+    char   asset[64];
+    char   url[256];
+
+    printf("update\n");
+
+    /* gw_update_parse_tag */
+    check(gw_update_parse_tag(
+              "https://github.com/brunocastello/Gateway/releases/tag/v0.3.9",
+              tag, sizeof(tag)) == 1 && strcmp(tag, "0.3.9") == 0,
+          "a Location value gives up its tag, 'v' dropped");
+    check(gw_update_parse_tag(
+              "https://github.com/brunocastello/Gateway/releases/tag/0.3.9",
+              tag, sizeof(tag)) == 1 && strcmp(tag, "0.3.9") == 0,
+          "a tag with no 'v' still parses");
+    check(gw_update_parse_tag("https://github.com/whatever/no-tag-here",
+                              tag, sizeof(tag)) == 0,
+          "a Location value with no /tag/ is refused");
+    check(gw_update_parse_tag("https://github.com/x/releases/tag/vnonsense",
+                              tag, sizeof(tag)) == 0,
+          "a tag that is not digits and dots is refused");
+    check(gw_update_parse_tag("https://github.com/x/releases/tag/v1..0",
+                              tag, sizeof(tag)) == 0,
+          "a doubled dot is refused");
+    check(gw_update_parse_tag("https://github.com/x/releases/tag/v.1.0",
+                              tag, sizeof(tag)) == 0,
+          "a leading dot is refused");
+    check(gw_update_parse_tag("https://github.com/x/releases/tag/v1.0.",
+                              tag, sizeof(tag)) == 0,
+          "a trailing dot is refused");
+    check(gw_update_parse_tag(NULL, tag, sizeof(tag)) == 0,
+          "a NULL Location is refused");
+    {
+        /* A query string or fragment after the tag stops at the first
+         * character that is not a digit or a dot. */
+        check(gw_update_parse_tag(
+                  "https://github.com/x/releases/tag/v0.3.9?foo=bar",
+                  tag, sizeof(tag)) == 1 && strcmp(tag, "0.3.9") == 0,
+              "a query string after the tag is dropped");
+    }
+
+    /* gw_update_is_newer */
+    check(gw_update_is_newer("0.3.10", "0.3.9") == 1,
+          "0.3.10 is newer than 0.3.9 (numeric, not lexical)");
+    check(gw_update_is_newer("0.3.9", "0.3.9") == 0,
+          "an equal tag is not newer");
+    check(gw_update_is_newer("0.3.8", "0.3.9") == 0,
+          "an older tag is not newer");
+    check(gw_update_is_newer("1.0", "0.3.9") == 1,
+          "a newer major version wins even with fewer components");
+    check(gw_update_is_newer("0.3.9.1", "0.3.9") == 1,
+          "an extra trailing component counts as newer");
+    check(gw_update_is_newer("", "0.3.9") == 0, "an empty tag is not newer");
+    check(gw_update_is_newer("0.3.9", "") == 0,
+          "an empty current version is not newer");
+
+    /* gw_update_asset_name / gw_update_asset_url */
+    check(gw_update_asset_name("0.3.10", kGWUpdateMac, asset,
+                               sizeof(asset)) > 0 &&
+          strcmp(asset, "Gateway-v0.3.10.sit") == 0,
+          "the Mac asset name");
+    check(gw_update_asset_name("0.3.10", kGWUpdateWin32, asset,
+                               sizeof(asset)) > 0 &&
+          strcmp(asset, "Gateway-v0.3.10-windows.zip") == 0,
+          "the Windows asset name");
+    check(gw_update_asset_name("0.3.10", kGWUpdateMac, asset, 4) == 0,
+          "an asset name that does not fit fails rather than truncates");
+
+    gw_update_asset_name("0.3.10", kGWUpdateMac, asset, sizeof(asset));
+    check(gw_update_asset_url("0.3.10", asset, url, sizeof(url)) > 0 &&
+          strcmp(url,
+              "http://github.com/brunocastello/Gateway/releases/download/"
+              "v0.3.10/Gateway-v0.3.10.sit") == 0,
+          "the asset link, http:// so it reaches through :8765");
+    check(gw_update_asset_url("0.3.10", asset, url, 4) == 0,
+          "an asset link that does not fit fails rather than truncates");
+}
+
 static void test_pac(void)
 {
     char   buf[4096];
@@ -2389,6 +2470,7 @@ int main(void)
     test_pac_splitter_agree();
     test_wayback_api();
     test_pac();
+    test_update();
     test_fwd();
     test_log_codes();
 

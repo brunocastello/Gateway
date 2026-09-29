@@ -172,6 +172,7 @@ add_library(gw_portable STATIC
     src/portable/gw_x509write.c
     src/portable/gw_wayback.c
     src/portable/gw_pac.c
+    src/portable/gw_update.c
 )
 target_include_directories(gw_portable PUBLIC src/portable)
 target_compile_options(gw_portable PRIVATE -Wall -Wextra -Wno-unused-parameter)
@@ -192,6 +193,7 @@ add_library(gw_net STATIC
     src/proxy/gw_tunnel.c
     src/proxy/gw_mail.c
     src/proxy/gw_token.c
+    src/proxy/gw_updater.c
     src/ssl3/ssl3_prf.c
     src/ssl3/ssl3_mac.c
     src/ssl3/ssl3_rc4.c

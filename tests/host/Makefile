@@ -24,7 +24,8 @@ SOURCES = \
 	$(PORTABLE)/gw_rewrite.c \
 	$(PORTABLE)/gw_x509write.c \
 	$(PORTABLE)/gw_wayback.c \
-	$(PORTABLE)/gw_pac.c
+	$(PORTABLE)/gw_pac.c \
+	$(PORTABLE)/gw_update.c
 
 all: test
 

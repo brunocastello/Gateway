@@ -163,6 +163,8 @@ static const Field kFields[] = {
     { 9, Check, "log_debug", "Show engineering &detail in the log", "0",
       "Byte counts, hello bytes and library error numbers,\n"
       "under each line. For reporting a problem." },
+    { 9, Check, "check_updates", "Chec&k for a newer release at launch", "1",
+      "One request to github.com, nothing else. See docs/prefs.md." },
 };
 #define FIELDS ((int)(sizeof(kFields) / sizeof(kFields[0])))
 

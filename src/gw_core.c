@@ -24,6 +24,7 @@
 #include "proxy/gw_mail.h"
 #include "proxy/gw_token.h"
 #include "proxy/gw_tunnel.h"
+#include "proxy/gw_updater.h"
 
 static GWListener *sHttp;
 static GWListener *sWayback;
@@ -295,6 +296,8 @@ int GW_IsRunning(void)
  */
 int GW_Start(void)
 {
+    int ok;
+
     if (sRunning) return 1;
 
     if (sProxyOn || sWaybackOn) GWProxy_Init();
@@ -303,7 +306,13 @@ int GW_Start(void)
         GWToken_Init();
     }
     if (sTunnelOn) GWTunnel_Init();
-    return listeners_open();
+    ok = listeners_open();
+    /* A little after the listeners are up, not before: nothing about this
+     * check should delay the modules a person is actually here for.
+     * GWUpdater_Request() is a no-op after its first call, so a later
+     * Stop/Start from the Preferences window does not repeat it. */
+    if (ok) GWUpdater_Request();
+    return ok;
 }
 
 /* One-time setup: the network stack, the TLS library, the settings. */
@@ -402,6 +411,8 @@ int GW_Init(void)
         GWToken_Init();
     }
     if (sTunnelOn) GWTunnel_Init();
+    GWUpdater_Init();          /* unconditional: check_updates gates the
+                                 * request, not whether it exists */
 
     sHttpPort = (int)GWConfig_Num("http_port", 8765);
     sImapPort = (int)GWConfig_Num("imap_port", 1993);
@@ -562,6 +573,7 @@ void GW_Shutdown(void)
     GWMail_Shutdown();
     GWTunnel_Shutdown();
     GWToken_Shutdown();
+    GWUpdater_Shutdown();
     MacTLS_Shutdown();
     GWNet_Shutdown();
 }
@@ -644,6 +656,7 @@ void GW_Poll(void)
     }
 
     GWToken_Poll();
+    GWUpdater_Poll();
     GWProxy_Poll();
     GWMail_Poll();
     GWTunnel_Poll();

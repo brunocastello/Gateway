@@ -61,6 +61,7 @@ free number.
 | `G41` | … could not be saved | A file beside the prefs, such as `Gateway CA`. The step and error are under `log_debug`. |
 | `G42` | Start with Windows could not be set: Gateway could not find its own path | |
 | `G43` | Start with Windows could not be set: the registry refused the entry | |
+| `G50` | Gateway … is available: … | `check_updates` found a newer release than this build at launch. The link is the direct download for this platform, given as `http://` so it reaches through Gateway's own proxy. Up to date, or the check fails for any reason, is silent here -- see `log_debug`. |
 
 ## H — the HTTP proxy
 

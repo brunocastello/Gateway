@@ -21,6 +21,12 @@ request named Gateway's own address, Gateway used to answer it by opening a
 connection back to itself — it worked, but spent a splice slot on the loop.
 It is now answered locally instead.
 
+**Gateway can say when it is out of date.** A little after the listeners are
+up, it asks github.com once whether a newer release exists and logs the
+direct download link for this platform when there is one — no JSON, no
+rate limit, and nothing said at all when it is current or the check fails.
+`check_updates = 0` turns it off.
+
 ## What's new in 0.3.8
 
 **Secure pages load faster.** With `connect_mitm` on, every picture and script on an `https://` page is a new connection, and each one used to cost a full handshake — a slow RSA calculation on a vintage processor. Gateway now remembers the browser's secure session and lets it resume, so only the first connection to a site pays for the handshake. The log says `resumed` when it happens. Verified on Windows 95 with Internet Explorer 4 and Netscape 4.08. Should a browser turn a resumption down, Gateway forgets that session and the next connection simply does a full handshake again.

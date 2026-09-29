@@ -20,6 +20,23 @@
   `self_host` -- the authority a script fetch was last served for -- so the
   first such request still loops once, which is also what teaches Gateway
   the host for next time.
+- **Check for updates**, from the premise probed below: a little after the
+  listeners are up, Gateway makes one HTTP/1.0 request of
+  `https://github.com/brunocastello/Gateway/releases/latest` with its own
+  TLS stack and reads only the `Location` header of the `302` it gets back --
+  no JSON, no `api.github.com`, no rate limit. The tag is parsed and compared
+  numerically against `GW_VERSION_STRING`; a newer release logs one line with
+  the direct asset link for this platform, given as `http://` because the
+  browsers Gateway serves reach it through Gateway's own `:8765` proxy
+  (`follow_redirects=auto` follows both `https` hops on the way to
+  `objects.githubusercontent.com`). Up to date, or the request fails for any
+  reason, is silent in the plain log -- a failed check must never look like a
+  Gateway fault. `check_updates` (default `1`) turns it off. The version
+  arithmetic (tag parsing, numeric comparison, asset name and link) is
+  portable and host-tested, `src/portable/gw_update.c`; the request itself is
+  a small state machine on a `GWStream`, driven from the cooperative loop the
+  way `gw_token.c` drives a token refresh -- `src/proxy/gw_updater.c`. New
+  log code `G50`.
 
 0.3.8 shipped on 2026-09-28. The upstream side is TLS 1.3 and finished; the
 browser side serves everything from Netscape 3 to Classilla over SSL 3.0 or
@@ -201,20 +218,3 @@ side is implicated; treat it as a Classilla defect. The
 script itself is verified: 557 bytes generated for that authority, syntax
 within Netscape 3's engine. The commit that added the PAC (4281342) asserted
 Classilla support without testing it; the README makes no such claim.
-
----
-
-## Considered, and the premise turned out favourable
-
-**Check for updates.** Set aside on 2026-09-20 on the grounds that the
-browsers Gateway serves cannot reach GitHub — but through Gateway they can:
-that is what the proxy is for. Typed as `http://github.com/.../releases/
-download/<tag>/<asset>` into a browser pointed at `:8765`, the request is
-fetched over TLS 1.3 by Gateway, both `https` redirect hops (to the release
-and on to `objects.githubusercontent.com`) are followed internally under
-`follow_redirects = auto`, and the binary body streams through untouched
-with its `Content-Length`. Untested as an actual download, but nothing in the
-design stands in its way. The feature itself would be small: at launch,
-Gateway asks `api.github.com/repos/brunocastello/Gateway/releases/latest`
-with its own stack, compares the tag to `GW_VERSION_STRING`, and logs one
-line with the direct asset link for this platform. No page to render.
