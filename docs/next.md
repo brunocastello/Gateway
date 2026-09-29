@@ -52,14 +52,14 @@ trying again.
 ## Ideas for 0.3.9
 
 Picked on 2026-09-28 for later sessions; each is written up further down.
-Item 3 is done; see *Built for 0.3.9* at the top.
+Item 3 is done (see *Built for 0.3.9* at the top) and item 2 is closed.
 
 1. **Keep-alive inside the terminated tunnel** — one handshake per host
    rather than per resource. Measure a page with 0.3.8's resumption first;
    it may already be enough. (Item 1 below.)
-2. **IE 3.0's hello bytes** — read what 32-bit IE 3 sends, with and without
-   PCT ticked; it may need a README line rather than code. Needs a Windows 95
-   run with `log_debug` on. (Item 2 below.)
+2. **IE 3.0's hello bytes** — closed 2026-09-29: the 16-bit build logs S01
+   on 0.3.8, and the 32-bit build cannot be tested on the images available.
+   (Item 2 below.)
 3. **roytam1's `connect_upgrade`** — built. See *Built for 0.3.9* at the top;
    the hardware/curl check is still outstanding.
 
@@ -132,7 +132,26 @@ as the browser likes. Resumption, shipped in 0.3.8, gets most of the benefit
 without touching that rule; measure a page with it before deciding whether
 this is still worth its cost.
 
-## 2. IE 3.0 may need a checkbox, not code — but first, its hello bytes
+## 2. IE 3.0's hello bytes — closed 2026-09-29
+
+**Result.** Re-run on 2026-09-29 with 0.3.8 on Windows 95 OSR2 (86Box), the
+16-bit Windows 3.1 build of IE 3.02, `connect_mitm 1`, a typed
+`https://example.com/`: `#1 Gateway answers the browser's secure connection
+to example.com:443 itself`, then `the browser closed the secure connection
+without starting it (S01)`. The tunnel opens, the browser writes nothing and
+closes — not a hang, and no hello bytes exist to read, so PCT on or off
+cannot matter. This is the first logged confirmation of what 2026-09-20
+inferred from silence. The same browser loads plain `http://` pages through
+Gateway (FrogFind, in the same session), so it is served by `rewrite_https`,
+the default, and that is its supported path.
+
+The 32-bit question below stays unanswered, and is closed as untestable
+rather than open: it needs a Windows 95 image that never had IE 4, since the
+32-bit 3.02 setup will not install over IE 4 (see *Tried and not worth
+repeating*). Reopen it only with such an image; the two runs below take ten
+minutes.
+
+What was planned, kept for that case:
 
 32-bit IE 3.0x on Windows 95 has only ever produced "CONNECT, terminating
 TLS, then silence" — three attempts alike, all on builds from before the
