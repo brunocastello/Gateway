@@ -5,6 +5,22 @@
 
 Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rather than in front of it, so applications written before modern TLS existed can reach the current web, current mail servers and the Internet Archive. Mac OS 9 (PowerPC), and Windows 95 through XP.
 
+## What's new in 0.3.9
+
+**A `CONNECT` to port 80 can now speak https instead.** `connect_upgrade` (off
+by default) answers a plaintext `CONNECT` the way `connect_mitm` answers a
+`443` one, but the other way round: there is no handshake to terminate, so
+Gateway terminates the plaintext request inside the tunnel itself and
+re-originates it over TLS to port 443, single-shot, then closes the tunnel.
+No certificate is presented to anyone. Ported by hand from roytam1's `gw034`
+fork.
+
+**Gateway no longer dials itself.** A proxy-configured browser re-fetching
+its own auto-configuration script sends the absolute form, and when that
+request named Gateway's own address, Gateway used to answer it by opening a
+connection back to itself — it worked, but spent a splice slot on the loop.
+It is now answered locally instead.
+
 ## What's new in 0.3.8
 
 **Secure pages load faster.** With `connect_mitm` on, every picture and script on an `https://` page is a new connection, and each one used to cost a full handshake — a slow RSA calculation on a vintage processor. Gateway now remembers the browser's secure session and lets it resume, so only the first connection to a site pays for the handshake. The log says `resumed` when it happens. Verified on Windows 95 with Internet Explorer 4 and Netscape 4.08. Should a browser turn a resumption down, Gateway forgets that session and the next connection simply does a full handshake again.

@@ -1,5 +1,26 @@
 # After 0.3.8 — what is worth doing next
 
+## Built for 0.3.9
+
+- **`connect_upgrade`**, re-applied by hand from roytam1's `gw034` fork:
+  answer a `CONNECT` to port 80 by terminating the inner plaintext request
+  and re-originating it over TLS to port 443, single-shot. Off by default.
+  Still wants one hardware/curl check before it can be called verified: a
+  client that really sends `CONNECT host:80` and reads the answer back --
+  `curl -p -x http://<gateway>:8765 http://example.com/` sends exactly that.
+  (Was item 3 of *Ideas for 0.3.9*.)
+- **A request for Gateway's own address, through Gateway**, `#47` from the
+  2026-09-20 session: Classilla, on manual settings, asked the proxy for
+  `http://proxyweb.com:8765/proxy.pac`, so Gateway opened a connection to
+  itself and served its own request -- it worked, but spent a splice slot
+  on the loop. An absolute-form request whose host:port names one of
+  Gateway's own listeners is now answered locally
+  (`gw_pac_is_self()`, `src/portable/gw_pac.c`) instead. Conservative:
+  nothing counts as "us" beyond 127.0.0.1, localhost and a remembered
+  `self_host` -- the authority a script fetch was last served for -- so the
+  first such request still loops once, which is also what teaches Gateway
+  the host for next time.
+
 0.3.8 shipped on 2026-09-28. The upstream side is TLS 1.3 and finished; the
 browser side serves everything from Netscape 3 to Classilla over SSL 3.0 or
 TLS 1.0; mail works through `get-email-token.py`; a generic tunnel carries
@@ -14,7 +35,7 @@ trying again.
 ## Ideas for 0.3.9
 
 Picked on 2026-09-28 for later sessions; each is written up further down.
-None is started.
+Item 3 is done; see *Built for 0.3.9* at the top.
 
 1. **Keep-alive inside the terminated tunnel** — one handshake per host
    rather than per resource. Measure a page with 0.3.8's resumption first;
@@ -22,9 +43,8 @@ None is started.
 2. **IE 3.0's hello bytes** — read what 32-bit IE 3 sends, with and without
    PCT ticked; it may need a README line rather than code. Needs a Windows 95
    run with `log_debug` on. (Item 2 below.)
-3. **roytam1's `connect_upgrade`** — plaintext inside a `CONNECT` to port 80,
-   re-originated over TLS. Only with a client that really sends `CONNECT
-   host:80` to test against. (*Deferred from roytam1's fork* below.)
+3. **roytam1's `connect_upgrade`** — built. See *Built for 0.3.9* at the top;
+   the hardware/curl check is still outstanding.
 
 Settled the same night, after 0.3.8 shipped:
 
@@ -118,20 +138,6 @@ protocol selection, so it says nothing about the 32-bit build.
 
 ---
 
-## Deferred from roytam1's fork, not rejected
-
-**`connect_upgrade`** (the fork's `gw034`, default 0): answer a `CONNECT` **to
-port 80** by terminating the plaintext HTTP inside the tunnel and
-re-originating it over TLS to port 443 — single-shot, one inner request per
-`CONNECT`, then the tunnel closes. No certificate is presented to anyone, so
-it is protocol translation rather than MITM; opt-in because a `CONNECT` may
-carry bytes that are not HTTP. Left out of 0.3.7 because its author had never
-run it. Port it only with a client that actually sends `CONNECT host:80` and
-a test of it on hardware; the fork's `gw_httpproxy.c` and `docs/prefs.md`
-describe it.
-
----
-
 ## Tried and not worth repeating
 
 **IE 3.02 on an image that has IE 4.** The 3.02 setup refuses to run over
@@ -195,13 +201,6 @@ side is implicated; treat it as a Classilla defect. The
 script itself is verified: 557 bytes generated for that authority, syntax
 within Netscape 3's engine. The commit that added the PAC (4281342) asserted
 Classilla support without testing it; the README makes no such claim.
-
-**A request for Gateway's own address, through Gateway.** `#47` in the same
-session: Classilla, while on manual settings, asked the proxy for
-`http://proxyweb.com:8765/proxy.pac`, so Gateway opened a connection to
-itself and served its own request. It worked, but it spends a splice slot on
-a loop. An absolute-form request whose host and port are one of Gateway's
-own listeners could be answered locally. Small.
 
 ---
 
