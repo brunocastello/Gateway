@@ -7,31 +7,11 @@ Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rath
 
 ## What's new in 0.3.9
 
-**A `CONNECT` to port 80 can now speak https instead.** `connect_upgrade` (off
-by default) answers a plaintext `CONNECT` the way `connect_mitm` answers a
-`443` one, but the other way round: there is no handshake to terminate, so
-Gateway terminates the plaintext request inside the tunnel itself and
-re-originates it over TLS to port 443, single-shot, then closes the tunnel.
-No certificate is presented to anyone. Ported by hand from roytam1's `gw034`
-fork.
+**A `CONNECT` to port 80 can now speak https instead.** Some clients open a plain `CONNECT host:80` rather than a `443` one, and Gateway used to just bounce those bytes. With `connect_upgrade` on (off by default), Gateway reads the plaintext request inside the tunnel and re-sends it over TLS to port 443, single-shot, then closes the tunnel — no certificate is shown to anyone, so this is protocol translation rather than MITM. Every other port is still a raw tunnel.
 
-**Gateway no longer dials itself.** A proxy-configured browser re-fetching
-its own auto-configuration script sends the absolute form, and when that
-request named Gateway's own address, Gateway used to answer it by opening a
-connection back to itself — it worked, but spent a splice slot on the loop.
-It is now answered locally instead.
+**Gateway no longer dials itself.** A proxy-configured browser re-fetching its own auto-configuration script sends the absolute form of the URL, and when that named Gateway's own address, Gateway used to answer it by opening a connection back to itself — it worked, but spent a splice slot on the loop. Gateway now remembers up to four addresses it has been asked for this way and answers them locally; the very first request for a given address still makes the one round trip that teaches Gateway the address.
 
-**Gateway can say when it is out of date.** A little after the listeners are
-up, it asks github.com once whether a newer release exists and logs the
-direct download link for this platform when there is one — no JSON, no
-rate limit, and nothing said at all when it is current or the check fails.
-`check_updates = 0` turns it off.
-
-## What's new in 0.3.8
-
-**Secure pages load faster.** With `connect_mitm` on, every picture and script on an `https://` page is a new connection, and each one used to cost a full handshake — a slow RSA calculation on a vintage processor. Gateway now remembers the browser's secure session and lets it resume, so only the first connection to a site pays for the handshake. The log says `resumed` when it happens. Verified on Windows 95 with Internet Explorer 4 and Netscape 4.08. Should a browser turn a resumption down, Gateway forgets that session and the next connection simply does a full handshake again.
-
-**Loose ends from 0.3.7, tidied.** The Tunnel's remote host can no longer be saved empty while the Tunnel is on — it would turn every client away. The Wayback checkbox once labelled "Strip charset from Content-Type" did the opposite of what it said, and now reads "Keep the charset in Content-Type"; the setting itself is unchanged. The "Find the nearest available snapshot" checkbox is gone: it was never connected to anything, and Gateway reaches the nearest snapshot regardless.
+**Gateway can say when it is out of date.** Once per launch, a little after the listeners are up, it asks github.com once whether a newer release exists. When one does, it logs a single line (code `G50`) with an `http://` link to download it for this platform; otherwise it says nothing, whether up to date or the check simply failed. `check_updates = 0` turns the request off entirely.
 
 ## Setting it up
 
@@ -41,9 +21,9 @@ Point the browser's HTTP proxy at the machine running Gateway, port `8765`. Clas
 
 Mail, the Wayback proxy and the Tunnel are off until configured. Every setting is listed in [`docs/prefs.md`](https://github.com/brunocastello/Gateway/blob/main/docs/prefs.md).
 
-## Upgrading from 0.3.7
+## Upgrading from 0.3.8
 
-Nothing to do. Your preferences file is kept as it is; a `wayback_api` line left in it is simply ignored. The certificate authority is kept, so a browser that already trusts it stays trusting it.
+Nothing to do. Your preferences file and certificate authority are both kept as they are. Gateway now checks github.com once at launch for a newer release; `check_updates = 0` turns that off.
 
 ## Downloads
 
