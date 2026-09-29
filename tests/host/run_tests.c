@@ -23,6 +23,7 @@
 #include "gw_gate.h"
 #include "gw_hello.h"
 #include "gw_rewrite.h"
+#include "gw_skexport.h"
 #include "gw_x509write.h"
 #include "gw_update.h"
 #include "gw_url.h"
@@ -2703,6 +2704,140 @@ static void test_hello_ciphers(void)
     }
 }
 
+/*
+ * gw_skexport.c (PATCHES.md §38): the RSA_EXPORT ServerKeyExchange's wire
+ * framing, against a known 512-bit modulus (top byte set, as RSA keygen
+ * produces for a key of exactly that bit length -- nothing here strips or
+ * adds a leading zero, so this input already says what "no leading zero"
+ * means), a known exponent, known randoms and a stand-in signature. The
+ * actual signing is BearSSL's job and is not exercised here:
+ * tests/host/Makefile compiles no BearSSL source (see its SOURCES list),
+ * so there is no RSA verify to check the signature against -- the pure
+ * encoding is what a portable helper can prove.
+ */
+static void test_skexport(void)
+{
+    static const unsigned char mod[64] = {
+        0xC3, 0xD1, 0xB5, 0x58, 0x70, 0x16, 0xFC, 0x42,
+        0xD6, 0x17, 0xCB, 0xFD, 0x2F, 0xC1, 0x21, 0x46,
+        0x8A, 0xCB, 0x8C, 0xA6, 0x81, 0x47, 0xE5, 0xD8,
+        0x9B, 0xFA, 0x5F, 0x20, 0xCD, 0x18, 0xB9, 0xC7,
+        0xC5, 0xED, 0x5A, 0xBA, 0x92, 0x32, 0x9C, 0x7F,
+        0x7B, 0xB2, 0x4F, 0x58, 0x01, 0x71, 0xBC, 0x56,
+        0xBA, 0x4D, 0x97, 0x56, 0x93, 0x4F, 0xEC, 0xB9,
+        0xB7, 0x4C, 0x28, 0x44, 0x99, 0xBB, 0x1C, 0x19
+    };
+    static const unsigned char exp[3] = { 0x01, 0x00, 0x01 };
+    static const unsigned char cli[32] = {
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11
+    };
+    static const unsigned char srv[32] = {
+        0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+        0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+        0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+        0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22
+    };
+    /* Stand-in for a 1024-bit certificate key's signature -- content is
+     * unchecked, only that gw_ske_write_message carries it through with
+     * its own 2-byte length prefix, unlike 5e13663's version. */
+    static unsigned char sig[128];
+    unsigned char params[2 + sizeof(mod) + 2 + sizeof(exp)];
+    unsigned char signed_input[64 + sizeof(params)];
+    unsigned char msg[4 + sizeof(params) + 2 + sizeof(sig)];
+    size_t n;
+    size_t i;
+
+    printf("gw_skexport\n");
+
+    for (i = 0; i < sizeof(sig); i++) sig[i] = (unsigned char)(0xAB + i);
+
+    /* gw_ske_write_params: 2-byte modulus length, the modulus verbatim
+     * (no leading zero added or stripped), 2-byte exponent length, the
+     * exponent verbatim. */
+    n = gw_ske_write_params(mod, sizeof(mod), exp, sizeof(exp),
+                            params, sizeof(params));
+    check(n == 2 + sizeof(mod) + 2 + sizeof(exp),
+          "params length is modulus + exponent, each with a 2-byte prefix");
+    check(params[0] == 0x00 && params[1] == 0x40,
+          "modulus length prefix is big-endian (0x0040 for 64 bytes)");
+    check(memcmp(params + 2, mod, sizeof(mod)) == 0,
+          "the modulus is written whole, no leading zero added");
+    check(params[0x42] == 0x00 && params[0x43] == 0x03,
+          "exponent length prefix, big-endian (0x0003)");
+    check(memcmp(params + 0x44, exp, sizeof(exp)) == 0,
+          "the exponent follows verbatim");
+    check(gw_ske_write_params(mod, sizeof(mod), exp, sizeof(exp),
+                              params, sizeof(params) - 1) == 0,
+          "params that do not fit the buffer write nothing");
+
+    /* gw_ske_write_signed_input: client_random + server_random + params,
+     * in that order, params header (the 4-byte handshake header) never
+     * included -- this is the 36-byte MD5+SHA1 hash's input, not the
+     * hash itself, which needs BearSSL and is not exercised here. */
+    n = gw_ske_write_signed_input(cli, srv, params, sizeof(params),
+                                  signed_input, sizeof(signed_input));
+    check(n == 64 + sizeof(params),
+          "signed input is both randoms plus the params, nothing else");
+    check(memcmp(signed_input, cli, 32) == 0,
+          "client_random comes first");
+    check(memcmp(signed_input + 32, srv, 32) == 0,
+          "server_random comes second");
+    check(memcmp(signed_input + 64, params, sizeof(params)) == 0,
+          "params follow, header-less, exactly as gw_ske_write_params wrote them");
+    check(gw_ske_write_signed_input(cli, srv, params, sizeof(params),
+                                    signed_input, 63 + sizeof(params)) == 0,
+          "signed input that does not fit the buffer writes nothing");
+
+    /* gw_ske_write_message: the 4-byte handshake header, the params, a
+     * 2-byte signature length -- the field 5e13663's version left out --
+     * and the signature. */
+    n = gw_ske_write_message(params, sizeof(params), sig, sizeof(sig),
+                             msg, sizeof(msg));
+    check(n == 4 + sizeof(params) + 2 + sizeof(sig),
+          "message length is the header plus params plus signature "
+          "(with its own 2-byte length)");
+    check(msg[0] == 12, "handshake type 12, ServerKeyExchange");
+    {
+        size_t body_len = sizeof(params) + 2 + sizeof(sig);
+        check(msg[1] == (unsigned char)(body_len >> 16) &&
+              msg[2] == (unsigned char)(body_len >> 8) &&
+              msg[3] == (unsigned char)body_len,
+              "3-byte big-endian body length");
+    }
+    check(memcmp(msg + 4, params, sizeof(params)) == 0,
+          "params follow the header");
+    check(msg[4 + sizeof(params)] == 0x00 &&
+          msg[4 + sizeof(params) + 1] == 0x80,
+          "the signature carries its own 2-byte length prefix (0x0080 "
+          "for 128 bytes) -- the exact bug 5e13663 removed the message "
+          "over");
+    check(memcmp(msg + 4 + sizeof(params) + 2, sig, sizeof(sig)) == 0,
+          "the signature bytes follow, unmodified");
+    check(gw_ske_write_message(params, sizeof(params), sig, sizeof(sig),
+                               msg, sizeof(msg) - 1) == 0,
+          "a message that does not fit the buffer writes nothing");
+
+    /* The real call site writes params directly at out + 4 and then
+     * wraps them in place -- params and out overlap. memmove tolerates
+     * it; this is the shape gw_export_ske actually uses. */
+    {
+        unsigned char buf[4 + sizeof(params) + 2 + sizeof(sig)];
+        size_t pn = gw_ske_write_params(mod, sizeof(mod), exp, sizeof(exp),
+                                        buf + 4, sizeof(buf) - 4);
+        size_t mn;
+
+        check(pn == sizeof(params), "params written in place, same length");
+        mn = gw_ske_write_message(buf + 4, pn, sig, sizeof(sig),
+                                  buf, sizeof(buf));
+        check(mn == n, "wrapping params already at out + 4 gives the same length");
+        check(memcmp(buf, msg, mn) == 0,
+              "and the same bytes as building it in a separate buffer");
+    }
+}
+
 int main(void)
 {
     test_util();
@@ -2734,6 +2869,7 @@ int main(void)
     test_fwd();
     test_log_codes();
     test_hello_ciphers();
+    test_skexport();
 
     printf("\n%d checks, %d failures\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;

@@ -87,6 +87,7 @@ SRC = \
   $(CERT)/src/transport_win32.c \
   $(CERT)/src/server.c \
   $(CERT)/src/entropy_win32.c \
+  $(CERT)/src/gw_export_key.c \
   $(CERT)/src/ca_roots.c \
   $(CERT)/src/tls13_keysched.c \
   $(CERT)/src/tls13_record.c \

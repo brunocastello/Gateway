@@ -204,6 +204,12 @@ ran out first; PATCHES.md §37).
 A completed handshake is not an event to diagnose, so it has no code:
 `#N secure connection with the browser, SSL 3.0`.
 
+An export-only browser (0x0003 or 0x0006, 40-bit RC4 or RC2 -- IE 3.0 and
+similar) gets one more `log_debug` line partway through, whichever S code
+or completed line follows: `export suite: sent a 512-bit temporary key`
+(PATCHES.md §38). The one-time keygen that key comes from logs its own
+`log_debug` line only if it ran slow enough to notice.
+
 ## T — reaching the far end
 
 Shared by every module that connects out: the HTTP proxy, the mail splice,

@@ -1562,3 +1562,135 @@ continues past what was captured -- still possible for a hello unusually
 rich in extensions ahead of a short cipher list, though not for the case
 above once `helloHead` grew. Nothing changes in the plain log: this is one
 more line under the same `log_debug` gate as the hex dump beside it.
+
+## §38 — an RSA_EXPORT ServerKeyExchange, for 40-bit clients with nothing else
+
+**What.** SSL 3.0 (RFC 6101 §5.6.3/§5.6.7) and TLS 1.0 (RFC 2246 §7.4.3) both
+say that an RSA_EXPORT cipher suite (0x0003, 0x0006 -- 0x0008 has no record
+layer here, §28) needs a ServerKeyExchange carrying a temporary RSA key of at
+most 512 bits, signed with the certificate's key, whenever the certificate
+key is longer. Gateway's leaf is always 1024-bit (`gw_ca.c`), so every
+export handshake needs one. `write-ServerKeyExchange` (`ssl_hs_server.t0`)
+sent none: it returned immediately unless the suite used ECDHE, which none of
+Gateway's suites do. `do_rsa_decrypt` matched, decrypting every
+ClientKeyExchange with the certificate's own key.
+
+**Why.** 2026-09-29, 32-bit IE 3.0 (4.70.1215) on Windows 95, `connect_mitm
+1`, `allow_sslv3 1`, a typed `https://`:
+
+```
+#2 the browser gave up after seeing our certificate (S03)
+  SSLv2 hello, version 0300, suite 0003, rx 33, rx after our flight 0, in-rectype 22, incrypt 0, session new
+  first bytes: 80 1f 01 03 00 00 06 00 00 00 10 02 00 80 00 00 03 ...
+  offered suites: 020080 000003
+```
+
+An export-only client (RC4-40 only, suite 0x0003). It received Certificate
+and ServerHelloDone and hung up: nothing it was allowed to encrypt a
+pre-master secret to, since 0x0003 forbids encrypting to a key longer than
+512 bits and the leaf is 1024. Without this message, `rewrite_https` was the
+only path a 40-bit browser like this one could ever reach (CLAUDE.md's SSL
+3.0 paragraph already says as much for IE 3 generally; this is why).
+
+This was tried once before and removed. `5e13663` pulled a hard-coded
+512-bit key and an unemitted `do-rsa-export-ske` word out of
+`ssl_hs_server.t0`'s preamble, giving two reasons: Netscape 3.04 Gold
+rejects the message outright regardless of content (verified by that
+commit's own revert test, unrelated to this section), and the signature was
+written **without its 2-byte length prefix** -- `opaque signature<0..2^16-1>`
+needs one, and a message missing it is not one any client that reads that
+far would accept. There was also no evidence, then, that any client needed
+it; there is now.
+
+**How.** Three files, cleanly split along the CLAUDE.md rule 8 boundary
+(portable, no BearSSL, no OT/Windows headers -- versus the T0/BearSSL side
+that needs them):
+
+- `src/portable/gw_skexport.{c,h}` (host-tested, `tests/host/run_tests.c`):
+  the wire framing only, three pure functions that write bytes and touch no
+  crypto --
+  - `gw_ske_write_params` -- `ServerRSAParams { opaque rsa_modulus<1..2^16-1>;
+    opaque rsa_exponent<1..2^16-1>; }`, exactly as given (no leading-zero
+    handling of its own; RSA keygen never produces one for the top byte of a
+    key of the stated bit length, so the caller is trusted).
+  - `gw_ske_write_signed_input` -- assembles `client_random + server_random +
+    params`, the 64-plus-`params_len` bytes the signature is computed over
+    (RFC 2246 §7.4.3's "old style" RSA signing: MD5 of this concatenated with
+    SHA1 of the same, 36 bytes, no ASN.1 DigestInfo).
+  - `gw_ske_write_message` -- wraps params and an already-computed signature
+    into the complete handshake message: 4-byte header (type 12, 3-byte
+    length), params, **2-byte signature length**, signature. This is the
+    line 5e13663 found missing.
+- `third_party/certainly/src/gw_export_key.{c,h}`: the temporary key itself.
+  `gw_export_key_get()` generates a 512-bit RSA key on the first call with
+  BearSSL's default keygen and Gateway's own seeded entropy pool (`entropy.h`
+  -- the same pool `gw_ca.c` uses for the 1024-bit authority), then caches it
+  for the rest of the process; both RFCs permit reuse across handshakes, and
+  a fresh key per handshake would stall the cooperative loop for no reason.
+  If keygen ever fails the function returns `NULL` forever after, and the
+  export path fails the handshake exactly as it did with no message at all.
+  `TickCount()` (`certainly_compat.h`, already cross-platform) brackets the
+  one-time keygen; a `log_debug` line reports it only past 6 ticks (a tenth
+  of a second) -- there is no PPC to measure this against from here (builds
+  in CI only), so the number is not asserted, only surfaced for whoever runs
+  the hardware test this section is written for.
+- `ssl_hs_server.t0`'s preamble: `use_rsa_export_ske()` is the one predicate
+  both ends share -- suite is 0x0003 or 0x0006 **and** the certificate key
+  (`ctx->chain_handler.single_rsa.sk->n_bitlen`, single_rsa being the only
+  policy Gateway ever installs, `br_ssl_server_init_full_rsa`) is over 512
+  bits -- computed fresh at ServerKeyExchange time and again at
+  ClientKeyExchange time rather than cached on the context, since both the
+  suite and the certificate are fixed for the life of one handshake and
+  recomputing is exactly as correct. `write-ServerKeyExchange` gains an
+  `if ... ret then` branch (the ECDHE branch above it, byte-for-byte
+  unchanged) that calls the new `do_rsa_export_ske()` when the predicate
+  holds; `do_rsa_export_ske()` calls the three portable functions above,
+  calls the existing `hash_data()` (shared with the ECDHE path) for the
+  36-byte hash, and signs with `do_sign(pctx, 0, ...)` -- algo_id 0 is what
+  `sr_do_sign` (`ssl_scert_single_rsa.c`) treats as the old-style
+  MD5+SHA1-concatenation, no-DigestInfo signature this needs, the same
+  routine the certificate's own key already signs with elsewhere. `do_sign`
+  returns the actual signature length for whatever key size the certificate
+  turns out to have, so nothing here is hard-coded to 1024/128.
+
+  `do_rsa_decrypt()` gains the matching read side: when `use_rsa_export_ske()`
+  holds, it decrypts the ClientKeyExchange with `gw_export_key_get()`'s
+  temporary key via `br_rsa_ssl_decrypt()` directly, instead of going through
+  `policy_vtable->do_keyx()` (which always uses the certificate's key). The
+  bad-decrypt handling below that branch -- a random 48-byte PMS copied in
+  constant time when decryption fails -- is untouched and runs the same way
+  regardless of which key decrypted.
+
+**What must stay unchanged.** Every suite that is not 0x0003/0x0006 takes
+the same path through `write-ServerKeyExchange` and `do_rsa_decrypt` as
+before this section, byte for byte -- the ECDHE branch is moved, not edited,
+and the RSA-keyx `else` in `do_rsa_decrypt` is the original line. A resumed
+session (§36) sends no Certificate and no ServerKeyExchange at all, so this
+code is not reached; nothing here changes that. The SSL 3.0 ClientKeyExchange
+bridge (`ssl3_rewrite_cke`, the "no length prefix" fix above §28/§22) already
+accepts any message length from 48 to 512 bytes, so a 64-byte temporary-key
+ciphertext needs no change there, and neither does the §22 SSLv2-hello
+conversion that feeds IE 3.0's hello to this same path in the first place.
+
+**Regenerating.** `ssl_hs_server.t0` changed; `ssl_hs_server.c` was
+regenerated with `T0/t0comp.py` per `T0/README.md` and committed alongside
+it. Before touching the source, the unchanged `.t0` files were regenerated
+and diffed against the committed `.c`: byte-identical but for the header
+comment (which `T0/README.md` already says to keep hand-written). After the
+change, the diff against that baseline is exactly the new preamble code, two
+new `cc:` words (`use-rsa-export-ske?`, `do-rsa-export-ske`) appearing as two
+new dispatch cases, and the mechanical renumbering of every case after them
+-- nothing in the TLS 1.0+ non-export handshake path moved.
+
+**Verification status.** Host-tested: `gw_skexport.c`'s framing (length
+prefixes, no signature-length omission, modulus written without
+alteration, the client-random/server-random/params concatenation) against a
+known 512-bit key and known randoms, in `tests/host/run_tests.c`. Not
+tested: an actual signature against BearSSL's own RSA verify --
+`tests/host/Makefile` compiles only `src/portable`, no BearSSL source, so
+that step stays with the hardware test this section exists for, alongside
+IE 3.0 completing its handshake and a Netscape 3.04 regression check (it
+negotiates export suites today and completes *without* this message; §36's
+note that it rejects the message outright, from the previous attempt, is the
+thing to watch for). CLAUDE.md, README.md and `docs/prefs.md`'s IE 3
+statements are unchanged pending that result.

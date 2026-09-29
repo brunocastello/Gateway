@@ -112,6 +112,12 @@ target_include_directories(bearssl
     # ssl_rec_rc4.c is BearSSL's record layer for the SSL 3.0 suites and
     # shares src/ssl3's MAC and key schedule.
     PRIVATE ${CMAKE_SOURCE_DIR}/src
+    # ssl_hs_server.c's RSA_EXPORT ServerKeyExchange (PATCHES.md §38) logs
+    # through gw_log.h and fetches the temporary key through
+    # gw_export_key.h; it resolves against certainly's object at final
+    # link, same as server.c already crossing into src/ssl3 the other way.
+    PRIVATE ${CMAKE_SOURCE_DIR}/src/portable
+    PRIVATE ${CERTAINLY_DIR}/src
 )
 
 # --------------------------------------------------------------------
@@ -129,6 +135,7 @@ add_library(certainly STATIC
     ${CERTAINLY_DIR}/src/tls13_keysched.c
     ${CERTAINLY_DIR}/src/tls13_record.c
     ${CERTAINLY_DIR}/src/tls13_handshake.c
+    ${CERTAINLY_DIR}/src/gw_export_key.c
 )
 
 # GW_UNIV_INC is deliberately PRIVATE: Apple's headers must not leak along the
@@ -174,6 +181,7 @@ add_library(gw_portable STATIC
     src/portable/gw_wayback.c
     src/portable/gw_pac.c
     src/portable/gw_update.c
+    src/portable/gw_skexport.c
 )
 target_include_directories(gw_portable PUBLIC src/portable)
 target_compile_options(gw_portable PRIVATE -Wall -Wextra -Wno-unused-parameter)
