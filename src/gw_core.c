@@ -552,6 +552,11 @@ void GW_Stop(void)
     GWProxy_Shutdown();
     GWMail_Shutdown();
     GWTunnel_Shutdown();
+    /* A check still in flight would otherwise be left holding its GWStream
+     * to github.com open with nothing polling it, since GW_Poll() returns
+     * early while stopped. GWUpdater_Request() will not repeat it on a
+     * later Start -- once per launch means once, even an aborted one. */
+    GWUpdater_Abort();
 
     sRunning = 0;
     gw_log("gateway stopped");

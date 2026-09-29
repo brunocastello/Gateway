@@ -167,6 +167,14 @@ static void updater_finish(GWUpdaterCtx *u)
     updater_done(u);
 }
 
+void GWUpdater_Abort(void)
+{
+    GWUpdaterCtx *u = sUp;
+
+    if (u == NULL || u->state != kUpWorking) return;
+    updater_done(u);
+}
+
 void GWUpdater_Poll(void)
 {
     GWUpdaterCtx *u = sUp;

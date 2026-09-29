@@ -25,6 +25,15 @@ void GWUpdater_Shutdown(void);
  */
 void GWUpdater_Request(void);
 
+/*
+ * Tear down a check still in flight, e.g. because the Preferences window's
+ * Stop button was pressed. Leaves the state at "done" rather than "not
+ * started", so the check is not retried on a later Start -- it is still
+ * once per launch, and an aborted one counts as the one. Quiet: nothing
+ * goes in the plain log, since Stop is not a failure.
+ */
+void GWUpdater_Abort(void);
+
 void GWUpdater_Poll(void);
 
 #endif /* GW_UPDATER_H */
