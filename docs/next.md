@@ -52,11 +52,10 @@ trying again.
 ## Ideas for 0.3.9
 
 Picked on 2026-09-28 for later sessions; each is written up further down.
-Item 3 is done (see *Built for 0.3.9* at the top) and item 2 is closed.
+Item 3 is done (see *Built for 0.3.9* at the top); items 1 and 2 are closed.
 
-1. **Keep-alive inside the terminated tunnel** — one handshake per host
-   rather than per resource. Measure a page with 0.3.8's resumption first;
-   it may already be enough. (Item 1 below.)
+1. **Keep-alive inside the terminated tunnel** — closed 2026-09-29 as not
+   worth building. (Item 1 below.)
 2. **IE 3.0's hello bytes** — closed 2026-09-29: the 16-bit build logs S01
    on 0.3.8, and the 32-bit build cannot be tested on the images available.
    (Item 2 below.)
@@ -122,7 +121,16 @@ have cost an extra TLS request per page for much the same answer. Removed on
 old prefs file is ignored, like any unknown key. If the Availability API is
 ever wanted, `docs/settings-window.md` §4.3 has the design and its two traps.
 
-## 1. Keep-alive inside the terminated tunnel
+## 1. Keep-alive inside the terminated tunnel — not worth building
+
+Closed 2026-09-29 by the user's decision, without building it. Resumption
+already removes the expensive part of each extra handshake — the RSA step —
+and what keep-alive would add on top costs a splice slot held for as long as
+the browser likes, out of `max_sessions` (12 by default, at most 16), and
+breaks the one rule that keeps the cooperative loop simple. Reopen only with
+a measured page where resumption is not enough. The original write-up
+follows.
+
 
 The larger version of resumption's win: one handshake per host rather than
 per resource. It collides with the design rule that the client hop is always
