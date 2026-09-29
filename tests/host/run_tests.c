@@ -1445,6 +1445,112 @@ static void test_update(void)
           "the asset link, http:// so it reaches through :8765");
     check(gw_update_asset_url("0.3.10", asset, url, 4) == 0,
           "an asset link that does not fit fails rather than truncates");
+
+
+    /*
+     * A real capture (curl --http1.0 -D -, 2026-09-29) of GitHub's 302
+     * for /releases/latest: ~5 KB of headers, almost all of it one
+     * Content-Security-Policy line, because a real CDN sends what a real
+     * CDN sends. On hardware this tripped "the response headers were too
+     * large" against the old 4096-byte GW_UPDATE_BUF (gw_updater.c) well
+     * before the blank line ever arrived. Trimmed of nothing but the
+     * response body (there isn't one -- Content-Length: 0); Location is
+     * intact. Proves gw_http_parse_response() itself has no header-count
+     * or line-length limit of its own -- the fix is the buffer, not the
+     * parser.
+     */
+    {
+        static const char r[] =
+        "HTTP/1.1 302 Found\r\n"
+        "Date: Tue, 29 Sep 2026 17:55:16 GMT\r\n"
+        "Content-Type: text/html; charset=utf-8\r\n"
+        "Location: https://github.com/brunocastello/Gateway/releases/tag/v0.3.8\r\n"
+        "Vary: X-PJAX, X-PJAX-Container, Turbo-Visit, Turbo-Frame, X-Requested-With, "
+        "X-GitHub-Client-Version, Sec-Fetch-Site,Accept-Encoding, Accept, X-Requested"
+        "-With\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Strict-Transport-Security: max-age=31536000; includeSubdomains; preload\r\n"
+        "X-Frame-Options: deny\r\n"
+        "X-Content-Type-Options: nosniff\r\n"
+        "X-XSS-Protection: 0\r\n"
+        "Referrer-Policy: no-referrer-when-downgrade\r\n"
+        "Content-Security-Policy: default-src 'none'; base-uri 'self'; child-src gith"
+        "ub.githubassets.com github.com/assets-cdn/worker/ github.com/assets/ gist.gi"
+        "thub.com/assets-cdn/worker/; connect-src 'self' uploads.github.com www.githu"
+        "bstatus.com collector.github.com raw.githubusercontent.com api.github.com gi"
+        "thub-cloud.s3.amazonaws.com github-production-repository-file-5c1aeb.s3.amaz"
+        "onaws.com github-production-upload-manifest-file-7fdce7.s3.amazonaws.com git"
+        "hub-production-user-asset-6210df.s3.amazonaws.com *.rel.tunnels.api.visualst"
+        "udio.com wss://*.rel.tunnels.api.visualstudio.com github.githubassets.com ob"
+        "jects-origin.githubusercontent.com copilot-proxy.githubusercontent.com proxy"
+        ".individual.githubcopilot.com proxy.business.githubcopilot.com proxy.enterpr"
+        "ise.githubcopilot.com *.actions.githubusercontent.com wss://*.actions.github"
+        "usercontent.com productionresultssa0.blob.core.windows.net productionresults"
+        "sa1.blob.core.windows.net productionresultssa2.blob.core.windows.net product"
+        "ionresultssa3.blob.core.windows.net productionresultssa4.blob.core.windows.n"
+        "et productionresultssa5.blob.core.windows.net productionresultssa6.blob.core"
+        ".windows.net productionresultssa7.blob.core.windows.net productionresultssa8"
+        ".blob.core.windows.net productionresultssa9.blob.core.windows.net production"
+        "resultssa10.blob.core.windows.net productionresultssa11.blob.core.windows.ne"
+        "t productionresultssa12.blob.core.windows.net productionresultssa13.blob.cor"
+        "e.windows.net productionresultssa14.blob.core.windows.net productionresultss"
+        "a15.blob.core.windows.net productionresultssa16.blob.core.windows.net produc"
+        "tionresultssa17.blob.core.windows.net productionresultssa18.blob.core.window"
+        "s.net productionresultssa19.blob.core.windows.net github-production-reposito"
+        "ry-image-32fea6.s3.amazonaws.com github-production-release-asset-2e65be.s3.a"
+        "mazonaws.com insights.github.com wss://alive.github.com wss://alive-staging."
+        "github.com api.githubcopilot.com api.individual.githubcopilot.com api.busine"
+        "ss.githubcopilot.com api.enterprise.githubcopilot.com wss://production-copil"
+        "ot-host.webpubsub.azure.com api.github.com/cmc_internal/api/; font-src githu"
+        "b.githubassets.com; form-action 'self' github.com gist.github.com copilot-wo"
+        "rkspace.githubnext.com objects-origin.githubusercontent.com; frame-ancestors"
+        " 'none'; frame-src viewscreen.githubusercontent.com notebooks.githubusercont"
+        "ent.com; img-src 'self' data: blob: github.githubassets.com media.githubuser"
+        "content.com camo.githubusercontent.com identicons.github.com avatars.githubu"
+        "sercontent.com private-avatars.githubusercontent.com github-cloud.s3.amazona"
+        "ws.com objects.githubusercontent.com release-assets.githubusercontent.com se"
+        "cured-user-images.githubusercontent.com user-images.githubusercontent.com pr"
+        "ivate-user-images.githubusercontent.com opengraph.githubassets.com repositor"
+        "y-images.githubusercontent.com marketplace-screenshots.githubusercontent.com"
+        " copilotprodattachments.blob.core.windows.net/github-production-copilot-atta"
+        "chments/ github-production-user-asset-6210df.s3.amazonaws.com customer-stori"
+        "es-feed.github.com spotlights-feed.github.com explore-feed.github.com *.goog"
+        "leusercontent.com objects-origin.githubusercontent.com *.githubusercontent.c"
+        "om; manifest-src 'self'; media-src github.com user-images.githubusercontent."
+        "com secured-user-images.githubusercontent.com private-user-images.githubuser"
+        "content.com github-production-user-asset-6210df.s3.amazonaws.com gist.github"
+        ".com github.githubassets.com; script-src github.githubassets.com; style-src "
+        "'unsafe-inline' github.githubassets.com; upgrade-insecure-requests; worker-s"
+        "rc github.githubassets.com github.com/assets-cdn/worker/ github.com/assets/ "
+        "gist.github.com/assets-cdn/worker/\r\n"
+        "Server: github.com\r\n"
+        "Set-Cookie: _gh_sess=mVQRE65cKy5lGo0Gs8R3%2BPJib4kjztsRoaGfN%2BU4Hl0LcYuJL4N"
+        "c4IRrnXRMMrnHq9cHmImpPEMkDx0bGRaXiGv6hBODP7AZestg1zrKfqmXoCgc7uJVmqmTS3TYuk9"
+        "%2F9Uh8%2Bik1uxZvT2ndcl05UVJtcdoW1%2B05TUOf5odtvNZabHjfpFM5f1yMsfw%2FC7daYA1"
+        "SgcGIJEFt3%2Bm9ZzDVTywEyFnbroDRPYfyqPKG8wuU%2BHlGcMv%2ByJSxodvy3yDnHtrSa0%2F"
+        "RZXQmW8kqG0K0rg%3D%3D--yY8HZc8pwsH1Bf15--%2BJNUKluowh10akFfNzQJtg%3D%3D; pat"
+        "h=/; HttpOnly; secure; SameSite=Lax\r\n"
+        "Set-Cookie: _octo=GH1.1.1884472418.1790704521; expires=Wed, 29 Sep 2027 17:5"
+        "5:21 GMT; domain=.github.com; path=/; secure; SameSite=Lax\r\n"
+        "Set-Cookie: logged_in=no; expires=Wed, 29 Sep 2027 17:55:21 GMT; domain=.git"
+        "hub.com; path=/; HttpOnly; secure; SameSite=Lax\r\n"
+        "Content-Length: 0\r\n"
+        "X-GitHub-Request-Id: FC9B:251659:2DA08E5:2B6CFD7:6ABBFB89\r\n"
+        "x-github-edge-region: fra\r\n"
+        "connection: close\r\n"
+        "\r\n";
+        GWResponse gh;
+
+        check(sizeof(r) - 1 > 4096,
+              "the real capture is bigger than the old GW_UPDATE_BUF");
+        check(gw_http_parse_response(r, sizeof(r) - 1, &gh) == 1,
+              "a real ~5 KB GitHub header block parses");
+        check(gh.status == 302, "status 302");
+        check(gh.has_location, "Location captured");
+        check_str(gh.location,
+                  "https://github.com/brunocastello/Gateway/releases/tag/v0.3.8",
+                  "Location value, past the huge CSP line");
+    }
 }
 
 static void test_pac(void)

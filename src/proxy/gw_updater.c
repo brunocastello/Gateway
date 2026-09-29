@@ -12,7 +12,17 @@
 
 #define GW_UPDATE_HOST    "github.com"
 #define GW_UPDATE_PATH    "/brunocastello/Gateway/releases/latest"
-#define GW_UPDATE_BUF     4096L
+/*
+ * On hardware this logged "the response headers were too large": a real
+ * capture of GitHub's 302 for this path runs ~5 KB, almost all of it one
+ * Content-Security-Policy header, and 4096 left no room for the blank
+ * line that ends the head. gw_http_parse_response() itself has no
+ * header-count or line-length limit (tests/host/run_tests.c parses that
+ * same ~5 KB capture whole), so the fix is here: a one-shot NewPtr freed
+ * right after the check, generous enough for a CSP this size to grow
+ * further and still fit.
+ */
+#define GW_UPDATE_BUF     16384L
 
 /* The whole dial-and-answer budget: a request this small should be done well
  * inside it, and nothing owns this connection but this one check, so there
