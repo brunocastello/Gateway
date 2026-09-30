@@ -252,6 +252,47 @@ http://example.com/` from a machine that can reach Gateway does exactly
 that. Revive it by reverting the revert (the commits above, plus the `H27`
 part of dfe5aef, which is otherwise general and stays).
 
+**`http_upstream`** (not started), from roytam1's `gw034` branch (`5a2dbff`,
+2026-09-30). Has `:8765` and `:8888` connect through an HTTP `CONNECT` or
+SOCKS5 proxy before the origin, the way `tunnel_proxy` already does for
+Module 4. Off by default. Worth having because Gateway's outbound traffic
+leaves through the OS 9 machine's own route: a VPN or `ssh -D` on another
+machine does not touch it, so this is the only way to steer it without
+changing the router. Cases: a SOCKS5 exit abroad (`ssh -D 1080`) for
+region-locked or slow-from-here sites and the Archive; Tor
+(`socks5`, port 9050 -- the hostname goes to the proxy, so `.onion` resolves);
+mitmproxy or Charles on another machine to watch what Gateway sends
+upstream; a venue or office network that only lets a proxy out.
+
+Not a cherry-pick: the branch is based on `fa64f91`, 175 commits behind, and
+does not compile against main (`gw_fwd_socks_conn_reply` takes three
+arguments now; `session_fail` and logging use the readable-log codes). Port
+by hand:
+
+1. Lift the handshake out of `src/proxy/gw_tunnel.c` (`build_handshake`,
+   `step_http_hello`, `step_socks_hello`, `keep_leftover`) into one shared
+   dialler both modules use, instead of the patch's second copy.
+2. Hook it into the three dial sites in `src/proxy/gw_httpproxy.c`:
+   `session_start_upstream`, `session_retry_fresh`, and the `CONNECT` dial
+   in `step_recv_request`. `connect_mitm` rides on the first for free.
+   Take the patch's `kHPProxyLink` state, and count it in
+   `connecting_count` and the peer-gone check, as it does.
+3. Plain `http://` origins through an `http` upstream: send the
+   absolute-form request to the proxy, not `CONNECT host:80` -- Squid's
+   default denies CONNECT to non-SSL ports, which would make every
+   `http://` page a 502. CONNECT only for TLS origins and CONNECT tunnels.
+4. New log codes; a non-200 (including 407) answered as a 502 with the code
+   in the log, as the patch does. Say "read once at launch" only if it is --
+   the patch reads the prefs on every dial.
+5. Decide on a bypass (at least private addresses and `localhost`), and
+   document that the update check and mail still connect directly.
+6. Prefs docs from the patch's `docs/prefs.md` and `docs/prefs-example.txt`
+   rows, corrected for the above.
+
+Verify with `ssh -D 1080` on the MacBook and `http_upstream = socks5`, then
+mitmproxy as an `http` upstream, on both listeners and through
+`connect_mitm`.
+
 ---
 
 ## Tried and not worth repeating
