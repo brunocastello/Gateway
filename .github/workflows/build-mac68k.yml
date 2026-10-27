@@ -73,7 +73,8 @@ jobs:
 
       # Retro68's .dsk is a bare HFS volume, which Basilisk II mounts but a
       # QEMU Quadra (UTM's 68K machine) sees as an uninitialised SCSI disk.
-      # A hybrid CD image mounts there through the Apple CD-ROM driver.
+      # A partitioned hybrid CD image mounts there through the Apple CD-ROM
+      # driver -- attached in UTM as a CD, not as a disk.
       # genisoimage's --double reads AppleDouble pairs named "name" and
       # "%name" -- the convention Rez's --cc %Gateway.ad output already uses.
       - name: Make a CD image for QEMU
@@ -86,8 +87,15 @@ jobs:
           # Finder info was stored whole as the file's resource fork. Files
           # without one take the default type and creator instead.
           tr '\n' '\r' < docs/prefs-example.txt > "cd/Gateway Prefs"
-          genisoimage -quiet -hfs --double -r -V Gateway -hfs-volid Gateway \
+          # -part writes an Apple partition map. Without one the HFS volume
+          # sits bare at offset 1024, exactly like the .dsk, and Mac OS 8.1
+          # on UTM offered to initialise it (2026-10-28).
+          genisoimage -quiet -hfs -part --double -r -V Gateway -hfs-volid Gateway \
             -hfs-type TEXT -hfs-creator ttxt -o Gateway-68k.iso cd
+          test "$(head -c 2 Gateway-68k.iso)" = "ER" || {
+            echo "::error::no driver descriptor block"; exit 1; }
+          test "$(dd if=Gateway-68k.iso bs=1 skip=512 count=2 2>/dev/null)" = "PM" || {
+            echo "::error::no Apple partition map"; exit 1; }
 
           # hdir -a: flags, type/creator, resource fork bytes, data fork bytes.
           echo "--- HFS side of the CD image ---"
