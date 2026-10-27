@@ -7,139 +7,90 @@
 > If you are allergic to neural networks, synthesized functions, or autocomplete on steroids, **this repository is not for you**.
 > You are kindly invited to close this page and write your code line-by-line in `ed` or `vim`. Everyone else, enjoy!
 
-A TLS 1.3 gateway and proxy that runs **on** the vintage machine, not in front
-of it.
+Gateway lets old browsers and mail clients reach the modern internet.
 
-Gateway is a native Classic Toolbox (pre-Carbon) application for PowerPC Macs,
-and a native Win32 application for Windows 95 and later. It sits in the
-background, listens on a few local ports, and terminates modern TLS on behalf
-of applications written before it existed — Classilla, Internet Explorer,
-Outlook Express 5, `git`. The vintage side of every connection stays plaintext
-and stays on the same machine; only the modern side crosses the network.
+It runs in the background on the vintage machine itself — a PowerPC Mac or a
+Windows 95-era PC — and handles the modern TLS that Classilla, Internet
+Explorer, Netscape, Outlook Express and `git` can't. Your old program talks
+plain text to Gateway on the same machine; only Gateway's side of the
+connection goes out over the network.
 
-> A hobby project pointed at a 27-year-old operating system with no memory
-> protection, no ASLR and no privilege separation. Research software, no
-> warranty. Do not put anything through it you would regret losing.
+> This is a hobby project for operating systems with no memory protection.
+> No warranty. Don't send anything through it you'd regret losing.
 
 ## What it does
 
-| Port | Module | |
+| Port | What | |
 |---|---|---|
-| `8765` | **Web proxy** | `http://`, `https://` and `CONNECT`. Fetches over TLS 1.3 and hands the result back in plaintext. |
-| `1993`, `1995`, `1587` | **Mail splice** | IMAP, POP3 and SMTP for a client that cannot do TLS or OAuth. Outlook.com and Gmail. |
-| `8888` | **Wayback proxy** | Serves pages from the Internet Archive at a date you choose, with an allow-list of hosts that pass through live. |
-| `2222` | **Tunnel** | One local port relayed to a fixed far end over TLS, optionally through an HTTP or SOCKS5 proxy — SSH through stunnel, say. Off by default, and with no login of its own. |
+| `8765` | **Web proxy** | `http://`, `https://` and `CONNECT`, fetched over TLS 1.3. |
+| `1993` `1995` `1587` | **Mail** | IMAP, POP3 and SMTP for Outlook.com and Gmail, for clients with no TLS or OAuth. |
+| `8888` | **Wayback proxy** | The web as the Internet Archive saw it on a date you choose. |
+| `2222` | **Tunnel** | One local port relayed over TLS to a fixed server — SSH through stunnel, for example. Off by default, and with no password of its own. |
 
-Point the browser's HTTP proxy at the machine running Gateway, port `8765`,
-and that is the whole setup. Classilla also needs
-`network.http.proxy.use-http-proxy-for-https` set to `true` in about:config.
+## Browsing
 
-## Getting an old browser onto https://
+Set your browser's HTTP proxy to the machine running Gateway, port `8765`.
+In Classilla, also set `network.http.proxy.use-http-proxy-for-https` to
+`true` in about:config.
 
-Two ways, and they are alternatives rather than companions:
+Old browsers can't speak modern TLS, so Gateway offers two ways around it.
+Pick one:
 
-**`rewrite_https = 1`** (the default) rewrites `https://` links to `http://`
-so the browser never tries a handshake it cannot finish. Type addresses
-without a scheme. Everything loads; the address bar and `Secure` cookies do
-not follow.
-
-**`connect_mitm = 1`** terminates TLS on the browser's side of a `CONNECT`,
-so a typed `https://` URL works with the padlock and the real URL. Gateway
-generates a certificate authority on your machine and signs a certificate for
-each site, so the browser warns until that authority is trusted — fetch
-`http://<gateway-address>:8765/gateway-ca.crt` in the browser to install it,
-or click through the warning.
-
-Since 0.3.5 this reaches every browser in range with no TLS of its own:
-Netscape 3, IE 4 and IE 5 for Mac OS 9 are served over SSL 3.0.
-`allow_sslv3 = 0` refuses it if you would rather not. Both the 16-bit
-(Windows 3.1) and 32-bit builds of IE 3 cannot complete SSL through Gateway
-and fall back to `rewrite_https` (the default), which works.
+- **`rewrite_https = 1`** (the default) changes `https://` links into
+  `http://` ones before the browser sees them. Everything loads, but type
+  addresses without `https://`.
+- **`connect_mitm = 1`** lets a typed `https://` address work, padlock and
+  all. Gateway makes its own certificate authority on your machine; install it
+  from `http://<gateway-address>:8765/gateway-ca.crt`, or click through the
+  warning. Browsers with no TLS at all — Netscape 3, IE 4, IE 5 for Mac — get
+  SSL 3.0 (`allow_sslv3 = 0` turns that off). IE 3 can't complete SSL through
+  Gateway and needs the default.
 
 ## Mail
 
-The mail splice lets a client with no TLS and no OAuth — Outlook Express,
-Netscape Mail, Eudora — use an Outlook.com or Gmail account. The client talks
-plaintext to Gateway on the same machine; Gateway talks TLS and XOAUTH2 to the
-provider.
-
-1. **Get the token** on a modern computer: download `get-email-token.py` from
-   the [release](https://github.com/brunocastello/Gateway/releases) and run
-   `python3 get-email-token.py` (`py get-email-token.py` on Windows). It opens
-   the provider's sign-in in your browser and prints four lines.
-2. **Put them in Gateway**, in the Mail pane of the settings window or the
-   prefs file: `provider`, `oauth_user`, `oauth_client_id` and
-   `refresh_token` (Gmail adds `oauth_client_secret`). Set `local_password`
-   to whatever you want the mail client to use.
+1. **Get a token** on a modern computer: download `get-email-token.py` from
+   the [releases page](https://github.com/brunocastello/Gateway/releases) and
+   run `python3 get-email-token.py` (`py get-email-token.py` on Windows). It
+   opens the provider's sign-in page and prints four lines.
+2. **Give them to Gateway** in the Mail pane of the settings window, or in the
+   prefs file. Choose a `local_password` for your mail client to use.
 3. **Set up the mail client**: incoming IMAP `127.0.0.1` port `1993` (or POP3
-   `1995`), outgoing SMTP `127.0.0.1` port `1587`, **SSL off** on both,
-   authentication **on** for SMTP, and `local_password` as the password. The
-   user name can be anything; only the password is checked.
+   `1995`), outgoing SMTP `127.0.0.1` port `1587`, SSL **off** on both, SMTP
+   authentication **on**, and your `local_password` as the password.
 
-Gateway rewrites `refresh_token` itself when the provider rotates it, so the
-token is fetched once. Every setting is in [`docs/prefs.md`](docs/prefs.md).
+You only do this once: Gateway saves the new token itself whenever the
+provider replaces it.
 
 ## Settings
 
-A preferences window, from **File ▸ Settings…** on Mac OS 9 and
-**File ▸ Preferences…** on Windows. Everything is also a line in a plain text
-file — `Gateway Prefs` beside the System Preferences folder, or `Gateway.ini`
-beside `Gateway.exe` — which stays hand-editable. Every key is listed in
-[`docs/prefs.md`](docs/prefs.md), with an example in
-[`docs/prefs-example.txt`](docs/prefs-example.txt).
-
-Turn whole modules on or off with `http_enabled`, `mail_enabled`,
-`wayback_enabled` and `tunnel_enabled`. `show_window = 0` starts without a window; on Mac OS 9 that
-also means no menu bar and no Application menu entry, so stop it with a Quit
-Apple event.
-
-Gateway serves its own proxy auto-configuration script at
-`http://<gateway-address>:8765/proxy.pac`, which is the only way to say that
-some hosts belong on the archive listener and some on the live one.
+Open **File ▸ Settings…** on the Mac or **File ▸ Preferences…** on Windows.
+Every setting is also a line in a plain text file you can edit by hand —
+`Gateway Prefs` in the Preferences folder, or `Gateway.ini` beside
+`Gateway.exe`. [`docs/prefs.md`](docs/prefs.md) explains every setting.
 
 ## Supported systems
 
-**Mac OS 9** (PowerPC), and **Windows 95 through XP**. Verified on Windows Me,
-98, 2000 and 95 OSR2 under 86Box, and on Mac OS 9.2. Windows 95 RTM and NT
-3.51 are within what the binary's imports allow but have never been run.
+- **Mac OS 8.0 to 9.2.2** on PowerPC. Tested on 9.2; earlier versions have
+  everything the app needs but haven't been tried.
+- **Windows 95 to XP**. Tested on 95 OSR2, 98, Me and 2000.
 
 ## Building
 
-You do not build this locally. Push, and GitHub Actions does it:
-`build-macos9.yml` runs the Retro68 container and uploads a disk image and
-application; `build-win32.yml` cross-compiles with MinGW-w64 and builds an
-installer. `host-tests.yml` compiles the portable parts for Linux and runs the
-unit tests, which is the only part that runs anywhere else.
-
-## Layout
-
-```
-src/portable/   HTTP, prefs, URL, Base64, chunking, rewriting — no platform headers
-src/proxy/      the four modules
-src/net/        sockets: Open Transport on Mac OS 9, Winsock on Windows
-src/ssl3/       SSL 3.0 key schedule and MAC, for browsers with no TLS
-src/ui/         the Mac shell and its preferences window
-src/win32/      the Windows shell and its preferences window
-third_party/certainly/   Certainly over BearSSL, vendored — see its PATCHES.md
-docs/           prefs reference, release notes, porting notes, design notes
-```
+Nothing is built locally. Push to GitHub and the Actions workflows build the
+Mac app with [Retro68](https://github.com/autc04/Retro68) and the Windows app
+with MinGW-w64, and run the unit tests.
 
 ## Thanks
 
 [Certainly](https://github.com/minorbug/certainly) and
 [BearSSL](https://bearssl.org) do the cryptography.
 [email-oauth2-proxy](https://github.com/simonrob/email-oauth2-proxy) by Simon
-Robinson is where the mail splice comes from: the local-password login, the
-XOAUTH2 upstream and the token refresh are his design, carried over to C, and
-`get-email-token.py` stands in for its authorisation step.
-[WaybackProxy](https://github.com/richardg867/WaybackProxy) by [richardg867](https://github.com/richardg867)
-is the prior art for the archive listener: its settings page and its options
-are kept compatible so existing bookmarks work, and the implementation is
-Gateway's own, since that project is GPL and this one is MIT.
-[Retro68](https://github.com/autc04/Retro68) makes a Mac OS 9 binary from a
-modern toolchain. [roytam1](https://github.com/roytam1) contributed the SSL 3.0
-implementation that reaches browsers older than TLS, and found the import that
-kept Gateway off Windows 95 RTM.
+Robinson designed the mail login and token refresh that Gateway carries over.
+[WaybackProxy](https://github.com/richardg867/WaybackProxy) by
+[richardg867](https://github.com/richardg867) is the prior art for the archive
+proxy; Gateway keeps its settings page compatible but shares none of its code.
+[roytam1](https://github.com/roytam1) contributed SSL 3.0 support and found
+what kept Gateway off the first release of Windows 95.
 
 ## Licence
 
