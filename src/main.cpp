@@ -430,6 +430,16 @@ private:
 
     void HandleSettings()
     {
+        /* System 7 has no Appearance Manager. kAlrtUpdateFailed is the one
+         * stop alert with nothing but a sentence and OK, so it serves. */
+        if (!GWSettings_Available()) {
+            SetAlertText("The Settings window needs Mac OS 8 or later. "
+                         "Edit the Gateway Prefs file in the Preferences "
+                         "folder instead.");
+            StopAlert(kAlrtUpdateFailed, nullptr);
+            return;
+        }
+
         GWSettings_Run([](void *context, void *rawEvent) -> int {
             GatewayApp *app = static_cast<GatewayApp *>(context);
             EventRecord *event = static_cast<EventRecord *>(rawEvent);
@@ -1086,6 +1096,15 @@ int main()
     /* Before anything can change the current resource file: Gateway edits its
      * own SIZE resource through this refNum and must never close it. */
     gAppResFile = CurResFile();
+
+#if defined(__m68k__)
+    /* A 68K application gets the system's default stack, a few tens of
+     * kilobytes, and Retro68 does not raise it. A TLS handshake runs BearSSL
+     * several frames deep under the event loop, so take 64 KB more from the
+     * heap before anything has grown it. PowerPC stacks are CFM's. */
+    SetApplLimit(LMGetApplLimit() - 64L * 1024);
+    MaxApplZone();
+#endif
 
     InitGraf(&qd.thePort);
     InitFonts();

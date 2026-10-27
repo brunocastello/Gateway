@@ -1,0 +1,131 @@
+name: Build (Mac OS 68K / Classic Toolbox)
+
+# The same sources as build-macos9.yml, through Retro68's 68K toolchain. A
+# test build for now: it uploads an artifact and never publishes a release.
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'src/**'
+      - '!src/win32/**'
+      - 'third_party/certainly/**'
+      - 'third_party/InterfacesAndLibraries/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/build-mac68k.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build with Retro68
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/root/Gateway" \
+            -w /root/Gateway \
+            -e GW_BUILD_ID="$(echo "${{ github.sha }}" | cut -c1-7)" \
+            -i ghcr.io/autc04/retro68 /bin/bash <<'EOF'
+          set -euo pipefail
+          TOOLCHAIN=/Retro68-build/toolchain
+          IAL=/Retro68-build/bin/interfaces-and-libraries.sh
+
+          # BUILD_68K BUILD_PPC BUILD_CARBON. The 68K pass runs ConvertObj
+          # over Libraries/Libraries/*.o into $TOOLCHAIN/universal/lib68k.
+          "$IAL" "$TOOLCHAIN" /root/Gateway/third_party/InterfacesAndLibraries true false false
+          # Back to Multiversal for src/main.cpp, as on PowerPC (CLAUDE.md
+          # rule 3); the staged universal/ copy survives.
+          "$IAL" "$TOOLCHAIN" --multiversal true false false
+
+          echo "--- lib68k ---"
+          ls "$TOOLCHAIN/universal/lib68k" | tr '\n' ' '
+          echo
+          for lib in OpenTransportApp OpenTransport OpenTptInet ICGlue Interface; do
+            test -f "$TOOLCHAIN/universal/lib68k/lib$lib.a" || {
+              echo "::error::lib$lib.a was not converted"; exit 1; }
+          done
+          test -f "$TOOLCHAIN/universal/CIncludes/OpenTransport.h"
+
+          mkdir -p build68k
+          cd build68k
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN/m68k-apple-macos/cmake/retro68.toolchain.cmake" \
+            -DGW_UNIVERSAL_DIR="$TOOLCHAIN/universal"
+          cmake --build . --verbose
+          ls -la
+          EOF
+
+      - name: Put a starting Gateway Prefs on the disk image
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq hfsutils genisoimage
+          sudo chown -R "$(id -u):$(id -g)" build68k
+
+          hmount build68k/Gateway.dsk
+          hcopy -t docs/prefs-example.txt ":Gateway Prefs"
+          hattrib -t TEXT -c ttxt ":Gateway Prefs"
+          hdir -a
+          humount
+
+      # Retro68's .dsk is a bare HFS volume, which Basilisk II mounts but a
+      # QEMU Quadra (UTM's 68K machine) sees as an uninitialised SCSI disk.
+      # A hybrid CD image mounts there through the Apple CD-ROM driver.
+      # genisoimage's --double reads AppleDouble pairs named "name" and
+      # "%name" -- the convention Rez's --cc %Gateway.ad output already uses.
+      - name: Make a CD image for QEMU
+        run: |
+          set -euo pipefail
+          mkdir -p cd
+          cp build68k/Gateway.ad cd/Gateway
+          cp "build68k/%Gateway.ad" "cd/%Gateway"
+          tr '\n' '\r' < docs/prefs-example.txt > "cd/Gateway Prefs"
+          python3 - <<'PY'
+          import struct
+          # AppleDouble v2 header with one entry: Finder info (id 9).
+          finfo = b"TEXT" + b"ttxt" + b"\0" * 24
+          head = struct.pack(">II16sH", 0x00051607, 0x00020000, b"\0" * 16, 1)
+          entry = struct.pack(">III", 9, len(head) + 12, len(finfo))
+          open("cd/%Gateway Prefs", "wb").write(head + entry + finfo)
+          PY
+          genisoimage -quiet -hfs --double -r -V Gateway -hfs-volid Gateway \
+            -o Gateway-68k.iso cd
+
+          echo "--- HFS side of the CD image ---"
+          hmount Gateway-68k.iso
+          hdir -a
+          humount
+
+      - name: Package a StuffIt archive
+        run: |
+          set -euo pipefail
+          mkdir -p package
+          git clone --depth 1 https://github.com/thecloudexpanse/sit.git /tmp/sit-src
+          make -C /tmp/sit-src
+
+          cp build68k/Gateway.ad package/Gateway
+          cp "build68k/%Gateway.ad" package/._Gateway
+          tr '\n' '\r' < docs/prefs-example.txt > "package/Gateway Prefs"
+          python3 - <<'PY'
+          name = b"Gateway Prefs"
+          info = (b"\0\0" + bytes([len(name)]) + name + b"\0" * (63 - len(name))
+                  + b"TEXT" + b"ttxt" + b"\0\0" + b"\0" * 8 + b"\0" * 16)
+          assert len(info) == 100, len(info)
+          open("package/Gateway Prefs.info", "wb").write(info)
+          PY
+          /tmp/sit-src/sit -T APPL -C GT9A -o package/Gateway-68k.sit \
+            package/Gateway "package/Gateway Prefs"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gateway-mac-68k
+          path: |
+            Gateway-68k.iso
+            build68k/Gateway.dsk
+            build68k/Gateway.bin
+            package/Gateway-68k.sit
+          if-no-files-found: error
