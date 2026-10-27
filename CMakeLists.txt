@@ -80,7 +80,9 @@ if(GW_M68K)
         ${GW_UNIV_LIB}/libOpenTptInet.a
     )
     set(GW_APPEARANCE_LIB "")
-    set(GW_IC_LIB ${GW_UNIV_LIB}/libICGlue.a)
+    # The far-model glue: ICGlue.o reaches Gestalt with a 16-bit PC-relative
+    # branch, which a single code segment this size puts out of range.
+    set(GW_IC_LIB ${GW_UNIV_LIB}/libICGlueFar.a)
     # Glue for the Toolbox calls Apple's 68K headers declare without a trap
     # inline (FSWrite, SetFPos and friends). Last, so it only fills gaps.
     set(GW_INTERFACE_LIB ${GW_UNIV_LIB}/libInterface.a)
@@ -303,5 +305,6 @@ target_link_libraries(Gateway
     ${GW_OT_LIBS}
     ${GW_INTERFACE_LIB})
 
-set_target_properties(Gateway PROPERTIES COMPILE_OPTIONS -ffunction-sections)
+# Appended, not set: setting COMPILE_OPTIONS would discard the 68K -mcpu flags.
+target_compile_options(Gateway PRIVATE -ffunction-sections)
 set_target_properties(Gateway PROPERTIES LINK_FLAGS "-Wl,-gc-sections")

@@ -43,7 +43,7 @@ jobs:
           echo "--- lib68k ---"
           ls "$TOOLCHAIN/universal/lib68k" | tr '\n' ' '
           echo
-          for lib in OpenTransportApp OpenTransport OpenTptInet ICGlue Interface; do
+          for lib in OpenTransportApp OpenTransport OpenTptInet ICGlueFar Interface; do
             test -f "$TOOLCHAIN/universal/lib68k/lib$lib.a" || {
               echo "::error::lib$lib.a was not converted"; exit 1; }
           done
