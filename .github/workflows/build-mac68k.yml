@@ -82,22 +82,22 @@ jobs:
           mkdir -p cd
           cp build68k/Gateway.ad cd/Gateway
           cp "build68k/%Gateway.ad" "cd/%Gateway"
+          # The prefs file has no AppleDouble half: a hand-made one with only
+          # Finder info was stored whole as the file's resource fork. Files
+          # without one take the default type and creator instead.
           tr '\n' '\r' < docs/prefs-example.txt > "cd/Gateway Prefs"
-          python3 - <<'PY'
-          import struct
-          # AppleDouble v2 header with one entry: Finder info (id 9).
-          finfo = b"TEXT" + b"ttxt" + b"\0" * 24
-          head = struct.pack(">II16sH", 0x00051607, 0x00020000, b"\0" * 16, 1)
-          entry = struct.pack(">III", 9, len(head) + 12, len(finfo))
-          open("cd/%Gateway Prefs", "wb").write(head + entry + finfo)
-          PY
           genisoimage -quiet -hfs --double -r -V Gateway -hfs-volid Gateway \
-            -o Gateway-68k.iso cd
+            -hfs-type TEXT -hfs-creator ttxt -o Gateway-68k.iso cd
 
+          # hdir -a: flags, type/creator, resource fork bytes, data fork bytes.
           echo "--- HFS side of the CD image ---"
           hmount Gateway-68k.iso
-          hdir -a
+          hdir -a | tee hdir.txt
           humount
+          grep -qE '^ *f +APPL/GT9A +[1-9][0-9]* +0 .* Gateway$' hdir.txt || {
+            echo "::error::Gateway is missing its resource fork or type"; exit 1; }
+          grep -qE '^ *f +TEXT/ttxt +0 +[1-9][0-9]* .* Gateway Prefs$' hdir.txt || {
+            echo "::error::Gateway Prefs is not a plain TEXT/ttxt file"; exit 1; }
 
       - name: Package a StuffIt archive
         run: |
