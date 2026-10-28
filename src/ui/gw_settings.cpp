@@ -617,7 +617,9 @@ public:
                 continue;
             }
             Rect box = item.box;
-            short proc = kControlCheckBoxAutoToggleProc;
+            // Not the auto-toggle variant: that is Appearance 1.1 (Mac OS
+            // 8.5), and on 8.1's 1.0 the box draws but never changes.
+            short proc = kControlCheckBoxProc;
             short minimum = 0, maximum = 1;
             if (Framed(f)) {
                 // The native edit CDEF frames outside its text rectangle.
@@ -736,6 +738,14 @@ public:
         // Draw(), and SetControlData does not repaint a field, so nothing on
         // show changed until the pane was left and redrawn -- ask for that now.
         InvalRect(&bounds);
+    }
+
+    /* Whether a control is one of the rows' checkboxes. */
+    bool IsCheck(ControlHandle c) const
+    {
+        for (int i = 0; i < kFieldCount; ++i)
+            if (items[i].control == c) return kFields[i].kind == Check;
+        return false;
     }
 
     /* Whether a control is one whose value can dim or restore other rows. */
@@ -1121,6 +1131,7 @@ void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
                 continue;
             }
             if (!HandleControlClick(hit, point, event.modifiers, nullptr)) continue;
+            if (p->IsCheck(hit)) SetControlValue(hit, !GetControlValue(hit));
             if (hit == p->selector) {
                 short selected = GetControlValue(hit) - 1;
                 if (selected >= 0 && selected < kPaneCount) p->SwitchPane(selected);
