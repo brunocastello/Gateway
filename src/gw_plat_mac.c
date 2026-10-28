@@ -73,7 +73,16 @@ int GWPlat_WritePrefs(const char *buf, long len)
         return 0;
     }
 
+    /*
+     * Nothing installs the file for the user, so the first Save in the
+     * settings window makes it, typed like the one the disk image carries
+     * so a double-click opens it in SimpleText.
+     */
     err = FSpOpenDF(&sSpec, fsRdWrPerm, &refNum);
+    if (err == fnfErr) {
+        err = FSpCreate(&sSpec, 'ttxt', 'TEXT', 0 /* smRoman: ASCII name */);
+        if (err == noErr) err = FSpOpenDF(&sSpec, fsRdWrPerm, &refNum);
+    }
     if (err != noErr) {
         gw_logc("G24", "settings could not be saved: the prefs file would "
                 "not open");

@@ -6,7 +6,8 @@ comments on their own lines. Keys are case-insensitive, whitespace around them
 is trimmed, and CR, LF or CRLF line endings all work.
 
 The file lives in the System Preferences folder as **Gateway Prefs**. A
-starting point is `docs/prefs-example.txt`. Gateway reads it once at launch,
+starting point is `docs/prefs-example.txt`; without one, the first Save in the
+settings window creates the file. Gateway reads it once at launch,
 and rewrites two lines itself: `refresh_token` when the provider rotates it,
 and `wayback_date`/`wayback_tolerance` when the settings page is used. The
 Preferences window also comments out or restores the settings that do not
