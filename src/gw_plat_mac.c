@@ -36,8 +36,9 @@ long GWPlat_ReadPrefs(char *buf, size_t cap)
                      kDontCreateFolder, &vRefNum, &dirID);
     if (err != noErr) return -1;
 
+    /* fnfErr still fills in the spec, which is what a write needs. */
     err = FSMakeFSSpec(vRefNum, dirID, kPrefsName, &spec);
-    if (err != noErr) return -1;
+    if (err != noErr && err != fnfErr) return -1;
 
     /* Kept even if the read fails: it is where a write would go. */
     sSpec = spec;
