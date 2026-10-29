@@ -1,11 +1,17 @@
 name: Build (Mac OS 68K / Classic Toolbox)
 
 # The same sources as build-macos9.yml, through Retro68's 68K toolchain. A
-# test build for now: it uploads an artifact and never publishes a release.
+# tag push adds the StuffIt archive and the CD image to the release; the
+# notes belong to the PowerPC job, which creates the release.
 on:
   push:
+    # Both filters, as in build-macos9.yml: tags alone stops branch builds.
     branches:
       - '**'
+    tags:
+      - 'v*'
+    # Tag pushes obey these too; a tag on a commit that touched none of them
+    # builds nothing. Then: gh workflow run build-mac68k.yml --ref vX.Y.Z
     paths:
       - 'src/**'
       - '!src/win32/**'
@@ -18,6 +24,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # only used by the release step, on tags
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -137,3 +145,32 @@ jobs:
             build68k/Gateway.bin
             package/Gateway-68k.sit
           if-no-files-found: error
+
+      # The 68K files sit beside the PowerPC ones, so their names say which
+      # is which. The ISO, not the bare .dsk: UTM's Quadra offers to
+      # initialise the .dsk (2026-10-28).
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp package/Gateway-68k.sit "release/Gateway-${GITHUB_REF_NAME}-68k.sit"
+          cp Gateway-68k.iso         "release/Gateway-${GITHUB_REF_NAME}-68k.iso"
+
+          # The other jobs may or may not have created the release yet.
+          for attempt in 1 2 3 4 5 6; do
+            if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then break; fi
+            if [ "$attempt" = 6 ]; then
+              gh release create "$GITHUB_REF_NAME" \
+                --title "Gateway $GITHUB_REF_NAME" \
+                --notes-file docs/release-notes.md
+              break
+            fi
+            sleep 20
+          done
+
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            "release/Gateway-${GITHUB_REF_NAME}-68k.sit" \
+            "release/Gateway-${GITHUB_REF_NAME}-68k.iso"
