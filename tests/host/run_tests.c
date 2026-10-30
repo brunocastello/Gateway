@@ -1434,6 +1434,10 @@ static void test_update(void)
                                sizeof(asset)) > 0 &&
           strcmp(asset, "Gateway-v0.3.10-windows.zip") == 0,
           "the Windows asset name");
+    check(gw_update_asset_name("0.3.10", kGWUpdateMac68k, asset,
+                               sizeof(asset)) > 0 &&
+          strcmp(asset, "Gateway-v0.3.10-68k.sit") == 0,
+          "the 68K Mac asset name, matching build-mac68k.yml");
     check(gw_update_asset_name("0.3.10", kGWUpdateMac, asset, 4) == 0,
           "an asset name that does not fit fails rather than truncates");
 

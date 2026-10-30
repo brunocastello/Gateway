@@ -223,7 +223,9 @@ static void updater_finish(GWUpdaterCtx *u)
         return;
     }
 
-#ifdef GW_MAC_OS
+#if defined(GW_MAC_OS) && defined(__m68k__)
+    plat = kGWUpdateMac68k;     /* the PowerPC archive would not run here */
+#elif defined(GW_MAC_OS)
     plat = kGWUpdateMac;
 #else
     plat = kGWUpdateWin32;
