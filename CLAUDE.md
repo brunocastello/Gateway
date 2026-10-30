@@ -1,10 +1,10 @@
 # CLAUDE.md
 
 ## Project Overview
-**Gateway** is a native Classic Toolbox (pre-Carbon) application that runs in the background on Mac OS 9 (PPC), acting as a modern TLS 1.3 gateway and proxy for vintage OS 9 clients.
+**Gateway** is a native Classic Toolbox (pre-Carbon) application that runs in the background on the vintage Mac itself, acting as a modern TLS 1.3 gateway and proxy for its clients: PowerPC on Mac OS 8 and 9, and 68K from System 7.5.3 to Mac OS 8.1 (since 0.4.0). A Win32 build covers Windows 95 through XP.
 
 * **Creator Code:** `GT9A`
-* **Toolchain:** Retro68 (`retroppc.toolchain.cmake`), C++17, Multiversal for UI, GitHub Actions (`ghcr.io/autc04/retro68:latest`).
+* **Toolchain:** Retro68 (`retroppc.toolchain.cmake` for PowerPC, `m68k-apple-macos/.../retro68.toolchain.cmake` for 68K), C++17, Multiversal for UI, GitHub Actions (`ghcr.io/autc04/retro68:latest`). The 68K build is `.github/workflows/build-mac68k.yml`.
 * **Host Environment (Development):** 14-inch MacBook Pro M4 Pro.
 
 ---
@@ -18,7 +18,8 @@
 5. **Partition Size:** `SIZE` resource starts at preferred **8 MB** / minimum 4 MB to accommodate multiple listeners, buffers, and X.509 parsing.
 6. **Cooperative Loop:** Single `WaitNextEvent` loop. Cap concurrent splices (start at 4). Every OT/TLS step yields. Never block handshakes in a tight loop.
 7. **Networking & Binding:** Bind `INADDR_ANY` or the interface IP (do not restrict only to `127.0.0.1` because OT loopback can be flaky). Support both `127.0.0.1` and the TCP/IP control-panel address.
-8. **Portability:** Portable files (HTTP request parser, OAuth form body, IMAP LOGIN extract) **must not** include `<OpenTransport.h>` or `<Windows.h>` so host tests compile cleanly on Ubuntu/Linux gcc without Retro68.
+8. **68K:** Same sources; `CMakeLists.txt` switches on `CMAKE_SYSTEM_NAME MATCHES Retro68`. Needs Open Transport 1.3+: under OT 1.1, which a System 7.5 Update puts back, every listener failed at `OTOpenEndpoint` with `kEINVALErr` (G30) — most likely no `tilisten` module. System 7 has no Appearance Manager: the Settings window shows an alert there and the prefs file is edited by hand, so any Appearance call must stay behind `GWSettings_Available()`. Appearance 1.0 (8.0/8.1) lacks the 1.1 control variants such as `kControlCheckBoxAutoToggleProc`. Tested in UTM's QEMU Quadra 800.
+9. **Portability:** Portable files (HTTP request parser, OAuth form body, IMAP LOGIN extract) **must not** include `<OpenTransport.h>` or `<Windows.h>` so host tests compile cleanly on Ubuntu/Linux gcc without Retro68.
 
 ---
 

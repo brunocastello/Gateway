@@ -1,4 +1,31 @@
-# After 0.3.9 — what is worth doing next
+# After 0.4.0 — what is worth doing next
+
+## Shipped in 0.4.0
+
+Released 2026-10-30. Verified in UTM's QEMU Quadra 800 on System 7.5.3
+(Netscape Communicator 4.04) and Mac OS 8.1 (Netscape 4.08, IE 4.01).
+
+- **68K Macs, System 7.5.3 to Mac OS 8.1.** The same sources through
+  Retro68's 68K toolchain (`build-mac68k.yml`), published as
+  `Gateway-vX-68k.sit` and a partitioned hybrid CD image,
+  `Gateway-vX-68k.iso`, because a QEMU Quadra offers to initialise the bare
+  `.dsk`. Plain http, `rewrite_https`, `connect_mitm` over SSL 3.0 (with
+  resumption) and the Wayback proxy all passed on both systems.
+- **Needs Open Transport 1.3.** A System 7.5 Update installed afterwards puts
+  back OT 1.1, and every listener then fails at `OTOpenEndpoint` with
+  `kEINVALErr` (G30). Reinstalling OT 1.3 fixes it.
+- **System 7 has no Settings window** (no Appearance Manager); the prefs file
+  is edited by hand.
+- **Fixes found on 8.1 that apply to PowerPC too:** Save now creates
+  `Gateway Prefs` when it is missing, and the checkboxes toggle under
+  Appearance 1.0, which lacks `kControlCheckBoxAutoToggleProc`.
+- **The update check links 68K users to the 68K archive**
+  (`kGWUpdateMac68k`).
+
+Not yet tried on 68K: mail (the 8.1 attempt reached TLS to
+`outlook.office365.com:995` and stopped at Microsoft's intermittent token
+refusal), the Tunnel, System 7.6 and Mac OS 8.0. Worth doing whenever one of
+them is next in reach: none should differ from PowerPC, but none has been seen.
 
 ## Shipped in 0.3.9
 
@@ -66,7 +93,7 @@ Verified on hardware on 2026-09-29 unless a bullet says otherwise.
   then centred on the main screen (`999cb93`) and the 0.3.9 Mac downloads
   rebuilt from it.
 
-0.3.9 shipped on 2026-09-29, and 0.3.8 on 2026-09-28. The upstream side is TLS 1.3 and finished; the
+0.4.0 shipped on 2026-10-30, 0.3.9 on 2026-09-29 and 0.3.8 on 2026-09-28. The upstream side is TLS 1.3 and finished; the
 browser side serves everything from Netscape 3 to Classilla over SSL 3.0 or
 TLS 1.0; mail works through `get-email-token.py`; a generic tunnel carries
 SSH or anything else over TLS. What remains is making the machine Gateway
