@@ -217,23 +217,35 @@ typedef HINSTANCE (WINAPI *ShellExecuteA_fn)(HWND, LPCSTR, LPCSTR, LPCSTR,
                                              LPCSTR, INT);
 static ShellExecuteA_fn pShellExecuteA;
 
-int GWPlat_OpenURL(const char *url)
+int GWPlat_OpenURL(const char *url, long *why)
 {
+    INT_PTR r;
+
+    if (why != NULL) *why = 0;
     if (url == NULL || url[0] == '\0') return 0;
 
     if (pShellExecuteA == NULL) {
         HMODULE shell = LoadLibraryA("shell32.dll");
 
-        if (shell == NULL) return 0;
+        if (shell == NULL) {
+            if (why != NULL) *why = (long)GetLastError();
+            return 0;
+        }
         pShellExecuteA = (ShellExecuteA_fn)(void *)
             GetProcAddress(shell, "ShellExecuteA");
-        if (pShellExecuteA == NULL) return 0;
+        if (pShellExecuteA == NULL) {
+            if (why != NULL) *why = (long)GetLastError();
+            return 0;
+        }
     }
 
     /* ShellExecute returns a value > 32 on success and an error code
      * (cast to HINSTANCE) otherwise -- documented since Windows 3.1. */
-    return ((INT_PTR)pShellExecuteA(NULL, "open", url, NULL, NULL,
-                                    SW_SHOWNORMAL)) > 32;
+    r = (INT_PTR)pShellExecuteA(NULL, "open", url, NULL, NULL,
+                                SW_SHOWNORMAL);
+    if (r > 32) return 1;
+    if (why != NULL) *why = (long)r;
+    return 0;
 }
 
 int GWPlat_WriteFile(const char *leaf, const void *buf, long len)

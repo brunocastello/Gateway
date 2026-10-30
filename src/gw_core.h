@@ -63,7 +63,8 @@ int         GW_UpdateCheckResult(int *kind,
 /*
  * Open url in the system's default browser, for the "Download" button on the
  * "Check for Updates..." result. 1 on success, 0 if there was no way to ask
- * (see GWPlat_OpenURL, src/gw_plat.h, for what each platform tries).
+ * (see GWPlat_OpenURL, src/gw_plat.h, for what each platform tries); a
+ * failure is logged as G51 with the system's error and the link.
  */
 int         GW_OpenURL(const char *url);
 

@@ -63,7 +63,8 @@ void GWPlat_CloseLog(void);
 /*
  * Open url in the system's default browser, for the "Download" button on the
  * "Check for Updates..." result. Returns 1 if the browser was asked to open
- * it, 0 if there was no way to ask.
+ * it, 0 if there was no way to ask, with the system's error in *why (which
+ * may be NULL) for GW_OpenURL to log.
  *
  * Windows: ShellExecuteA, looked up in shell32.dll at run time -- the same
  * reasoning as Shell_NotifyIconA in src/win32/main_win32.c: NT 3.51 has no
@@ -75,6 +76,6 @@ void GWPlat_CloseLog(void);
  * path (gw_net's, CLAUDE.md rule 3) -- Multiversal, which src/main.cpp
  * compiles against, has no Internet Config at all.
  */
-int  GWPlat_OpenURL(const char *url);
+int  GWPlat_OpenURL(const char *url, long *why);
 
 #endif /* GW_PLAT_H */
