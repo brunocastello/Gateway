@@ -266,16 +266,32 @@ long GWPlat_ReadFile(const char *leaf, void *buf, size_t cap)
  * name. ICStart/ICStop bracket the one call; the connection is not kept open
  * between clicks, since "Download" is pressed once per dialog at most.
  */
-int GWPlat_OpenURL(const char *url)
+int GWPlat_OpenURL(const char *url, long *why)
 {
     ICInstance inst;
     OSStatus   err;
     long       start, end;
 
+    if (why != NULL) *why = 0;
     if (url == NULL || url[0] == '\0') return 0;
 
     err = ICStart(&inst, 'GT9A');
-    if (err != noErr) return 0;
+    if (err != noErr) {
+        if (why != NULL) *why = (long)err;
+        return 0;
+    }
+
+    /* Apple's documented sequence is ICStart, ICFindConfigFile, then the
+     * call. Without it some Internet Config versions have no preferences
+     * loaded, do not know the http helper, and ICLaunchURL fails -- which on
+     * Mac OS 9 with Classilla as the default browser it did (2026-10-30).
+     * No folders: the system's own Internet Preferences. */
+    err = ICFindConfigFile(inst, 0, NULL);
+    if (err != noErr) {
+        ICStop(inst);
+        if (why != NULL) *why = (long)err;
+        return 0;
+    }
 
     /* No hint scheme (an empty Pascal string): url is always given to us as
      * a full "http://..." link, never a bare "host/path" that would need
@@ -286,6 +302,7 @@ int GWPlat_OpenURL(const char *url)
     err = ICLaunchURL(inst, "\p", url, end, &start, &end);
 
     ICStop(inst);
+    if (err != noErr && why != NULL) *why = (long)err;
     return err == noErr;
 }
 

@@ -697,7 +697,14 @@ int GW_UpdateCheckResult(int *kind,
 
 int GW_OpenURL(const char *url)
 {
-    return GWPlat_OpenURL(url);
+    long why = 0;
+
+    if (GWPlat_OpenURL(url, &why)) return 1;
+    /* Never silent: the link is in the line, so it can be typed or pasted
+     * into a browser by hand. */
+    gw_logc("G51", "the browser could not be opened for the download "
+            "(error %ld); the link is %s", why, url != NULL ? url : "");
+    return 0;
 }
 
 void GW_NoteSelfHost(const char *host)
