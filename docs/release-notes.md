@@ -3,15 +3,15 @@
      person reads before downloading, not a changelog. Paragraphs stay on one
      line, because GitHub renders release bodies with newline-to-break. -->
 
-Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rather than in front of it, so applications written before modern TLS existed can reach the current web, current mail servers and the Internet Archive. Mac OS 9 (PowerPC), and Windows 95 through XP.
+Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rather than in front of it, so applications written before modern TLS existed can reach the current web, current mail servers and the Internet Archive. 68K and PowerPC Macs, and Windows 95 through XP.
 
-## What's new in 0.3.9
+## What's new in 0.4.0
 
-**Gateway no longer dials itself.** A proxy-configured browser re-fetching its own auto-configuration script sends the absolute form of the URL, and when that named Gateway's own address, Gateway used to answer it by opening a connection back to itself — it worked, but spent a splice slot on the loop. Gateway now remembers up to four addresses it has been asked for this way and answers them locally; the very first request for a given address still makes the one round trip that teaches Gateway the address.
+**68K support, from System 7.5.3 up to Mac OS 8.1.** The same Gateway, built for 68K Macs. It needs Open Transport 1.3 or later. Tested in QEMU's Quadra 800 on 7.5.3 with Netscape Communicator 4.04, and on 8.1 with Netscape 4.08 and Internet Explorer 4.01: plain web pages, `https://` through `connect_mitm`, and the Wayback proxy.
 
-**Gateway can say when it is out of date.** Once per launch, a little after the listeners are up, it asks github.com once whether a newer release exists. When one does, it logs a single line (code `G50`) with an `http://` link to download it for this platform; otherwise it says nothing, whether up to date or the check simply failed. `check_updates = 0` turns the request off entirely.
+**On System 7, edit the prefs file by hand.** System 7 has no Appearance Manager, so the Settings window cannot open there. Drag the `Gateway Prefs` that comes with Gateway into the Preferences folder and edit it in SimpleText.
 
-**"Check for Updates..." is now on the menu** (the tray menu on Windows, the File menu on Mac OS 9), for asking outright rather than waiting for the next launch: it shows what it finds in a dialog, with a Download button on a newer release.
+**Settings now save on Mac OS 8.0 and 8.1.** Two bugs, found on 68K but present on PowerPC too: the checkboxes did not toggle under 8.1's older Appearance Manager, and Save did nothing when there was no `Gateway Prefs` yet. Save now creates it.
 
 ## Setting it up
 
@@ -21,13 +21,14 @@ Point the browser's HTTP proxy at the machine running Gateway, port `8765`. Clas
 
 Mail, the Wayback proxy and the Tunnel are off until configured. Every setting is listed in [`docs/prefs.md`](https://github.com/brunocastello/Gateway/blob/main/docs/prefs.md).
 
-## Upgrading from 0.3.8
+## Upgrading from 0.3.9
 
-Nothing to do. Your preferences file and certificate authority are both kept as they are. Gateway now checks github.com once at launch for a newer release; `check_updates = 0` turns that off.
+Nothing to do. Your preferences file and certificate authority are both kept as they are.
 
-The Wayback pane's "Quick images" checkbox is gone because it never did anything; an old `wayback_quick_images` line left in your prefs file is simply ignored.
+On System 7.5, installing a System 7.5 Update after Open Transport puts back Open Transport 1.1, on which Gateway cannot listen. Reinstall Open Transport 1.3 afterwards.
 
 ## Downloads
 
-**Mac OS 9:** the `.sit` archive for real hardware, or the `.dsk` disk image to mount in an emulator.
+**PowerPC Mac:** the `.sit` archive for real hardware, or the `.dsk` disk image to mount in an emulator.
+**68K Mac:** the `-68k.sit` archive for real hardware, or the `-68k.iso` CD image for QEMU. Attach it as a CD, not as a hard disk.
 **Windows:** the `.zip` to unpack anywhere, or the `.img` floppy image if the machine has no other way to receive a file.
