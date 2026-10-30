@@ -74,13 +74,8 @@ and edit it in SimpleText.
 
 ## Supported systems
 
-- **Mac OS 8.0 to 9.2.2** on PowerPC. Tested on 9.2; earlier versions have
-  everything the app needs but haven't been tried.
+- **Mac OS 8.0 to 9.2.2** on PowerPC.
 - **System 7.5.3 to Mac OS 8.1** on 68K, with Open Transport 1.3 or later.
-  Tested in QEMU's Quadra 800 on 7.5.3 with Netscape Communicator 4.04, and
-  on 8.1 with Netscape 4.08 and IE 4.01; 7.6 and 8.0 haven't been tried.
-  Installing a System 7.5 Update puts back Open Transport 1.1, on which
-  Gateway can't listen: reinstall Open Transport 1.3 afterwards.
 - **Windows 95 to XP**. Tested on 95 OSR2, 98, Me and 2000.
 
 Each release has a StuffIt archive (`.sit`) for a real Mac and a disk image
