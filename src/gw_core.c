@@ -700,10 +700,12 @@ int GW_OpenURL(const char *url)
     long why = 0;
 
     if (GWPlat_OpenURL(url, &why)) return 1;
-    /* Never silent: the link is in the line, so it can be typed or pasted
-     * into a browser by hand. */
+    /* Never silent, and the link gets a line of its own: with the sentence
+     * in front of it, it ran past GW_LOG_WIDTH and was cut short (Mac OS 9,
+     * 2026-10-30) -- the one part the reader needs whole. */
     gw_logc("G51", "the browser could not be opened for the download "
-            "(error %ld); the link is %s", why, url != NULL ? url : "");
+            "(error %ld)", why);
+    gw_log("download it by hand: %s", url != NULL ? url : "");
     return 0;
 }
 
