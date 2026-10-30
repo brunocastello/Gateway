@@ -5,13 +5,11 @@
 
 Gateway is a TLS 1.3 gateway and proxy that runs **on** the vintage machine rather than in front of it, so applications written before modern TLS existed can reach the current web, current mail servers and the Internet Archive. 68K and PowerPC Macs, and Windows 95 through XP.
 
-## What's new in 0.4.0
+## What's new in 0.4.1
 
-**68K support, from System 7.5.3 up to Mac OS 8.1.** The same Gateway, built for 68K Macs. It needs Open Transport 1.3 or later. Tested in QEMU's Quadra 800 on 7.5.3 with Netscape Communicator 4.04, and on 8.1 with Netscape 4.08 and Internet Explorer 4.01: plain web pages, `https://` through `connect_mitm`, and the Wayback proxy.
+**Download no longer fails silently.** When "Check for Updates..." finds a newer release, Download hands the link to your default browser. If the system refuses, Gateway now logs why (code `G51`) and puts the download link on the next line, so you can open it by hand. On Mac OS 9 the usual cause is error `-5012`: the Finder has lost track of the default browser. Rebuild the desktop (restart holding ⌘⌥) or choose the browser again in the Internet control panel.
 
-**On System 7, edit the prefs file by hand.** System 7 has no Appearance Manager, so the Settings window cannot open there. Drag the `Gateway Prefs` that comes with Gateway into the Preferences folder and edit it in SimpleText.
-
-**Settings now save on Mac OS 8.0 and 8.1.** Two bugs, found on 68K but present on PowerPC too: the checkboxes did not toggle under 8.1's older Appearance Manager, and Save did nothing when there was no `Gateway Prefs` yet. Save now creates it.
+0.4.0 added 68K Macs, from System 7.5.3 up to Mac OS 8.1, with Open Transport 1.3 or later. On System 7 there is no Settings window: drag the `Gateway Prefs` that comes with Gateway into the Preferences folder and edit it in SimpleText.
 
 ## Setting it up
 
@@ -21,7 +19,7 @@ Point the browser's HTTP proxy at the machine running Gateway, port `8765`. Clas
 
 Mail, the Wayback proxy and the Tunnel are off until configured. Every setting is listed in [`docs/prefs.md`](https://github.com/brunocastello/Gateway/blob/main/docs/prefs.md).
 
-## Upgrading from 0.3.9
+## Upgrading from 0.4.0
 
 Nothing to do. Your preferences file and certificate authority are both kept as they are.
 
