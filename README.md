@@ -9,10 +9,10 @@
 
 Gateway lets old browsers and mail clients reach the modern internet.
 
-It runs in the background on the vintage machine itself — a PowerPC Mac or a
-Windows 95-era PC — and handles the modern TLS that Classilla, Internet
-Explorer, Netscape, Outlook Express and `git` can't. Your old program talks
-plain text to Gateway on the same machine; only Gateway's side of the
+It runs in the background on the vintage machine itself — a 68K or PowerPC
+Mac, or a Windows 95-era PC — and handles the modern TLS that Classilla,
+Internet Explorer, Netscape, Outlook Express and `git` can't. Your old program
+talks plain text to Gateway on the same machine; only Gateway's side of the
 connection goes out over the network.
 
 > This is a hobby project for operating systems with no memory protection.
@@ -68,11 +68,24 @@ Every setting is also a line in a plain text file you can edit by hand —
 `Gateway Prefs` in the Preferences folder, or `Gateway.ini` beside
 `Gateway.exe`. [`docs/prefs.md`](docs/prefs.md) explains every setting.
 
+System 7 has no Appearance Manager, so the settings window can't open there.
+Drag the `Gateway Prefs` that comes with the app into the Preferences folder
+and edit it in SimpleText.
+
 ## Supported systems
 
 - **Mac OS 8.0 to 9.2.2** on PowerPC. Tested on 9.2; earlier versions have
   everything the app needs but haven't been tried.
+- **System 7.5.3 to Mac OS 8.1** on 68K, with Open Transport 1.3 or later.
+  Tested in QEMU's Quadra 800 on 7.5.3 with Netscape Communicator 4.04, and
+  on 8.1 with Netscape 4.08 and IE 4.01; 7.6 and 8.0 haven't been tried.
+  Installing a System 7.5 Update puts back Open Transport 1.1, on which
+  Gateway can't listen: reinstall Open Transport 1.3 afterwards.
 - **Windows 95 to XP**. Tested on 95 OSR2, 98, Me and 2000.
+
+Each release has a StuffIt archive (`.sit`) for a real Mac and a disk image
+for an emulator, for each processor. The 68K disk image is a CD image
+(`.iso`): attach it to a QEMU Quadra as a CD, not as a hard disk.
 
 ## Building
 

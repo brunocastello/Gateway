@@ -60,15 +60,51 @@ if(NOT GW_UNIVERSAL_DIR)
 endif()
 
 set(GW_UNIV_INC ${GW_UNIVERSAL_DIR}/CIncludes)
-set(GW_UNIV_LIB ${GW_UNIVERSAL_DIR}/libppc)
 
-# Open Transport: two CFM import libraries plus the static client glue.
-set(GW_OT_LIBS
-    ${GW_UNIV_LIB}/libOpenTransportLib.a
-    ${GW_UNIV_LIB}/libOpenTptInternetLib.a
-    ${GW_UNIV_LIB}/libOpenTransportAppPPC.a
-    ${GW_UNIV_LIB}/libOpenTptInetPPC.a
-)
+#
+# The same sources build for 68K as well, from build-mac68k.yml: Retro68's
+# 68K toolchain names its system Retro68, the PowerPC one RetroPPC. Nothing
+# on 68K is a CFM import -- Open Transport and Internet Config are static
+# glue that interfaces-and-libraries.sh converts into lib68k, and the
+# Appearance Manager is a trap -- so only the library list differs.
+#
+if(CMAKE_SYSTEM_NAME MATCHES Retro68)
+    set(GW_M68K ON)
+endif()
+
+if(GW_M68K)
+    set(GW_UNIV_LIB ${GW_UNIVERSAL_DIR}/lib68k)
+    set(GW_OT_LIBS
+        ${GW_UNIV_LIB}/libOpenTransportApp.a
+        ${GW_UNIV_LIB}/libOpenTransport.a
+        ${GW_UNIV_LIB}/libOpenTptInet.a
+    )
+    set(GW_APPEARANCE_LIB "")
+    # The far-model glue: ICGlue.o reaches Gestalt with a 16-bit PC-relative
+    # branch, which a single code segment this size puts out of range.
+    set(GW_IC_LIB ${GW_UNIV_LIB}/libICGlueFar.a)
+    # Glue for the Toolbox calls Apple's 68K headers declare without a trap
+    # inline (FSWrite, SetFPos and friends). Last, so it only fills gaps.
+    set(GW_INTERFACE_LIB ${GW_UNIV_LIB}/libInterface.a)
+
+    # Open Transport does not run on a 68000 and Mac OS 8 needs a 68040, so
+    # 68020 code costs little reach, and buys the 32x32->64 multiply that
+    # BearSSL's bignum code lives on. Soft float, because a 68LC040 has no
+    # FPU and nothing here uses floating point anyway.
+    add_compile_options(-mcpu=68020 -msoft-float)
+else()
+    set(GW_UNIV_LIB ${GW_UNIVERSAL_DIR}/libppc)
+    # Open Transport: two CFM import libraries plus the static client glue.
+    set(GW_OT_LIBS
+        ${GW_UNIV_LIB}/libOpenTransportLib.a
+        ${GW_UNIV_LIB}/libOpenTptInternetLib.a
+        ${GW_UNIV_LIB}/libOpenTransportAppPPC.a
+        ${GW_UNIV_LIB}/libOpenTptInetPPC.a
+    )
+    set(GW_APPEARANCE_LIB ${GW_UNIV_LIB}/libAppearanceLib.a)
+    set(GW_IC_LIB ${GW_UNIV_LIB}/libInternetConfigLib.a)
+    set(GW_INTERFACE_LIB "")
+endif()
 
 set(CERTAINLY_DIR ${CMAKE_SOURCE_DIR}/third_party/certainly)
 
@@ -263,10 +299,12 @@ target_include_directories(Gateway PRIVATE src)
 # 2026-09-29 failed on exactly that).
 #
 target_link_libraries(Gateway
-    gw_settings ${GW_UNIV_LIB}/libAppearanceLib.a
+    gw_settings ${GW_APPEARANCE_LIB}
     -Wl,--start-group gw_net gw_portable certainly bearssl -Wl,--end-group
-    ${GW_UNIV_LIB}/libInternetConfigLib.a
-    ${GW_OT_LIBS})
+    ${GW_IC_LIB}
+    ${GW_OT_LIBS}
+    ${GW_INTERFACE_LIB})
 
-set_target_properties(Gateway PROPERTIES COMPILE_OPTIONS -ffunction-sections)
+# Appended, not set: setting COMPILE_OPTIONS would discard the 68K -mcpu flags.
+target_compile_options(Gateway PRIVATE -ffunction-sections)
 set_target_properties(Gateway PROPERTIES LINK_FLAGS "-Wl,-gc-sections")

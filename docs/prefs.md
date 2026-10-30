@@ -74,21 +74,22 @@ Four things it cannot help with:
 
 ### What `connect_mitm` needs from the browser
 
-**TLS 1.0, which BearSSL's floor requires.** BearSSL implements TLS 1.0, 1.1
-and 1.2 and no SSL at all — `BR_SSL30` is a header constant with nothing behind
-it. Tick **Use TLS 1.0** under **Tools → Internet Options → Advanced →
-Security**; Netscape 4.7 has the equivalent under **Security → Navigator →
-Configure SSL**. So IE 5.5 and IE 6 work; IE 4, which has SSL 3.0 and no TLS,
-is out of reach whatever its settings say.
+**SSL 3.0 or TLS 1.0.** Gateway answers with the highest version the browser
+offers. A browser with TLS 1.0 turned on — IE 5.5 and IE 6 under **Tools →
+Internet Options → Advanced → Security**, Netscape 4.7 under **Security →
+Navigator → Configure SSL** — gets TLS 1.0 and 3DES. A browser with SSL 3.0
+and no TLS — Netscape 3, Netscape 4.08, IE 4, IE 5 for Mac — gets SSL 3.0 and
+RC4, as does one whose TLS 1.0 box is unticked, while `allow_sslv3` is 1 (the
+default; `third_party/certainly/PATCHES.md` §28). Verified on Windows 95
+with IE 4 and Netscape 4.08, and on Mac OS 8.1 (68K) with Netscape 4.08.
 
-When the version is what failed, the log gives the number the browser offered
-and says which side objected:
+When the version is what failed, the log says which side was short:
 
 ```
-#3 handshake with the browser failed for lite.duckduckgo.com
-   (BearSSL 582: it offered SSL 3.0 at best and TLS 1.0 is the floor
-    (we refused its hello))
+#3 the browser speaks SSL 3.0 at best, and allow_sslv3 is off (S11)
 ```
+
+`S10`–`S13` in [`log-codes.md`](log-codes.md) cover the other cases.
 
 **"Use SSL 2.0" no longer has to be off.** It used to be the setting that
 caught everybody. A browser with SSL 2.0 enabled sends its ClientHello in SSL
@@ -96,21 +97,20 @@ caught everybody. A browser with SSL 2.0 enabled sends its ClientHello in SSL
 followed by message type `01` — and BearSSL rejected that format outright,
 because the byte it reads as a protocol version is a length byte. The
 handshake died before a single field was parsed, which is why **no certificate
-warning appeared**: there was no certificate yet to warn about. The log said
-`BearSSL 3`.
+warning appeared**: there was no certificate yet to warn about.
 
 Since 0.3.4 Gateway converts that framing into the TLS hello it stands for
 (`third_party/certainly/PATCHES.md` §22), so the box can stay as the browser
-shipped it. `BearSSL 3` now means something narrower — the hello inside asked
-for SSL 2.0 itself, which happens only when SSL 3.0 and TLS 1.0 are both off.
+shipped it. What still fails is a hello asking for SSL 2.0 itself, which
+happens only when SSL 3.0 and TLS 1.0 are both off; the log says `S10`.
 
 A browser with its own modern TLS — Classilla, RetroZilla — needs none of this
 and should leave `connect_mitm` off: `CONNECT` is a raw tunnel then, and the
 browser does its own handshake with the origin.
 
-With a browser that cannot be brought to TLS 1.0, use `rewrite_https` and type
-addresses without a scheme. Links, redirects and subresources all work; only
-the address bar and `Secure` cookies do not.
+With a browser that cannot complete SSL 3.0 — both builds of IE 3 — use
+`rewrite_https` and type addresses without a scheme. Links, redirects and
+subresources all work; only the address bar and `Secure` cookies do not.
 
 ## Wayback proxy
 

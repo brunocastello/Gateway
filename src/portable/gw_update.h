@@ -40,14 +40,16 @@ int gw_update_is_newer(const char *tag, const char *current);
 /* Which platform's asset name to build. */
 typedef enum {
     kGWUpdateMac = 0,
-    kGWUpdateWin32 = 1
+    kGWUpdateWin32 = 1,
+    kGWUpdateMac68k = 2
 } GWUpdatePlatform;
 
 /*
  * The release asset name for this platform and tag, e.g.
- * "Gateway-v0.3.10.sit" (Mac) or "Gateway-v0.3.10-windows.zip" (Windows) --
- * the primary format of each; the release also carries a .dsk / -windows.img
- * alternative, not linked here. Returns the length written, or 0 if it would
+ * "Gateway-v0.3.10.sit" (Mac), "Gateway-v0.3.10-68k.sit" (68K Mac) or
+ * "Gateway-v0.3.10-windows.zip" (Windows) -- the primary format of each; the
+ * release also carries a .dsk / -68k.iso / -windows.img alternative, not
+ * linked here. Returns the length written, or 0 if it would
  * not fit.
  */
 size_t gw_update_asset_name(const char *tag, GWUpdatePlatform plat,

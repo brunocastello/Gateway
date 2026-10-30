@@ -1,0 +1,176 @@
+name: Build (Mac OS 68K / Classic Toolbox)
+
+# The same sources as build-macos9.yml, through Retro68's 68K toolchain. A
+# tag push adds the StuffIt archive and the CD image to the release; the
+# notes belong to the PowerPC job, which creates the release.
+on:
+  push:
+    # Both filters, as in build-macos9.yml: tags alone stops branch builds.
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+    # Tag pushes obey these too; a tag on a commit that touched none of them
+    # builds nothing. Then: gh workflow run build-mac68k.yml --ref vX.Y.Z
+    paths:
+      - 'src/**'
+      - '!src/win32/**'
+      - 'third_party/certainly/**'
+      - 'third_party/InterfacesAndLibraries/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/build-mac68k.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # only used by the release step, on tags
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build with Retro68
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/root/Gateway" \
+            -w /root/Gateway \
+            -e GW_BUILD_ID="$(echo "${{ github.sha }}" | cut -c1-7)" \
+            -i ghcr.io/autc04/retro68 /bin/bash <<'EOF'
+          set -euo pipefail
+          TOOLCHAIN=/Retro68-build/toolchain
+          IAL=/Retro68-build/bin/interfaces-and-libraries.sh
+
+          # BUILD_68K BUILD_PPC BUILD_CARBON. The 68K pass runs ConvertObj
+          # over Libraries/Libraries/*.o into $TOOLCHAIN/universal/lib68k.
+          "$IAL" "$TOOLCHAIN" /root/Gateway/third_party/InterfacesAndLibraries true false false
+          # Back to Multiversal for src/main.cpp, as on PowerPC (CLAUDE.md
+          # rule 3); the staged universal/ copy survives.
+          "$IAL" "$TOOLCHAIN" --multiversal true false false
+
+          echo "--- lib68k ---"
+          ls "$TOOLCHAIN/universal/lib68k" | tr '\n' ' '
+          echo
+          for lib in OpenTransportApp OpenTransport OpenTptInet ICGlueFar Interface; do
+            test -f "$TOOLCHAIN/universal/lib68k/lib$lib.a" || {
+              echo "::error::lib$lib.a was not converted"; exit 1; }
+          done
+          test -f "$TOOLCHAIN/universal/CIncludes/OpenTransport.h"
+
+          mkdir -p build68k
+          cd build68k
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN/m68k-apple-macos/cmake/retro68.toolchain.cmake" \
+            -DGW_UNIVERSAL_DIR="$TOOLCHAIN/universal"
+          cmake --build . --verbose
+          ls -la
+          EOF
+
+      - name: Put a starting Gateway Prefs on the disk image
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq hfsutils genisoimage
+          sudo chown -R "$(id -u):$(id -g)" build68k
+
+          hmount build68k/Gateway.dsk
+          hcopy -t docs/prefs-example.txt ":Gateway Prefs"
+          hattrib -t TEXT -c ttxt ":Gateway Prefs"
+          hdir -a
+          humount
+
+      # Retro68's .dsk is a bare HFS volume, which Basilisk II mounts but a
+      # QEMU Quadra (UTM's 68K machine) sees as an uninitialised SCSI disk.
+      # A partitioned hybrid CD image mounts there through the Apple CD-ROM
+      # driver -- attached in UTM as a CD, not as a disk.
+      # genisoimage's --double reads AppleDouble pairs named "name" and
+      # "%name" -- the convention Rez's --cc %Gateway.ad output already uses.
+      - name: Make a CD image for QEMU
+        run: |
+          set -euo pipefail
+          mkdir -p cd
+          cp build68k/Gateway.ad cd/Gateway
+          cp "build68k/%Gateway.ad" "cd/%Gateway"
+          # The prefs file has no AppleDouble half: a hand-made one with only
+          # Finder info was stored whole as the file's resource fork. Files
+          # without one take the default type and creator instead.
+          tr '\n' '\r' < docs/prefs-example.txt > "cd/Gateway Prefs"
+          # -part writes an Apple partition map. Without one the HFS volume
+          # sits bare at offset 1024, exactly like the .dsk, and Mac OS 8.1
+          # on UTM offered to initialise it (2026-10-28).
+          genisoimage -quiet -hfs -part --double -r -V Gateway -hfs-volid Gateway \
+            -hfs-type TEXT -hfs-creator ttxt -o Gateway-68k.iso cd
+          test "$(head -c 2 Gateway-68k.iso)" = "ER" || {
+            echo "::error::no driver descriptor block"; exit 1; }
+          test "$(dd if=Gateway-68k.iso bs=1 skip=512 count=2 2>/dev/null)" = "PM" || {
+            echo "::error::no Apple partition map"; exit 1; }
+
+          # hdir -a: flags, type/creator, resource fork bytes, data fork bytes.
+          echo "--- HFS side of the CD image ---"
+          hmount Gateway-68k.iso
+          hdir -a | tee hdir.txt
+          humount
+          grep -qE '^ *f +APPL/GT9A +[1-9][0-9]* +0 .* Gateway$' hdir.txt || {
+            echo "::error::Gateway is missing its resource fork or type"; exit 1; }
+          grep -qE '^ *f +TEXT/ttxt +0 +[1-9][0-9]* .* Gateway Prefs$' hdir.txt || {
+            echo "::error::Gateway Prefs is not a plain TEXT/ttxt file"; exit 1; }
+
+      - name: Package a StuffIt archive
+        run: |
+          set -euo pipefail
+          mkdir -p package
+          git clone --depth 1 https://github.com/thecloudexpanse/sit.git /tmp/sit-src
+          make -C /tmp/sit-src
+
+          cp build68k/Gateway.ad package/Gateway
+          cp "build68k/%Gateway.ad" package/._Gateway
+          tr '\n' '\r' < docs/prefs-example.txt > "package/Gateway Prefs"
+          python3 - <<'PY'
+          name = b"Gateway Prefs"
+          info = (b"\0\0" + bytes([len(name)]) + name + b"\0" * (63 - len(name))
+                  + b"TEXT" + b"ttxt" + b"\0\0" + b"\0" * 8 + b"\0" * 16)
+          assert len(info) == 100, len(info)
+          open("package/Gateway Prefs.info", "wb").write(info)
+          PY
+          /tmp/sit-src/sit -T APPL -C GT9A -o package/Gateway-68k.sit \
+            package/Gateway "package/Gateway Prefs"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gateway-mac-68k
+          path: |
+            Gateway-68k.iso
+            build68k/Gateway.dsk
+            build68k/Gateway.bin
+            package/Gateway-68k.sit
+          if-no-files-found: error
+
+      # The 68K files sit beside the PowerPC ones, so their names say which
+      # is which. The ISO, not the bare .dsk: UTM's Quadra offers to
+      # initialise the .dsk (2026-10-28).
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp package/Gateway-68k.sit "release/Gateway-${GITHUB_REF_NAME}-68k.sit"
+          cp Gateway-68k.iso         "release/Gateway-${GITHUB_REF_NAME}-68k.iso"
+
+          # The other jobs may or may not have created the release yet.
+          for attempt in 1 2 3 4 5 6; do
+            if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then break; fi
+            if [ "$attempt" = 6 ]; then
+              gh release create "$GITHUB_REF_NAME" \
+                --title "Gateway $GITHUB_REF_NAME" \
+                --notes-file docs/release-notes.md
+              break
+            fi
+            sleep 20
+          done
+
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            "release/Gateway-${GITHUB_REF_NAME}-68k.sit" \
+            "release/Gateway-${GITHUB_REF_NAME}-68k.iso"

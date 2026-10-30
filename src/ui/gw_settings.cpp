@@ -6,6 +6,7 @@
 #include <Dialogs.h>
 #include <Events.h>
 #include <Fonts.h>
+#include <Gestalt.h>
 #include <MacWindows.h>
 #include <Menus.h>
 #include <Resources.h>
@@ -1054,6 +1055,13 @@ public:
     }
 };
 } // namespace
+
+int GWSettings_Available(void)
+{
+    long attr = 0;
+    return Gestalt(gestaltAppearanceAttr, &attr) == noErr
+        && (attr & (1L << gestaltAppearanceExists)) != 0;
+}
 
 void GWSettings_Run(int (*serviceEvent)(void *, void *), void *context)
 {

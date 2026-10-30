@@ -110,6 +110,8 @@ size_t gw_update_asset_name(const char *tag, GWUpdatePlatform plat,
 
     if (plat == kGWUpdateWin32)
         n = snprintf(out, cap, "Gateway-v%s-windows.zip", tag);
+    else if (plat == kGWUpdateMac68k)
+        n = snprintf(out, cap, "Gateway-v%s-68k.sit", tag);
     else
         n = snprintf(out, cap, "Gateway-v%s.sit", tag);
 
